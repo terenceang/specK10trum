@@ -11,8 +11,8 @@
 
 static const char* TAG = "Display";
 
-static const int LCD_PANEL_WIDTH = 240;
-static const int LCD_PANEL_HEIGHT = 320;
+static const int LCD_PANEL_WIDTH = 320;
+static const int LCD_PANEL_HEIGHT = 240;
 static int s_lcdDisplayWidth = LCD_PANEL_WIDTH;
 static int s_lcdDisplayHeight = LCD_PANEL_HEIGHT;
 static const gpio_num_t LCD_PIN_SCLK = GPIO_NUM_12;
@@ -352,11 +352,11 @@ static uint16_t* allocate_frame_buffer(size_t size) {
 
 static void update_display_dimensions() {
     if (s_lcdOrientation == MADCTL_LANDSCAPE || s_lcdOrientation == MADCTL_LANDSCAPE_FLIP) {
-        s_lcdDisplayWidth = LCD_PANEL_HEIGHT;
-        s_lcdDisplayHeight = LCD_PANEL_WIDTH;
-    } else {
         s_lcdDisplayWidth = LCD_PANEL_WIDTH;
         s_lcdDisplayHeight = LCD_PANEL_HEIGHT;
+    } else {
+        s_lcdDisplayWidth = LCD_PANEL_HEIGHT;
+        s_lcdDisplayHeight = LCD_PANEL_WIDTH;
     }
 }
 
