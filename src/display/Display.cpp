@@ -34,21 +34,6 @@ static int s_drawBuffer = 0;
 static TaskHandle_t s_videoTaskHandle = NULL;
 static SpectrumBase* s_pendingSpectrum = NULL;
 
-// Async framebuffer configuration
-static const int ASYNC_STRIPS = 6; // number of strips per frame
-static const int ASYNC_TRANS_PER_STRIP = 6; // cmd/data sequence: 0x2A(cmd)+4B, 0x2B(cmd)+4B, 0x2C(cmd), data
-static spi_transaction_t s_transPool[ASYNC_STRIPS * ASYNC_TRANS_PER_STRIP + 4];
-static uint8_t s_cmdBufA[ASYNC_STRIPS][4]; // column addr
-static uint8_t s_cmdBufB[ASYNC_STRIPS][4]; // page addr
-static uint8_t s_cmdBufC[ASYNC_STRIPS][1] __attribute__((unused)); // send memory write command
-static bool s_transAllocated __attribute__((unused)) = false;
-static const uint8_t s_cmdOpA = 0x2A;
-static const uint8_t s_cmdOpB = 0x2B;
-static const uint8_t s_cmdOpC = 0x2C;
-
-// Forward declaration for pre-transfer callback (defined later)
-static void spi_pre_transfer_callback(spi_transaction_t* trans);
-
 static void video_task(void* pvParameters) {
     ESP_LOGI(TAG, "Video task started on core %d", xPortGetCoreID());
     while (1) {
@@ -114,7 +99,7 @@ static void lcd_send_data(const uint8_t* data, int len) {
     spi_device_transmit(s_spi, &t);
 }
 
-static void __attribute__((unused)) lcd_set_window(int x0, int y0, int x1, int y1) {
+static void lcd_set_window(int x0, int y0, int x1, int y1) {
     uint8_t data[4];
 
     lcd_send_command(0x2A);
@@ -427,9 +412,7 @@ bool display_init() {
     devcfg.mode = 0;
     devcfg.spics_io_num = LCD_PIN_CS;
     // Allow a larger transaction queue so we can pipeline multiple DMA transfers
-    devcfg.queue_size = 48;
-    // Set pre-transfer callback to toggle D/C based on transaction user field
-    devcfg.pre_cb = spi_pre_transfer_callback;
+    devcfg.queue_size = 8;
     devcfg.flags = SPI_DEVICE_HALFDUPLEX;
 
     err = spi_bus_add_device(SPI2_HOST, &devcfg, &s_spi);
@@ -492,88 +475,29 @@ static void lcd_push_frame(const uint16_t* buffer) {
         return;
     }
 
-    // Async queued transactions: for each strip queue commands and pixel data
-    const int numStrips = ASYNC_STRIPS;
+    // Synchronous transmit per strip to avoid spi driver assert when mixing queued and
+    // synchronous calls. Using 6 strips balances transfer size and DMA limits.
+    const int numStrips = 6;
     int linesPerStrip = s_lcdDisplayHeight / numStrips;
-    const int transPerStrip = ASYNC_TRANS_PER_STRIP;
 
-    int totalTrans = numStrips * transPerStrip;
-    int poolIndex = 0;
-
-    // Prepare and queue transactions for all strips
     for (int i = 0; i < numStrips; i++) {
         int startY = i * linesPerStrip;
         int height = (i == numStrips - 1) ? (s_lcdDisplayHeight - startY) : linesPerStrip;
 
-        // Prepare column (0x2A) params
-        s_cmdBufA[i][0] = (0 >> 8) & 0xFF;
-        s_cmdBufA[i][1] = 0 & 0xFF;
-        s_cmdBufA[i][2] = ((s_lcdDisplayWidth - 1) >> 8) & 0xFF;
-        s_cmdBufA[i][3] = (s_lcdDisplayWidth - 1) & 0xFF;
+        lcd_set_window(0, startY, s_lcdDisplayWidth - 1, startY + height - 1);
 
-        // Prepare page (0x2B) params
-        s_cmdBufB[i][0] = (startY >> 8) & 0xFF;
-        s_cmdBufB[i][1] = startY & 0xFF;
-        s_cmdBufB[i][2] = ((startY + height - 1) >> 8) & 0xFF;
-        s_cmdBufB[i][3] = (startY + height - 1) & 0xFF;
+        gpio_set_level(LCD_PIN_DC, 1);
+        spi_transaction_t t;
+        memset(&t, 0, sizeof(t));
+        t.length = s_lcdDisplayWidth * height * 16; // bits
+        t.tx_buffer = (void*)&buffer[startY * s_lcdDisplayWidth];
+        t.flags = 0;
 
-        // Command 0x2A (command)
-        memset(&s_transPool[poolIndex], 0, sizeof(spi_transaction_t));
-        s_transPool[poolIndex].length = 8;
-        s_transPool[poolIndex].tx_buffer = (void*)&s_cmdOpA;
-        s_transPool[poolIndex].user = (void*)0; // command
-        spi_device_queue_trans(s_spi, &s_transPool[poolIndex], portMAX_DELAY);
-        poolIndex++;
-
-        // Params for 0x2A (data)
-        memset(&s_transPool[poolIndex], 0, sizeof(spi_transaction_t));
-        s_transPool[poolIndex].length = 8 * 4;
-        s_transPool[poolIndex].tx_buffer = s_cmdBufA[i];
-        s_transPool[poolIndex].user = (void*)1; // data
-        spi_device_queue_trans(s_spi, &s_transPool[poolIndex], portMAX_DELAY);
-        poolIndex++;
-
-        // Command 0x2B
-        memset(&s_transPool[poolIndex], 0, sizeof(spi_transaction_t));
-        s_transPool[poolIndex].length = 8;
-        s_transPool[poolIndex].tx_buffer = (void*)&s_cmdOpB;
-        s_transPool[poolIndex].user = (void*)0;
-        spi_device_queue_trans(s_spi, &s_transPool[poolIndex], portMAX_DELAY);
-        poolIndex++;
-
-        // Params for 0x2B
-        memset(&s_transPool[poolIndex], 0, sizeof(spi_transaction_t));
-        s_transPool[poolIndex].length = 8 * 4;
-        s_transPool[poolIndex].tx_buffer = s_cmdBufB[i];
-        s_transPool[poolIndex].user = (void*)1;
-        spi_device_queue_trans(s_spi, &s_transPool[poolIndex], portMAX_DELAY);
-        poolIndex++;
-
-        // Command 0x2C (memory write)
-        memset(&s_transPool[poolIndex], 0, sizeof(spi_transaction_t));
-        s_transPool[poolIndex].length = 8;
-        s_transPool[poolIndex].tx_buffer = (void*)&s_cmdOpC;
-        s_transPool[poolIndex].user = (void*)0;
-        spi_device_queue_trans(s_spi, &s_transPool[poolIndex], portMAX_DELAY);
-        poolIndex++;
-
-        // Pixel data
-        memset(&s_transPool[poolIndex], 0, sizeof(spi_transaction_t));
-        s_transPool[poolIndex].length = s_lcdDisplayWidth * height * 16; // bits
-        s_transPool[poolIndex].tx_buffer = (void*)&buffer[startY * s_lcdDisplayWidth];
-        s_transPool[poolIndex].user = (void*)1; // data
-        spi_device_queue_trans(s_spi, &s_transPool[poolIndex], portMAX_DELAY);
-        poolIndex++;
-    }
-
-    // Collect completed transactions
-    for (int t = 0; t < totalTrans; ++t) {
-        spi_transaction_t* ret_trans = NULL;
-        esp_err_t res = spi_device_get_trans_result(s_spi, &ret_trans, pdMS_TO_TICKS(1000));
-        if (res != ESP_OK) {
-            ESP_LOGE(TAG, "spi_device_get_trans_result failed: %d", res);
+        esp_err_t err = spi_device_transmit(s_spi, &t);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to transmit LCD strip %d: %d", i, err);
+            break;
         }
-        // nothing else to do; transactions are on stack of pool
     }
 }
 
@@ -664,15 +588,4 @@ void display_boot_test() {
     // Clear back to black after test
     memset(buffer, 0, w * h * sizeof(uint16_t));
     display_present();
-}
-
-// Pre-transfer callback to set DC line according to transaction type.
-static void spi_pre_transfer_callback(spi_transaction_t* trans) {
-    if (!trans) return;
-    // user == 0 -> command (DC=0), user == 1 -> data (DC=1)
-    if (trans->user == (void*)1) {
-        gpio_set_level(LCD_PIN_DC, 1);
-    } else {
-        gpio_set_level(LCD_PIN_DC, 0);
-    }
 }
