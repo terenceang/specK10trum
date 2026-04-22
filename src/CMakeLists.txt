@@ -1,0 +1,17 @@
+idf_component_register(SRCS 
+    "main.cpp"
+    "spectrum/SpectrumBase.cpp"
+    "spectrum/Spectrum48K.cpp"
+    "spectrum/Spectrum128K.cpp"
+    "z80/z80.c"
+    "display/Display.cpp"
+    "../test/test_runner.cpp"
+    "../test/test_memory.cpp"
+    "../test/test_128k_banking.cpp"
+    "../test/z80_test.c"
+    REQUIRES 
+        freertos
+        esp_timer
+        spi_flash
+        esp_psram
+)
