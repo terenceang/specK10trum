@@ -523,15 +523,10 @@ void display_renderSpectrum(SpectrumBase* spectrum) {
     }
 }
 
-void display_present() {
-    if (s_spi == NULL || s_frameBuffers[0] == NULL || s_frameBuffers[1] == NULL) {
+static void lcd_push_frame(const uint16_t* buffer) {
+    if (s_spi == NULL || buffer == NULL) {
         return;
     }
-
-    // Ping-pong: presentingIndex is the buffer we just finished rendering
-    int presentingIndex = s_drawBuffer;
-    // Swap draw buffer so the emulator can start rendering the next frame in the other buffer
-    s_drawBuffer = 1 - s_drawBuffer;
 
     // Split the frame into exactly 8 strips to stay within DMA limits (max 32KB)
     // Landscape 320x240: 320*30*2 = 19200 bytes per strip
@@ -544,10 +539,11 @@ void display_present() {
         
         lcd_set_window(0, startY, s_lcdDisplayWidth - 1, startY + height - 1);
         
+        gpio_set_level(LCD_PIN_DC, 1);
         spi_transaction_t t;
         memset(&t, 0, sizeof(t));
         t.length = s_lcdDisplayWidth * height * 16;
-        t.tx_buffer = &s_frameBuffers[presentingIndex][startY * s_lcdDisplayWidth];
+        t.tx_buffer = (void*)&buffer[startY * s_lcdDisplayWidth];
         t.flags = 0;
         
         esp_err_t err = spi_device_transmit(s_spi, &t);
@@ -556,6 +552,19 @@ void display_present() {
             break;
         }
     }
+}
+
+void display_present() {
+    if (s_frameBuffers[0] == NULL || s_frameBuffers[1] == NULL) {
+        return;
+    }
+
+    // Ping-pong: presentingIndex is the buffer we just finished rendering
+    int presentingIndex = s_drawBuffer;
+    // Swap draw buffer so the emulator can start rendering the next frame in the other buffer
+    s_drawBuffer = 1 - s_drawBuffer;
+
+    lcd_push_frame(s_frameBuffers[presentingIndex]);
 }
 
 void display_test_pattern() {
