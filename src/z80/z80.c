@@ -32,9 +32,24 @@
  * HELPER MACROS
  * =================================================================== */
 
-/* Read/write memory through callbacks. */
-#define RB(addr)      cpu->mem_read(cpu->ctx, (addr))
-#define WB(addr, val) cpu->mem_write(cpu->ctx, (addr), (val))
+/* Read/write memory using cached page pointers when available, fallback to callbacks. */
+static inline uint8_t RB_func(Z80 *cpu, uint16_t _a) {
+    uint8_t* _p = cpu->page_read[_a >> 14];
+    if (_p) return _p[_a & 0x3FFF];
+    return cpu->mem_read(cpu->ctx, _a);
+}
+
+static inline void WB_func(Z80 *cpu, uint16_t _a, uint8_t _v) {
+    uint8_t* _p = cpu->page_write[_a >> 14];
+    if (_p) {
+        _p[_a & 0x3FFF] = _v;
+    } else {
+        cpu->mem_write(cpu->ctx, _a, _v);
+    }
+}
+
+#define RB(addr) RB_func(cpu, (uint16_t)(addr))
+#define WB(addr, val) WB_func(cpu, (uint16_t)(addr), (uint8_t)(val))
 
 /* Read a 16-bit word from memory (little-endian: low byte first). */
 #define RW(addr)      ((uint16_t)RB(addr) | ((uint16_t)RB((uint16_t)((addr)+1)) << 8))

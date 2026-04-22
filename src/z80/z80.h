@@ -106,6 +106,14 @@ typedef struct Z80 {
     uint8_t (*mem_read)(void *ctx, uint16_t addr);
     void (*mem_write)(void *ctx, uint16_t addr, uint8_t val);
 
+    /* Optional direct page pointers for fast memory access. If non-NULL,
+     * these point to 16KB blocks for 0x0000-0x3FFF, 0x4000-0x7FFF,
+     * 0x8000-0xBFFF and 0xC000-0xFFFF respectively. When present, the
+     * emulator will access memory through these pointers instead of
+     * invoking the callback functions to reduce overhead in hot paths. */
+    uint8_t* page_read[4];
+    uint8_t* page_write[4];
+
     /* I/O port read/write callbacks. The Z80 has a separate 16-bit
      * I/O address space (though typically only the low 8 bits matter). */
     uint8_t (*io_read)(void *ctx, uint16_t port);

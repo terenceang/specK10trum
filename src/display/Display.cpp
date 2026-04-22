@@ -7,6 +7,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <string.h>
+#include <esp_timer.h>
 
 static const char* TAG = "Display";
 
@@ -308,8 +309,8 @@ static bool xl9535_init() {
         // Turn backlight ON immediately and keep it steady
         xl9535_write_register(XL9535_REG_OUTPUT_PORT0, XL9535_BACKLIGHT_MASK);
 
-        ESP_LOGI(TAG, "XL9535: Running LED blink test (10 cycles)...");
-        for (int i = 0; i < 10; i++) {
+        ESP_LOGI(TAG, "XL9535: Running LED blink test (2 cycles)...");
+        for (int i = 0; i < 2; i++) {
             xl9535_write_register(XL9535_REG_OUTPUT_PORT1, 0xFF);
             vTaskDelay(pdMS_TO_TICKS(100));
             xl9535_write_register(XL9535_REG_OUTPUT_PORT1, 0x00);
@@ -405,10 +406,13 @@ bool display_init() {
 
     spi_device_interface_config_t devcfg;
     memset(&devcfg, 0, sizeof(devcfg));
-    devcfg.clock_speed_hz = 26000000;
+    // Increase SPI clock for faster LCD transfers (was 26MHz -> 40MHz)
+    // Raised to 80MHz to improve throughput; ensure display wiring and panel support this.
+    devcfg.clock_speed_hz = 80000000;
     devcfg.mode = 0;
     devcfg.spics_io_num = LCD_PIN_CS;
-    devcfg.queue_size = 2;
+    // Allow a larger transaction queue so we can pipeline multiple DMA transfers
+    devcfg.queue_size = 8;
     devcfg.flags = SPI_DEVICE_HALFDUPLEX;
 
     err = spi_bus_add_device(SPI2_HOST, &devcfg, &s_spi);
@@ -462,65 +466,8 @@ void display_renderSpectrum(SpectrumBase* spectrum) {
     if (!buffer) {
         return;
     }
-    
-    const int bufWidth = s_lcdDisplayWidth;
-    const int bufHeight = s_lcdDisplayHeight;
-    const uint16_t border = spectrum_palette(spectrum->getBorderColor() & 0x07, false);
-
-    const int source_width = 256;
-    const int source_height = 192;
-    const int offset_x = (bufWidth - source_width) / 2;
-    const int offset_y = (bufHeight - source_height) / 2;
-
-    // Optimized border fill
-    // Top border
-    for (int i = 0; i < offset_y * bufWidth; ++i) {
-        buffer[i] = border;
-    }
-    // Bottom border
-    for (int i = (offset_y + source_height) * bufWidth; i < bufWidth * bufHeight; ++i) {
-        buffer[i] = border;
-    }
-    // Left/Right borders
-    for (int y = 0; y < source_height; ++y) {
-        uint16_t* lineStart = &buffer[(offset_y + y) * bufWidth];
-        for (int x = 0; x < offset_x; ++x) {
-            lineStart[x] = border;
-        }
-        for (int x = offset_x + source_width; x < bufWidth; ++x) {
-            lineStart[x] = border;
-        }
-    }
-
-    const int source_width_bytes = 32;
-    uint8_t* ramBank1 = spectrum->getPagePtr(1); // 0x4000-0x7FFF
-
-    if (!ramBank1) return;
-
-    for (int y = 0; y < source_height; ++y) {
-        uint16_t* linePtr = &buffer[(offset_y + y) * bufWidth + offset_x];
-        uint16_t y_off = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2);
-        uint16_t attr_off = 0x1800 + ((y >> 3) * 32);
-
-        for (int xByte = 0; xByte < source_width_bytes; ++xByte) {
-            uint8_t pixels = ramBank1[y_off | xByte];
-            uint8_t attr = ramBank1[attr_off | xByte];
-            
-            bool bright = (attr & 0x40) != 0;
-            uint16_t ink = spectrum_palette(attr & 0x07, bright);
-            uint16_t paper = spectrum_palette((attr >> 3) & 0x07, bright);
-
-            linePtr[0] = (pixels & 0x80) ? ink : paper;
-            linePtr[1] = (pixels & 0x40) ? ink : paper;
-            linePtr[2] = (pixels & 0x20) ? ink : paper;
-            linePtr[3] = (pixels & 0x10) ? ink : paper;
-            linePtr[4] = (pixels & 0x08) ? ink : paper;
-            linePtr[5] = (pixels & 0x04) ? ink : paper;
-            linePtr[6] = (pixels & 0x02) ? ink : paper;
-            linePtr[7] = (pixels & 0x01) ? ink : paper;
-            linePtr += 8;
-        }
-    }
+    // Centralized rendering: let the Spectrum object populate the RGB565 buffer
+    spectrum->renderToRGB565(buffer, s_lcdDisplayWidth, s_lcdDisplayHeight);
 }
 
 static void lcd_push_frame(const uint16_t* buffer) {
@@ -528,24 +475,24 @@ static void lcd_push_frame(const uint16_t* buffer) {
         return;
     }
 
-    // Split the frame into exactly 8 strips to stay within DMA limits (max 32KB)
-    // Landscape 320x240: 320*30*2 = 19200 bytes per strip
-    const int numStrips = 8;
+    // Synchronous transmit per strip to avoid spi driver assert when mixing queued and
+    // synchronous calls. Using 6 strips balances transfer size and DMA limits.
+    const int numStrips = 6;
     int linesPerStrip = s_lcdDisplayHeight / numStrips;
-    
+
     for (int i = 0; i < numStrips; i++) {
         int startY = i * linesPerStrip;
         int height = (i == numStrips - 1) ? (s_lcdDisplayHeight - startY) : linesPerStrip;
-        
+
         lcd_set_window(0, startY, s_lcdDisplayWidth - 1, startY + height - 1);
-        
+
         gpio_set_level(LCD_PIN_DC, 1);
         spi_transaction_t t;
         memset(&t, 0, sizeof(t));
-        t.length = s_lcdDisplayWidth * height * 16;
+        t.length = s_lcdDisplayWidth * height * 16; // bits
         t.tx_buffer = (void*)&buffer[startY * s_lcdDisplayWidth];
         t.flags = 0;
-        
+
         esp_err_t err = spi_device_transmit(s_spi, &t);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to transmit LCD strip %d: %d", i, err);
@@ -565,6 +512,20 @@ void display_present() {
     s_drawBuffer = 1 - s_drawBuffer;
 
     lcd_push_frame(s_frameBuffers[presentingIndex]);
+
+    // FPS counter: log to serial once per second
+    static uint32_t frame_count = 0;
+    static int64_t last_time_us = 0;
+    frame_count++;
+    int64_t now = esp_timer_get_time();
+    if (last_time_us == 0) last_time_us = now;
+    int64_t delta = now - last_time_us;
+    if (delta >= 1000000) {
+        double fps = (double)frame_count * 1000000.0 / (double)delta;
+        ESP_LOGI(TAG, "FPS: %.2f", fps);
+        frame_count = 0;
+        last_time_us = now;
+    }
 }
 
 void display_test_pattern() {
@@ -590,4 +551,41 @@ void display_test_pattern() {
         vTaskDelay(pdMS_TO_TICKS(500));
     }
     ESP_LOGI(TAG, "Test pattern complete.");
+}
+
+// Blink the user LED twice via the XL9535 and show a 1-second color bar
+void display_boot_test() {
+    // Blink user LED twice
+    for (int i = 0; i < 2; ++i) {
+        xl9535_write_register(XL9535_REG_OUTPUT_PORT1, XL9535_USER_LED_MASK);
+        vTaskDelay(pdMS_TO_TICKS(150));
+        xl9535_write_register(XL9535_REG_OUTPUT_PORT1, 0x00);
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+
+    // Show a simple vertical color bar using normal palette
+    uint16_t* buffer = display_getBackBuffer();
+    if (!buffer) return;
+
+    const int w = s_lcdDisplayWidth;
+    const int h = s_lcdDisplayHeight;
+    const int numColors = 8;
+    int bandWidth = w / numColors;
+
+    for (int y = 0; y < h; ++y) {
+        uint16_t* line = &buffer[y * w];
+        for (int c = 0; c < numColors; ++c) {
+            uint16_t color = s_paletteNormal[c];
+            int x0 = c * bandWidth;
+            int x1 = (c == numColors - 1) ? w : x0 + bandWidth;
+            for (int x = x0; x < x1; ++x) line[x] = color;
+        }
+    }
+
+    display_present();
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // Clear back to black after test
+    memset(buffer, 0, w * h * sizeof(uint16_t));
+    display_present();
 }

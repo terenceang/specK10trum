@@ -97,7 +97,7 @@ extern "C" void app_main(void) {
         ESP_LOGE(TAG, "Display/Expander initialization FAILED");
     } else {
         ESP_LOGI(TAG, "Display/Expander initialization STARTED");
-        display_test_pattern();
+        display_boot_test();
     }
 
     // Give the USB serial/JTAG console time to enumerate before printing startup logs.

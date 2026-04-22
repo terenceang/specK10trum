@@ -53,6 +53,8 @@ public:
 
     // Direct memory access for renderer
     inline uint8_t* getPagePtr(int block) { return m_memReadMap[block & 3]; }
+    // Render the current screen into an RGB565 framebuffer
+    void renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight);
 protected:
     void advanceULA(int tstates);
     uint8_t getFloatingBusValue();
