@@ -55,6 +55,5 @@ Planned work (priority order):
 4. AY chip emulation (sound chip support)
 5. Bluetooth provisioning (BT provisioning for network/controls)
 6. Wi‑Fi virtual keyboard and joystick (websocket/HTTP provisioning UI)
-7. BLE provisioning (Bluetooth Low Energy setup and control)
 
 If you'd like, I can turn any of the above into tracked issues, or start on item 1 now.
