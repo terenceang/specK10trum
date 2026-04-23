@@ -739,9 +739,19 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         uint16_t ink = spectrum_palette(attr_index & 0x07, bright);
         uint16_t paper = spectrum_palette((attr_index >> 3) & 0x07, bright);
 
+        uint32_t ink32 = (ink << 16) | ink;
+        uint32_t paper32 = (paper << 16) | paper;
+        uint32_t diff32 = ink32 ^ paper32;
+
         for (int pix = 0; pix < 256; ++pix) {
-            uint16_t* out = &alloc[pix * 8];
-            for (int b = 0; b < 8; ++b) out[b] = (pix & (0x80 >> b)) ? ink : paper;
+            uint32_t* out32 = (uint32_t*)&alloc[pix * 8];
+            // 32-bit SWAR: Process 2 pixels at a time (4 iterations for 8 pixels)
+            for (int i = 0; i < 4; i++) {
+                uint8_t two_bits = (pix >> (6 - i * 2)) & 0x03;
+                uint32_t mask = (two_bits & 0x02) ? 0xFFFF0000 : 0;
+                mask |= (two_bits & 0x01) ? 0x0000FFFF : 0;
+                out32[i] = paper32 ^ (mask & diff32);
+            }
         }
 
         attr_lut[attr_index] = alloc;
@@ -822,7 +832,19 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
                 bool bright = (attr & 0x40) != 0;
                 uint16_t ink = spectrum_palette(attr & 0x07, bright);
                 uint16_t paper = spectrum_palette((attr >> 3) & 0x07, bright);
-                for (int b = 0; b < 8; ++b) linePtr[b] = (pixels & (0x80 >> b)) ? ink : paper;
+                
+                uint32_t ink32 = (ink << 16) | ink;
+                uint32_t paper32 = (paper << 16) | paper;
+                uint32_t diff32 = ink32 ^ paper32;
+                uint32_t* linePtr32 = (uint32_t*)linePtr;
+
+                // 32-bit SWAR: Process 2 pixels at a time
+                for (int i = 0; i < 4; i++) {
+                    uint8_t two_bits = (pixels >> (6 - i * 2)) & 0x03;
+                    uint32_t mask = (two_bits & 0x02) ? 0xFFFF0000 : 0;
+                    mask |= (two_bits & 0x01) ? 0x0000FFFF : 0;
+                    linePtr32[i] = paper32 ^ (mask & diff32);
+                }
             }
             linePtr += 8;
         }

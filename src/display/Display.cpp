@@ -356,7 +356,7 @@ bool display_showSplash(const char* filename) {
             uint8_t r = rowBuf[x * 3 + 2];
             
             // RGB565 conversion
-            uint16_t color = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+            uint16_t color = __builtin_bswap16(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
             buffer[destY * s_lcdDisplayWidth + x] = color;
         }
     }
@@ -377,7 +377,7 @@ void display_boot_test() {
         uint16_t* buffer = display_getBackBuffer();
         for (int y = 0; y < s_lcdDisplayHeight; y++) {
             for (int x = 0; x < s_lcdDisplayWidth; x++) {
-                buffer[y * s_lcdDisplayWidth + x] = s_paletteNormal[(x / (s_lcdDisplayWidth / 8)) % 8];
+                buffer[y * s_lcdDisplayWidth + x] = __builtin_bswap16(s_paletteNormal[(x / (s_lcdDisplayWidth / 8)) % 8]);
             }
         }
         display_present();
