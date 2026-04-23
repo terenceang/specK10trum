@@ -19,6 +19,23 @@ License
 -------
 This repository is licensed under the MIT License — see [LICENSE](LICENSE) for details.
 
+Gallery
+-------
+
+<p align="center">
+	<img src="assets/baner.png" alt="SpecK10trum banner" style="max-width:100%;height:auto;" />
+</p>
+
+### Device Photos
+
+<p align="center">
+	<img src="assets/logo.png" alt="SpecK10trum logo" width="320" style="margin-right:8px;" />
+	<img src="assets/device-1.jpg" alt="SpecK10trum device photo 1" width="320" style="margin-right:8px;" />
+	<img src="assets/device-2.jpg" alt="SpecK10trum device photo 2" width="320" />
+</p>
+
+_Captions: left: project logo; center/right: device photos. To add your own photos, place images in the `assets/` folder and name them `device-1.jpg`, `device-2.jpg` (or update the paths in this file)._ 
+
 This project contains original code by Terence Ang and portions derived from ZOT (MIT). Unless otherwise noted in individual files, ZOT-derived code is distributed under the MIT license.
 
 Build
