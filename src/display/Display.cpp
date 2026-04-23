@@ -37,7 +37,7 @@ static TaskHandle_t s_videoTaskHandle = NULL;
 static SpectrumBase* s_pendingSpectrum = NULL;
 
 // Ping-pong strip buffers allocated in internal RAM (IRAM)
-static const int NUM_STRIPS = 6;
+static const int NUM_STRIPS = 5;
 static uint16_t* s_stripBuffers[2] = { NULL, NULL };
 
 // Pre-allocated SPI transactions to avoid heap churn
