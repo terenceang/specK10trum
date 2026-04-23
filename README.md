@@ -1,7 +1,7 @@
 # specK10trum
 
 <p align="center">
-	<img src="assets/speck10trum_banner.png" alt="SpecK10trum banner" />
+	<img src="assets/baner.png" alt="SpecK10trum banner" />
 </p>
 
 Author: Terence Ang
