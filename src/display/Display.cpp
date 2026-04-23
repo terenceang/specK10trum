@@ -10,6 +10,7 @@
 #include <esp_timer.h>
 #include "instrumentation/Instrumentation.h"
 #include "expander/Expander.h"
+#include "audio/Audio.h"
 
 static const char* TAG = "Display";
 
@@ -380,6 +381,8 @@ bool display_showSplash(const char* filename) {
 
 void display_boot_test() {
     expander_set_led(true);
+    // Play a short beep when LED flashes
+    audio_play_tone(880, 120);
     vTaskDelay(pdMS_TO_TICKS(100));
     expander_set_led(false);
     

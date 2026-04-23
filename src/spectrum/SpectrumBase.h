@@ -7,6 +7,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stddef.h>
+#include "Beeper.h"
 
 class SpectrumBase : public IMemoryBus {
 public:
@@ -67,6 +68,8 @@ public:
     inline uint8_t* getPagePtr(int block) { return m_memReadMap[block & 3]; }
     // Render the current screen into an RGB565 framebuffer
     void renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight);
+    // Render beeper audio into a PCM buffer (mono int16 samples)
+    void renderBeeperAudio(int16_t* buffer, int num_samples) { m_beeper.renderFrame(buffer, num_samples); }
 protected:
     friend class Snapshot;
     void advanceULA(int tstates);
@@ -109,6 +112,9 @@ protected:
 
     uint8_t m_borderColor;
     uint8_t m_keyboardRows[8];
+
+    // Beeper helper
+    Beeper m_beeper;
 
     // Helper for allocation
     uint8_t* allocateMemory(size_t size, const char* name);

@@ -54,6 +54,7 @@ SpectrumBase::SpectrumBase()
     m_cpu.mem_write = z80_mem_write;
     m_cpu.io_read = z80_io_read;
     m_cpu.io_write = z80_io_write;
+    // Beeper constructed automatically
 }
 
 SpectrumBase::~SpectrumBase() {
@@ -170,11 +171,22 @@ void SpectrumBase::writePortFE(uint8_t value) {
         }
         m_borderColor = newColor;
     }
+
+    // Speaker (bit 4) handling: delegate to Beeper
+    uint8_t newSpeaker = (value >> 4) & 0x01;
+    m_beeper.recordEvent(m_ulaClocks, newSpeaker);
 }
 
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
     uint8_t row = (port >> 8) & 0x1F;
-    return m_keyboardRows[row & 0x07];
+    uint8_t val = m_keyboardRows[row & 0x07];
+    // EAR input is bit 6; approximate board coupling: EAR = externalEar OR speaker
+    if (m_beeper.getExternalEar() || m_beeper.currentSpeakerLevel()) {
+        val |= 0x40;
+    } else {
+        val &= ~0x40;
+    }
+    return val;
 }
 
 bool SpectrumBase::loadROM(const char* filepath) {
@@ -237,6 +249,8 @@ void SpectrumBase::reset() {
         m_cpu.page_read[i] = m_memReadMap[i];
         m_cpu.page_write[i] = m_memWriteMap[i];
     }
+    // Reset beeper
+    m_beeper.reset();
 }
 
 void SpectrumBase::advanceULA(int tstates) {
@@ -248,6 +262,9 @@ void SpectrumBase::advanceULA(int tstates) {
         memcpy(m_renderBorderEvents, m_borderEvents, m_borderEventCount * sizeof(BorderEvent));
         m_renderBorderEventCount = m_borderEventCount;
         m_renderInitialBorderColor = m_initialBorderColor;
+
+        // Copy beeper events into render buffer
+        m_beeper.copyForFrame();
 
         // Reset border events for the new frame
         m_initialBorderColor = m_borderColor;
@@ -464,3 +481,5 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     // Update last rendered border color
     m_lastRenderedBorderColor = m_borderColor;
 }
+
+// Beeper rendering moved to Beeper class

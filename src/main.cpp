@@ -9,6 +9,7 @@
 #include "display/Display.h"
 #include "instrumentation/Instrumentation.h"
 #include "expander/Expander.h"
+#include "audio/Audio.h"
 
 // ============================================
 // SELECT YOUR MODEL HERE
@@ -84,6 +85,8 @@ static void emulator_task(void* pvParameters) {
         instr_cpu_end();
 
         display_trigger_frame(spectrum);
+        // Render and play beeper audio for this frame
+        audio_play_frame(spectrum);
 
         // Use vTaskDelayUntil alone for precise timing
         vTaskDelayUntil(&lastWakeTime, frameInterval);
@@ -110,6 +113,10 @@ extern "C" void app_main(void) {
         ESP_LOGE(TAG, "Display initialization FAILED");
     } else {
         ESP_LOGI(TAG, "Display initialization STARTED");
+        // Initialize audio early so boot beep can play during display boot test
+        if (!audio_init()) {
+            ESP_LOGW(TAG, "Audio initialization failed; continuing without sound");
+        }
         display_boot_test();
     }
 
