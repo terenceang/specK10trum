@@ -33,6 +33,10 @@ SpectrumBase::SpectrumBase()
     , m_romSize(0)
     , m_videoPagePtr(nullptr)
     , m_lastRenderedBorderColor(0xFF)
+    , m_borderEventCount(0)
+    , m_initialBorderColor(0)
+    , m_renderBorderEventCount(0)
+    , m_renderInitialBorderColor(0)
     , m_ulaClocks(0)
     , m_ulaScanline(0)
     , m_ulaCycle(0)
@@ -160,7 +164,13 @@ uint8_t SpectrumBase::getFloatingBusValue() {
 
 // Shared handlers for even ULA ports (0xFE and equivalents)
 void SpectrumBase::writePortFE(uint8_t value) {
-    m_borderColor = value & 0x07;
+    uint8_t newColor = value & 0x07;
+    if (newColor != m_borderColor) {
+        if (m_borderEventCount < MAX_BORDER_EVENTS) {
+            m_borderEvents[m_borderEventCount++] = { m_ulaClocks, newColor };
+        }
+        m_borderColor = newColor;
+    }
 }
 
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
@@ -224,15 +234,18 @@ bool SpectrumBase::loadSnapshot(const char* filepath) {
     // Parse .z80 30-byte header if present to capture CPU/register state
     bool haveHeader = false;
     uint8_t hdr[30] = {0};
+    uint16_t hdr_pc = 0;
     if (got >= 30) {
         memcpy(hdr, filebuf, 30);
         haveHeader = true;
+        hdr_pc = (uint16_t)hdr[6] | ((uint16_t)hdr[7] << 8);
     }
 
-    // If an extended header is present (v2/v3 .z80), bytes 30..31 give its length
+    // If an extended header is present (v2/v3 .z80), bytes 30..31 give its length.
+    // In .z80 format, v2/v3 headers are only present if the PC in the main header is 0.
     uint16_t extra_len = 0;
     uint16_t ext_pc = 0;
-    if (haveHeader && got >= 34) {
+    if (haveHeader && hdr_pc == 0 && got >= 34) {
         extra_len = (uint16_t)filebuf[30] | ((uint16_t)filebuf[31] << 8);
         ESP_LOGI(TAG, "Snapshot extra-header length: %u", extra_len);
         if (extra_len >= 2 && got >= 34) {
@@ -249,6 +262,19 @@ bool SpectrumBase::loadSnapshot(const char* filepath) {
                 pos += snprintf(bufdump + pos, sizeof(bufdump) - pos, "%02X ", filebuf[32 + i]);
             }
             ESP_LOGI(TAG, "Extra header bytes (first %d): %s", dump, bufdump);
+        }
+    }
+
+    // Determine and log the .z80 version
+    if (haveHeader) {
+        if (hdr_pc != 0) {
+            ESP_LOGI(TAG, "Detected .z80 Version 1 snapshot");
+        } else if (extra_len == 23 || extra_len == 30) {
+            ESP_LOGI(TAG, "Detected .z80 Version 2 snapshot (extra_len=%u)", extra_len);
+        } else if (extra_len == 54 || extra_len == 55) {
+            ESP_LOGI(TAG, "Detected .z80 Version 3 snapshot (extra_len=%u)", extra_len);
+        } else {
+            ESP_LOGI(TAG, "Detected .z80 Version 2/3 snapshot (extra_len=%u)", extra_len);
         }
     }
 
@@ -285,7 +311,7 @@ bool SpectrumBase::loadSnapshot(const char* filepath) {
         uint8_t flags29 = hdr[29];
 
         // For version 2/3 files prefer extended header PC when present
-        if (extra_len >= 2 && ext_pc != 0) {
+        if (hdr_pc == 0 && extra_len >= 2 && ext_pc != 0) {
             pc = ext_pc;
         } else if (pc == 0 && got >= 34) {
             uint16_t addlen = (uint16_t)filebuf[30] | ((uint16_t)filebuf[31] << 8);
@@ -296,6 +322,14 @@ bool SpectrumBase::loadSnapshot(const char* filepath) {
 
         // Combine R-register high bit from flags12 bit0
         uint8_t R_full = (R & 0x7F) | ((flags12 & 0x01) ? 0x80 : 0x00);
+        
+        // Restore border color from flags12 bits 1-3
+        m_borderColor = (flags12 >> 1) & 0x07;
+        m_initialBorderColor = m_borderColor;
+        m_renderInitialBorderColor = m_borderColor;
+        m_borderEventCount = 0;
+        m_renderBorderEventCount = 0;
+        ESP_LOGI(TAG, "Restored border color: %u", (unsigned)m_borderColor);
 
         // Log parsed header details for debugging
         ESP_LOGI(TAG, "Snapshot header: A=%02X F=%02X B=%02X C=%02X D=%02X E=%02X H=%02X L=%02X", A, F, B, C, D, E, H, L);
@@ -388,28 +422,29 @@ bool SpectrumBase::loadSnapshot(const char* filepath) {
         return false;
     };
 
-    // Try decompression starting at the most likely offsets for .z80 variants:
-    // 1) v2/v3 extra header end: 30 + 2 + extra_len
-    // 2) older files: 30 (immediately after 30-byte header)
-    // 3) raw compressed start at 0
-    if (extra_len > 0) {
-        size_t start = 30 + 2 + extra_len;
-        if (start < got) decompressed_ok = try_decompress((int)start);
-    }
-    if (!decompressed_ok && got > 30) decompressed_ok = try_decompress(30);
-    if (!decompressed_ok) decompressed_ok = try_decompress(0);
+    // --- Version 1 Handling ---
+    if (hdr_pc != 0) {
+        bool is_v1_compressed = (hdr[12] & 0x20) != 0;
+        if (!is_v1_compressed && got >= 30 + 49152) {
+            ESP_LOGI(TAG, "Snapshot is v1 uncompressed, applying directly from offset 30");
+            if (applySnapshotData(filebuf + 30, 49152)) {
+                decompressed_ok = true;
+            }
+        } else {
+            decompressed_ok = try_decompress(30);
+        }
 
-    if (decompressed_ok) {
-        // restore CPU state now that memory has been applied
-        restore_cpu_from_header();
-        free(tmpout);
-        free(filebuf);
-        ESP_LOGI(TAG, "Snapshot decompressed and applied from %s", filepath);
-        return true;
+        if (decompressed_ok) {
+            restore_cpu_from_header();
+            free(tmpout);
+            free(filebuf);
+            ESP_LOGI(TAG, "Snapshot applied from %s (v1)", filepath);
+            return true;
+        }
     }
 
     // Attempt full v2/v3 block parsing (multi-block format)
-    if (extra_len > 0) {
+    if (hdr_pc == 0 && extra_len > 0) {
         size_t start = 30 + 2 + extra_len;
         if (start < got) {
             ESP_LOGI(TAG, "Attempting v2/v3 block parsing at offset %zu", start);
@@ -549,6 +584,19 @@ bool SpectrumBase::loadSnapshot(const char* filepath) {
         }
     }
 
+    // --- Last Resort Fallbacks ---
+    if (!decompressed_ok && got > 30) decompressed_ok = try_decompress(30);
+    if (!decompressed_ok) decompressed_ok = try_decompress(0);
+
+    if (decompressed_ok) {
+        // restore CPU state now that memory has been applied
+        restore_cpu_from_header();
+        free(tmpout);
+        free(filebuf);
+        ESP_LOGI(TAG, "Snapshot decompressed and applied (fallback) from %s", filepath);
+        return true;
+    }
+
     free(tmpout);
     free(filebuf);
 
@@ -564,6 +612,10 @@ void SpectrumBase::setKeyboardRow(uint8_t row, uint8_t columns) {
 
 void SpectrumBase::reset() {
     m_borderColor = 0;
+    m_initialBorderColor = 0;
+    m_borderEventCount = 0;
+    m_renderInitialBorderColor = 0;
+    m_renderBorderEventCount = 0;
     memset(m_keyboardRows, 0xFF, 8);
     m_ulaClocks = 0;
     m_ulaScanline = 0;
@@ -574,12 +626,31 @@ void SpectrumBase::reset() {
     m_cpu.mem_write = z80_mem_write;
     m_cpu.io_read = z80_io_read;
     m_cpu.io_write = z80_io_write;
+    
+    // Restore cached page pointers from our memory maps
+    for (int i = 0; i < 4; i++) {
+        m_cpu.page_read[i] = m_memReadMap[i];
+        m_cpu.page_write[i] = m_memWriteMap[i];
+    }
 }
 
 void SpectrumBase::advanceULA(int tstates) {
     m_ulaClocks += (uint32_t)tstates;
     if (m_ulaClocks >= FRAME_T_STATES) {
         m_ulaClocks -= FRAME_T_STATES;
+        
+        // Copy current frame events to render buffer
+        memcpy(m_renderBorderEvents, m_borderEvents, m_borderEventCount * sizeof(BorderEvent));
+        m_renderBorderEventCount = m_borderEventCount;
+        m_renderInitialBorderColor = m_initialBorderColor;
+
+        // Reset border events for the new frame
+        m_initialBorderColor = m_borderColor;
+        m_borderEventCount = 0;
+
+        // Trigger the 50Hz maskable interrupt
+        // Standard data byte for Spectrum interrupts is 0xFF (RST 38h opcode)
+        z80_interrupt(&m_cpu, 0xFF);
     }
 
     m_ulaCycle += (uint16_t)tstates;
@@ -631,9 +702,6 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     const int offset_x = (bufWidth - source_width) / 2;
     const int offset_y = (bufHeight - source_height) / 2;
 
-    const uint16_t border = spectrum_palette(getBorderColor() & 0x07, false);
-    const uint32_t border32 = (border << 16) | border;
-
     // Attribute LUT cache: up to 128 possible attribute combinations
     static uint16_t* attr_lut[128] = { 0 };
     static uint32_t attr_last_used[128] = { 0 };
@@ -682,15 +750,53 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         return alloc;
     };
 
-    // Fast border clear using 32-bit writes — always clear to avoid visual artifacts
-    uint32_t* buf32 = (uint32_t*)buffer;
-    for (int i = 0; i < (offset_y * bufWidth) / 2; ++i) buf32[i] = border32;
-    int bottomStart = (offset_y + source_height) * bufWidth;
-    for (int i = bottomStart / 2; i < (bufWidth * bufHeight) / 2; ++i) buf32[i] = border32;
-    for (int y = 0; y < source_height; ++y) {
-        uint32_t* lineStart32 = (uint32_t*)&buffer[(offset_y + y) * bufWidth];
-        for (int i = 0; i < offset_x / 2; ++i) lineStart32[i] = border32;
-        for (int i = (offset_x + source_width) / 2; i < bufWidth / 2; ++i) lineStart32[i] = border32;
+    auto get_border_color_for_tstate = [&](uint32_t tstate) -> uint16_t {
+        uint8_t color = m_renderInitialBorderColor;
+        for (size_t i = 0; i < m_renderBorderEventCount; ++i) {
+            if (m_renderBorderEvents[i].tstates <= tstate) {
+                color = m_renderBorderEvents[i].color;
+            } else {
+                break;
+            }
+        }
+        return spectrum_palette(color & 0x07, false);
+    };
+
+    // Render border areas
+    for (int y = 0; y < bufHeight; ++y) {
+        // Correctly map the centered active display (192 lines) to Spectrum FIRST_ACTIVE_LINE (64)
+        int spectrum_y = FIRST_ACTIVE_LINE + (y - offset_y);
+        
+        // Clamp to valid range (0-311)
+        if (spectrum_y < 0) spectrum_y = 0;
+        if (spectrum_y >= FRAME_LINES) spectrum_y = FRAME_LINES - 1;
+
+        uint32_t tstate_base = spectrum_y * T_STATES_PER_LINE;
+        uint32_t* lineStart32 = (uint32_t*)&buffer[y * bufWidth];
+        bool is_active_y = (y >= offset_y && y < offset_y + source_height);
+        
+        if (!is_active_y) {
+            // Full line is border. Sample at the middle of the line (T=112)
+            uint16_t border = get_border_color_for_tstate(tstate_base + 112);
+            uint32_t border32 = (border << 16) | border;
+            for (int i = 0; i < bufWidth / 2; ++i) lineStart32[i] = border32;
+        } else {
+            // Left border: drawn at T=200...223 of PREVIOUS line
+            // For simplicity, we use the end of the previous line.
+            uint32_t tstate_left = (spectrum_y > 0) ? (spectrum_y - 1) * T_STATES_PER_LINE + 210 : 0;
+            uint16_t border_left = get_border_color_for_tstate(tstate_left);
+            uint32_t border_left32 = (border_left << 16) | border_left;
+            
+            // Right border: drawn at T=128...151 of CURRENT line.
+            uint32_t tstate_right = tstate_base + 140;
+            uint16_t border_right = get_border_color_for_tstate(tstate_right);
+            uint32_t border_right32 = (border_right << 16) | border_right;
+            
+            // Render left border
+            for (int i = 0; i < offset_x / 2; ++i) lineStart32[i] = border_left32;
+            // Render right border
+            for (int i = (offset_x + source_width) / 2; i < bufWidth / 2; ++i) lineStart32[i] = border_right32;
+        }
     }
 
     uint8_t* ramBank1 = m_videoPagePtr ? m_videoPagePtr : getPagePtr(1);

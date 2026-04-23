@@ -87,6 +87,20 @@ protected:
     uint8_t* m_videoPagePtr;  // Pointer to active video RAM (usually Bank 5)
     uint8_t m_lastRenderedBorderColor; // Tracking for border clear optimization
 
+    struct BorderEvent {
+        uint32_t tstates;
+        uint8_t color;
+    };
+    static constexpr size_t MAX_BORDER_EVENTS = 256;
+    BorderEvent m_borderEvents[MAX_BORDER_EVENTS];
+    size_t m_borderEventCount;
+    uint8_t m_initialBorderColor;
+
+    // Double buffering for renderer
+    BorderEvent m_renderBorderEvents[MAX_BORDER_EVENTS];
+    size_t m_renderBorderEventCount;
+    uint8_t m_renderInitialBorderColor;
+
     uint32_t m_ulaClocks;
     uint16_t m_ulaScanline;
     uint16_t m_ulaCycle;

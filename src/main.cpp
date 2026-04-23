@@ -85,12 +85,9 @@ static void emulator_task(void* pvParameters) {
         instr_cpu_end();
 
         display_trigger_frame(spectrum);
-        
+
         frameCount++;
-        if (frameCount % 250 == 0) { // Every 5 seconds at 50Hz
-            ESP_LOGI(TAG, "Emulator running... [%s model, frames: %d]", MODEL_NAME, frameCount);
-        }
-        
+
         // Use vTaskDelayUntil alone for precise timing
         vTaskDelayUntil(&lastWakeTime, frameInterval);
     }
