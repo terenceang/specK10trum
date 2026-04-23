@@ -5,6 +5,7 @@ idf_component_register(SRCS
     "spectrum/Spectrum128K.cpp"
     "z80/z80.c"
     "display/Display.cpp"
+    "expander/Expander.cpp"
     "instrumentation/Instrumentation.cpp"
     "../test/test_runner.cpp"
     "../test/test_memory.cpp"

@@ -1,11 +1,14 @@
 #include <stdio.h>
+#include <sys/stat.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_log.h>
 #include <esp_psram.h>
 #include <esp_spiffs.h>
+#include <esp_timer.h>
 #include "display/Display.h"
 #include "instrumentation/Instrumentation.h"
+#include "expander/Expander.h"
 
 // ============================================
 // SELECT YOUR MODEL HERE
@@ -94,16 +97,27 @@ static void emulator_task(void* pvParameters) {
 }
 
 extern "C" void app_main(void) {
-    // Initialize display and expander as soon as possible for early visual feedback
-    if (!display_init()) {
-        ESP_LOGE(TAG, "Display/Expander initialization FAILED");
-    } else {
-        ESP_LOGI(TAG, "Display/Expander initialization STARTED");
-        display_boot_test();
-    }
-
     // Give the USB serial/JTAG console time to enumerate before printing startup logs.
     vTaskDelay(pdMS_TO_TICKS(2000));
+
+    // Initialize expander first
+    expander_init();
+
+    // Mount SPIFFS immediately so assets (splash, ROMs) are available
+    if (!mountSPIFFS()) {
+        ESP_LOGE(TAG, "SPIFFS mount failed! System may not boot correctly.");
+    }
+
+    // Record start time for minimum splash duration
+    int64_t splashStartTime = esp_timer_get_time();
+
+    // Initialize display as soon as possible for early visual feedback
+    if (!display_init()) {
+        ESP_LOGE(TAG, "Display initialization FAILED");
+    } else {
+        ESP_LOGI(TAG, "Display initialization STARTED");
+        display_boot_test();
+    }
 
     ESP_LOGI(TAG, "**************************************");
     ESP_LOGI(TAG, "       SPEC-K10-TRUM STARTING");
@@ -111,10 +125,6 @@ extern "C" void app_main(void) {
 
     ESP_LOGI(TAG, "Model: %s", MODEL_NAME);
     fflush(stdout);
-
-    // Dump current ESP log levels and force verbose output for startup diagnostics.
-    //esp_log_level_set("*", ESP_LOG_VERBOSE);
-    //ESP_LOGI("test", "global level: %d", esp_log_level_get("test"));
 
     // Initialize PSRAM only when the SDK config enables it.
 #ifdef CONFIG_SPIRAM
@@ -128,8 +138,10 @@ extern "C" void app_main(void) {
     ESP_LOGW(TAG, "PSRAM support is disabled in sdkconfig. Skipping initialization.");
 #endif
 
-    if (!mountSPIFFS()) {
-        ESP_LOGE(TAG, "SPIFFS mount failed, cannot load ROM");
+    // Check if ROM file exists before initializing hardware
+    struct stat st;
+    if (stat(ROM_FILE, &st) != 0) {
+        ESP_LOGE(TAG, "ROM file %s NOT FOUND in SPIFFS! Aborting.", ROM_FILE);
         return;
     }
 
@@ -149,8 +161,19 @@ extern "C" void app_main(void) {
     // Reset the system
     spectrum->reset();
 
-    // Run all tests
+    // Run all tests while splash is showing
     run_all_tests(spectrum, MODEL_NAME);
+    
+    // Ensure splash shows for at least 5 seconds
+    int64_t elapsedMs = (esp_timer_get_time() - splashStartTime) / 1000;
+    if (elapsedMs < 5000) {
+        vTaskDelay(pdMS_TO_TICKS(5000 - elapsedMs));
+    }
+
+    // Clear screen before starting emulator
+    uint16_t* buffer = display_getBackBuffer();
+    memset(buffer, 0, 320 * 240 * 2); // Assuming standard resolution for clearing
+    display_present();
     
     // Dump first few bytes for debugging
     ESP_LOGI(TAG, "First 16 bytes of ROM:");
@@ -170,7 +193,7 @@ extern "C" void app_main(void) {
         NULL,
         5,
         NULL,
-        1
+        0
     );
     
     // Main task idles

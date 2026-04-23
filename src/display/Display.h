@@ -20,6 +20,8 @@ void display_renderSpectrum(SpectrumBase* spectrum);
 void display_present();
 void display_trigger_frame(SpectrumBase* spectrum);
 void display_test_pattern();
+// Show a BMP splash screen from SPIFFS
+bool display_showSplash(const char* filename);
 // Boot-time visual test: blink twice and show a 1s color bar
 void display_boot_test();
 

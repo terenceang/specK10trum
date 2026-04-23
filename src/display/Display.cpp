@@ -9,6 +9,7 @@
 #include <string.h>
 #include <esp_timer.h>
 #include "instrumentation/Instrumentation.h"
+#include "expander/Expander.h"
 
 static const char* TAG = "Display";
 
@@ -160,50 +161,6 @@ static void ili9341_init() {
     vTaskDelay(pdMS_TO_TICKS(20));
 }
 
-static const i2c_port_t XL9535_I2C_PORT = I2C_NUM_0;
-static const gpio_num_t XL9535_SDA = GPIO_NUM_47;
-static const gpio_num_t XL9535_SCL = GPIO_NUM_48;
-static const uint8_t XL9535_ADDR = 0x20;
-static const uint8_t XL9535_REG_OUTPUT_PORT0 = 0x02;
-static const uint8_t XL9535_REG_OUTPUT_PORT1 = 0x03;
-static const uint8_t XL9535_REG_CONFIG_PORT0 = 0x06;
-static const uint8_t XL9535_REG_CONFIG_PORT1 = 0x07;
-static const uint8_t XL9535_BACKLIGHT_MASK = 0x01;
-static const uint8_t XL9535_USER_LED_MASK = 0x80;
-static const uint8_t XL9535_PORT0_OUTPUT_CONFIG = 0xFE;
-static const uint8_t XL9535_PORT1_OUTPUT_CONFIG = 0x7F;
-
-static esp_err_t xl9535_write_register(uint8_t reg, uint8_t value) {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (XL9535_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg, true);
-    i2c_master_write_byte(cmd, value, true);
-    i2c_master_stop(cmd);
-    esp_err_t err = i2c_master_cmd_begin(XL9535_I2C_PORT, cmd, pdMS_TO_TICKS(100));
-    i2c_cmd_link_delete(cmd);
-    return err;
-}
-
-static bool xl9535_init() {
-    i2c_config_t conf;
-    memset(&conf, 0, sizeof(conf));
-    conf.mode = I2C_MODE_MASTER;
-    conf.sda_io_num = XL9535_SDA;
-    conf.scl_io_num = XL9535_SCL;
-    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.master.clk_speed = 400000;
-    i2c_param_config(XL9535_I2C_PORT, &conf);
-    i2c_driver_install(XL9535_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
-
-    if (xl9535_write_register(XL9535_REG_CONFIG_PORT0, XL9535_PORT0_OUTPUT_CONFIG) != ESP_OK) return false;
-    if (xl9535_write_register(XL9535_REG_CONFIG_PORT1, XL9535_PORT1_OUTPUT_CONFIG) != ESP_OK) return false;
-    xl9535_write_register(XL9535_REG_OUTPUT_PORT0, XL9535_BACKLIGHT_MASK);
-    xl9535_write_register(XL9535_REG_OUTPUT_PORT1, XL9535_USER_LED_MASK);
-    return true;
-}
-
 static void update_display_dimensions() {
     if (s_lcdOrientation == MADCTL_LANDSCAPE || s_lcdOrientation == MADCTL_LANDSCAPE_FLIP) {
         s_lcdDisplayWidth = LCD_PANEL_WIDTH; s_lcdDisplayHeight = LCD_PANEL_HEIGHT;
@@ -252,7 +209,7 @@ bool display_init() {
     devcfg.pre_cb = lcd_spi_pre_transfer_callback;
     spi_bus_add_device(SPI2_HOST, &devcfg, &s_spi);
 
-    xl9535_init();
+    expander_set_backlight(true);
     ili9341_init();
 
     int linesPerStrip = s_lcdDisplayHeight / NUM_STRIPS;
@@ -262,7 +219,7 @@ bool display_init() {
     
     s_trans_pool = (spi_transaction_t*)heap_caps_malloc(sizeof(spi_transaction_t) * MAX_TRANSACTIONS, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-    xTaskCreatePinnedToCore(video_task, "video", 4096, NULL, 6, &s_videoTaskHandle, 0);
+    xTaskCreatePinnedToCore(video_task, "video", 4096, NULL, 6, &s_videoTaskHandle, 1);
     return true;
 }
 
@@ -303,42 +260,27 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
         int height = (i == NUM_STRIPS - 1) ? (s_lcdDisplayHeight - startY) : linesPerStrip;
         int bufIdx = i & 1;
 
-        // Wait for the specific ping-pong buffer we are about to reuse.
-        // This handles both intra-frame and inter-frame buffer reuse.
         spi_transaction_t* rtrans;
         while (spi_device_get_trans_result(s_spi, &rtrans, 0) == ESP_OK) {
-            // Drain any finished transactions
         }
-        // Since we have a queue_size of 40 and 6 transactions per strip, 
-        // we can safely queue at least 6 strips without blocking.
-        // We only block if the queue is full or we need to reuse dst.
         if (i >= 2) {
-            // Ensure the previous use of this bufIdx is finished
             for (int j = 0; j < 6; j++) spi_device_get_trans_result(s_spi, &rtrans, portMAX_DELAY);
         }
 
         uint16_t* dst = s_stripBuffers[bufIdx];
         memcpy(dst, &buffer[startY * s_lcdDisplayWidth], s_lcdDisplayWidth * height * 2);
         
-        // ... (rest of the transaction queuing)
-
         spi_transaction_t* t = &s_trans_pool[s_trans_count];
         memset(t, 0, sizeof(spi_transaction_t) * 6);
 
-        // 0x2A Command
         t[0].length = 8; t[0].flags = SPI_TRANS_USE_TXDATA; t[0].tx_data[0] = 0x2A; t[0].user = (void*)0;
-        // 0x2A Data
         t[1].length = 32; t[1].flags = SPI_TRANS_USE_TXDATA; t[1].user = (void*)1;
         t[1].tx_data[0] = 0; t[1].tx_data[1] = 0; t[1].tx_data[2] = (s_lcdDisplayWidth - 1) >> 8; t[1].tx_data[3] = (s_lcdDisplayWidth - 1) & 0xFF;
-        // 0x2B Command
         t[2].length = 8; t[2].flags = SPI_TRANS_USE_TXDATA; t[2].tx_data[0] = 0x2B; t[2].user = (void*)0;
-        // 0x2B Data
         t[3].length = 32; t[3].flags = SPI_TRANS_USE_TXDATA; t[3].user = (void*)1;
         t[3].tx_data[0] = startY >> 8; t[3].tx_data[1] = startY & 0xFF;
         t[3].tx_data[2] = (startY + height - 1) >> 8; t[3].tx_data[3] = (startY + height - 1) & 0xFF;
-        // 0x2C Command
         t[4].length = 8; t[4].flags = SPI_TRANS_USE_TXDATA; t[4].tx_data[0] = 0x2C; t[4].user = (void*)0;
-        // Pixel Data
         t[5].length = s_lcdDisplayWidth * height * 16; t[5].tx_buffer = dst; t[5].user = (void*)1;
 
         for (int j = 0; j < 6; j++) spi_device_queue_trans(s_spi, &t[j], portMAX_DELAY);
@@ -346,21 +288,97 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     }
 }
 
-void display_boot_test() {
-    xl9535_write_register(XL9535_REG_OUTPUT_PORT1, XL9535_USER_LED_MASK);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    xl9535_write_register(XL9535_REG_OUTPUT_PORT1, 0x00);
-    
+bool display_showSplash(const char* filename) {
+    FILE* f = fopen(filename, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open splash file: %s", filename);
+        return false;
+    }
+
+    // Basic BMP Header check
+    uint8_t header[54];
+    if (fread(header, 1, 54, f) != 54 || header[0] != 'B' || header[1] != 'M') {
+        ESP_LOGE(TAG, "Invalid BMP file: %s", filename);
+        fclose(f);
+        return false;
+    }
+
+    int32_t width = *(int32_t*)&header[18];
+    int32_t height = *(int32_t*)&header[22];
+    uint16_t bpp = *(uint16_t*)&header[28];
+    uint32_t dataOffset = *(uint32_t*)&header[10];
+
+    if (bpp != 24) {
+        ESP_LOGE(TAG, "Only 24-bit BMP supported (found %d bpp)", bpp);
+        fclose(f);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Loading splash: %s (%dx%d, %d bpp)", filename, (int)width, (int)height, (int)bpp);
+
+    bool flip = true;
+    if (height < 0) {
+        height = -height;
+        flip = false;
+    }
+
+    // We only support full screen or smaller
+    int drawW = width > s_lcdDisplayWidth ? s_lcdDisplayWidth : width;
+    int drawH = height > s_lcdDisplayHeight ? s_lcdDisplayHeight : height;
+
     uint16_t* buffer = display_getBackBuffer();
-    for (int y = 0; y < s_lcdDisplayHeight; y++) {
-        for (int x = 0; x < s_lcdDisplayWidth; x++) {
-            buffer[y * s_lcdDisplayWidth + x] = s_paletteNormal[(x / (s_lcdDisplayWidth / 8)) % 8];
+    memset(buffer, 0, s_lcdDisplayWidth * s_lcdDisplayHeight * 2);
+
+    fseek(f, dataOffset, SEEK_SET);
+
+    // Read BGR24 and convert to RGB565 line by line
+    // BMP lines are padded to 4-byte boundaries
+    int rowSize = (width * 3 + 3) & ~3;
+    uint8_t* rowBuf = (uint8_t*)heap_caps_malloc(rowSize, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    if (!rowBuf) {
+        ESP_LOGE(TAG, "Failed to allocate row buffer");
+        fclose(f);
+        return false;
+    }
+
+    for (int y = 0; y < drawH; y++) {
+        if (fread(rowBuf, 1, rowSize, f) != (size_t)rowSize) break;
+        
+        int destY = flip ? (drawH - 1 - y) : y;
+        if (destY >= s_lcdDisplayHeight) continue;
+
+        for (int x = 0; x < drawW; x++) {
+            uint8_t b = rowBuf[x * 3 + 0];
+            uint8_t g = rowBuf[x * 3 + 1];
+            uint8_t r = rowBuf[x * 3 + 2];
+            
+            // RGB565 conversion
+            uint16_t color = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+            buffer[destY * s_lcdDisplayWidth + x] = color;
         }
     }
+
+    free(rowBuf);
+    fclose(f);
     display_present();
-    vTaskDelay(pdMS_TO_TICKS(500));
-    memset(buffer, 0, s_lcdDisplayWidth * s_lcdDisplayHeight * 2);
-    display_present();
+    return true;
+}
+
+void display_boot_test() {
+    expander_set_led(true);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    expander_set_led(false);
+    
+    if (!display_showSplash("/spiffs/splash.bmp")) {
+        // Fallback to color bar if splash fails
+        uint16_t* buffer = display_getBackBuffer();
+        for (int y = 0; y < s_lcdDisplayHeight; y++) {
+            for (int x = 0; x < s_lcdDisplayWidth; x++) {
+                buffer[y * s_lcdDisplayWidth + x] = s_paletteNormal[(x / (s_lcdDisplayWidth / 8)) % 8];
+            }
+        }
+        display_present();
+    }
 }
 
 void display_test_pattern() { display_boot_test(); }
