@@ -5,6 +5,7 @@
 #include <esp_psram.h>
 #include <esp_spiffs.h>
 #include "display/Display.h"
+#include "instrumentation/Instrumentation.h"
 
 // ============================================
 // SELECT YOUR MODEL HERE
@@ -74,9 +75,11 @@ static void emulator_task(void* pvParameters) {
     
     while (1) {
         int tStates = 0;
+        instr_cpu_start();
         while (tStates < T_STATES_PER_FRAME) {
             tStates += spectrum->step();
         }
+        instr_cpu_end();
 
         display_trigger_frame(spectrum);
         
@@ -85,8 +88,7 @@ static void emulator_task(void* pvParameters) {
             ESP_LOGI(TAG, "Emulator running... [%s model, frames: %d]", MODEL_NAME, frameCount);
         }
         
-        // Always yield at least 1 tick to satisfy the watchdog and allow other tasks to run.
-        vTaskDelay(1);
+        // Use vTaskDelayUntil alone for precise timing
         vTaskDelayUntil(&lastWakeTime, frameInterval);
     }
 }
