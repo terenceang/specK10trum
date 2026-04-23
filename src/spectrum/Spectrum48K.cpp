@@ -23,6 +23,8 @@ Spectrum48K::Spectrum48K()
     updateMap(1, m_ram, true);           // 0x4000 - 0x7FFF: RAM bank 0
     updateMap(2, m_ram + 0x4000, true);  // 0x8000 - 0xBFFF: RAM bank 1
     updateMap(3, m_ram + 0x8000, true);  // 0xC000 - 0xFFFF: RAM bank 2
+    // Video page pointer (used by renderer)
+    m_videoPagePtr = m_ram;
     
     ESP_LOGI(TAG, "Spectrum 48K initialized (ROM: %p, RAM: %p)", m_rom, m_ram);
 }
@@ -35,19 +37,20 @@ Spectrum48K::~Spectrum48K() {
 void Spectrum48K::reset() {
     SpectrumBase::reset();
     memset(m_ram, 0, RAM_SIZE);
+    m_videoPagePtr = m_ram;
     ESP_LOGI(TAG, "Spectrum 48K reset");
 }
 
 void Spectrum48K::writePort(uint16_t port, uint8_t value) {
     if ((port & 0x0001) == 0) {
-        m_borderColor = value & 0x07;
+        writePortFE(value);
+        return;
     }
 }
 
 uint8_t Spectrum48K::readPort(uint16_t port) {
     if ((port & 0x0001) == 0) {
-        uint8_t row = (port >> 8) & 0x1F;
-        return m_keyboardRows[row & 0x07];
+        return readPortFE(port);
     }
     return getFloatingBusValue();
 }

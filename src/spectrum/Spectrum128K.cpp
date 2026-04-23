@@ -56,6 +56,8 @@ void Spectrum128K::updatePaging() {
     
     // 0x4000-0x7FFF: RAM Bank 5
     updateMap(1, m_ramBanks[5], true);
+    // Video page pointer (used by renderer)
+    m_videoPagePtr = m_ramBanks[5];
     
     // 0x8000-0xBFFF: RAM Bank 2 or Bank 0 (controlled by bit 3 of 0x7FFD)
     // Note: Standard Spectrum 128 has Bank 2 fixed here, but we match the test's expectation.
@@ -76,7 +78,8 @@ void Spectrum128K::writePort(uint16_t port, uint8_t value) {
         }
     } 
     else if ((port & 0x0001) == 0) { // Port 0xFE
-        m_borderColor = value & 0x07;
+        writePortFE(value);
+        return;
     }
     else if ((port & 0xC002) == 0x8000) { // Port 0xBFFD
         m_aySelectedReg = value & 0x0F;
@@ -100,8 +103,7 @@ const SpectrumBase::MemoryRegion* Spectrum128K::getMemoryMap(size_t& count) cons
 
 uint8_t Spectrum128K::readPort(uint16_t port) {
     if ((port & 0x0001) == 0) { // Port 0xFE
-        uint8_t row = (port >> 8) & 0x1F;
-        return m_keyboardRows[row & 0x07];
+        return readPortFE(port);
     }
     else if ((port & 0xC002) == 0xC000) { // Port 0xFFFD
         return readAY(m_aySelectedReg);

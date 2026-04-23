@@ -7,32 +7,8 @@
 
 static const char* TAG = "SpectrumBase";
 
-// Palette and color helper used by the centralized renderer
-static const uint16_t s_paletteNormal_local[8] = {
-    0x0000, // black
-    0x001B, // blue
-    0xF800, // red
-    0xF81F, // magenta
-    0x07E0, // green
-    0x07FF, // cyan
-    0xFFE0, // yellow
-    0xFFFF, // white
-};
-
-static const uint16_t s_paletteBright_local[8] = {
-    0x0000, // black
-    0x001F, // bright blue
-    0xF800, // bright red
-    0xF81F, // bright magenta
-    0x07E0, // bright green
-    0x07FF, // bright cyan
-    0xFFE0, // bright yellow
-    0xFFFF, // bright white
-};
-
-static inline uint16_t spectrum_palette_local(uint8_t index, bool bright) {
-    return bright ? s_paletteBright_local[index & 0x07] : s_paletteNormal_local[index & 0x07];
-}
+// Centralized palette
+#include "SpectrumPalette.h"
 
 // Build-time options for attribute LUT caching.
 #ifndef SPECTRUM_ATTR_LUT_ENABLED
@@ -49,14 +25,13 @@ static inline uint16_t spectrum_palette_local(uint8_t index, bool bright) {
 #define SPECTRUM_ATTR_LUT_MAX 128
 #endif
 
-static inline uint16_t color565_local(uint8_t r, uint8_t g, uint8_t b) {
-    (void)r; (void)g; (void)b; // unused; palettes are precomputed
-    return 0;
-}
+
 
 SpectrumBase::SpectrumBase()
     : m_rom(nullptr)
     , m_romSize(0)
+    , m_videoPagePtr(nullptr)
+    , m_lastRenderedBorderColor(0xFF)
     , m_ulaClocks(0)
     , m_ulaScanline(0)
     , m_ulaCycle(0)
@@ -182,6 +157,16 @@ uint8_t SpectrumBase::getFloatingBusValue() {
     return page ? page[addr & 0x3FFF] : 0xFF;
 }
 
+// Shared handlers for even ULA ports (0xFE and equivalents)
+void SpectrumBase::writePortFE(uint8_t value) {
+    m_borderColor = value & 0x07;
+}
+
+uint8_t SpectrumBase::readPortFE(uint16_t port) {
+    uint8_t row = (port >> 8) & 0x1F;
+    return m_keyboardRows[row & 0x07];
+}
+
 bool SpectrumBase::loadROM(const char* filepath) {
     if (!m_rom) {
         ESP_LOGE(TAG, "ROM buffer not allocated");
@@ -281,7 +266,7 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     const int offset_x = (bufWidth - source_width) / 2;
     const int offset_y = (bufHeight - source_height) / 2;
 
-    const uint16_t border = spectrum_palette_local(getBorderColor() & 0x07, false);
+    const uint16_t border = spectrum_palette(getBorderColor() & 0x07, false);
     const uint32_t border32 = (border << 16) | border;
 
     // Attribute LUT cache: up to 128 possible attribute combinations
@@ -314,12 +299,12 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         }
 
         size_t bytes = 256 * 8 * sizeof(uint16_t);
-        uint16_t* alloc = (uint16_t*)heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+        uint16_t* alloc = (uint16_t*)allocateMemory(bytes, "Attr LUT");
         if (!alloc) return nullptr;
 
         bool bright = (attr_index & 0x40) != 0;
-        uint16_t ink = spectrum_palette_local(attr_index & 0x07, bright);
-        uint16_t paper = spectrum_palette_local((attr_index >> 3) & 0x07, bright);
+        uint16_t ink = spectrum_palette(attr_index & 0x07, bright);
+        uint16_t paper = spectrum_palette((attr_index >> 3) & 0x07, bright);
 
         for (int pix = 0; pix < 256; ++pix) {
             uint16_t* out = &alloc[pix * 8];
@@ -332,7 +317,7 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         return alloc;
     };
 
-    // Fast border clear using 32-bit writes
+    // Fast border clear using 32-bit writes — always clear to avoid visual artifacts
     uint32_t* buf32 = (uint32_t*)buffer;
     for (int i = 0; i < (offset_y * bufWidth) / 2; ++i) buf32[i] = border32;
     int bottomStart = (offset_y + source_height) * bufWidth;
@@ -343,7 +328,7 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         for (int i = (offset_x + source_width) / 2; i < bufWidth / 2; ++i) lineStart32[i] = border32;
     }
 
-    uint8_t* ramBank1 = getPagePtr(1);
+    uint8_t* ramBank1 = m_videoPagePtr ? m_videoPagePtr : getPagePtr(1);
     if (!ramBank1) return;
 
     uint16_t* current_luts[128];
@@ -364,11 +349,13 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
                 dst64[0] = src64[0]; dst64[1] = src64[1];
             } else {
                 bool bright = (attr & 0x40) != 0;
-                uint16_t ink = spectrum_palette_local(attr & 0x07, bright);
-                uint16_t paper = spectrum_palette_local((attr >> 3) & 0x07, bright);
+                uint16_t ink = spectrum_palette(attr & 0x07, bright);
+                uint16_t paper = spectrum_palette((attr >> 3) & 0x07, bright);
                 for (int b = 0; b < 8; ++b) linePtr[b] = (pixels & (0x80 >> b)) ? ink : paper;
             }
             linePtr += 8;
         }
     }
+    // Update last rendered border color
+    m_lastRenderedBorderColor = m_borderColor;
 }

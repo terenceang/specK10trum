@@ -58,6 +58,11 @@ public:
 protected:
     void advanceULA(int tstates);
     uint8_t getFloatingBusValue();
+
+    // Shared Port 0xFE handlers
+    void writePortFE(uint8_t value);
+    uint8_t readPortFE(uint16_t port);
+
     Z80 m_cpu;
 
     // Memory mapping cache for speed
@@ -67,6 +72,10 @@ protected:
     uint8_t* m_rom;           // ROM buffer (subclasses decide size)
     size_t m_romSize;
     
+    // Renderer optimization
+    uint8_t* m_videoPagePtr;  // Pointer to active video RAM (usually Bank 5)
+    uint8_t m_lastRenderedBorderColor; // Tracking for border clear optimization
+
     uint32_t m_ulaClocks;
     uint16_t m_ulaScanline;
     uint16_t m_ulaCycle;
