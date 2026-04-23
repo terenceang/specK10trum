@@ -1,6 +1,7 @@
 idf_component_register(SRCS 
     "main.cpp"
     "spectrum/SpectrumBase.cpp"
+    "spectrum/Snapshot.cpp"
     "spectrum/Spectrum48K.cpp"
     "spectrum/Spectrum128K.cpp"
     "z80/z80.c"

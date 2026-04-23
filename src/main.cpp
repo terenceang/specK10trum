@@ -155,17 +155,7 @@ extern "C" void app_main(void) {
     spectrum->reset();
 
     // If an autoexec snapshot exists in SPIFFS, attempt to load it now
-    struct stat st_snap;
-    bool snapshot_loaded = false;
-    if (stat("/spiffs/autoexec.z80", &st_snap) == 0) {
-        ESP_LOGI(TAG, "autoexec.z80 found in SPIFFS, attempting to load snapshot...");
-        if (spectrum->loadSnapshot("/spiffs/autoexec.z80")) {
-            ESP_LOGI(TAG, "Snapshot applied successfully.");
-            snapshot_loaded = true;
-        } else {
-            ESP_LOGW(TAG, "Snapshot present but failed to load.");
-        }
-    }
+    bool snapshot_loaded = spectrum->loadAutoexec();
 
     // Run all tests while splash is showing unless we loaded a snapshot.
     if (!snapshot_loaded) {
