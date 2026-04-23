@@ -3,3 +3,25 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# PlatformIO build artifacts
+.pioenvs/
+.pio/build/
+.pio/state.json
+
+# Common editor/temp files
+__pycache__/
+*.py[cod]
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Build outputs
+build/
+*.elf
+*.bin
+*.map
+
+# Versioning script
+scripts/bump_version.py
