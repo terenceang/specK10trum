@@ -13,8 +13,8 @@
 // ============================================
 // SELECT YOUR MODEL HERE
 // ============================================
-//#define SPECTRUM_MODEL_48K
 #define SPECTRUM_MODEL_48K
+//#define SPECTRUM_MODEL_128K
 // ============================================
 
 #if defined(SPECTRUM_MODEL_128K)
@@ -68,13 +68,12 @@ static bool mountSPIFFS() {
 }
 
 static void emulator_task(void* pvParameters) {
+    (void)pvParameters;
     ESP_LOGI(TAG, "Emulator task started on core %d", xPortGetCoreID());
     
     const int T_STATES_PER_FRAME = 69888; // 3.5 MHz / 50.08 Hz
     TickType_t lastWakeTime = xTaskGetTickCount();
     const TickType_t frameInterval = pdMS_TO_TICKS(20); // ~50 Hz
-    
-    int frameCount = 0;
     
     while (1) {
         int tStates = 0;
@@ -85,8 +84,6 @@ static void emulator_task(void* pvParameters) {
         instr_cpu_end();
 
         display_trigger_frame(spectrum);
-
-        frameCount++;
 
         // Use vTaskDelayUntil alone for precise timing
         vTaskDelayUntil(&lastWakeTime, frameInterval);
@@ -121,7 +118,6 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "**************************************");
 
     ESP_LOGI(TAG, "Model: %s", MODEL_NAME);
-    fflush(stdout);
 
     // Initialize PSRAM only when the SDK config enables it.
 #ifdef CONFIG_SPIRAM
@@ -172,9 +168,6 @@ extern "C" void app_main(void) {
     }
 
     // Run all tests while splash is showing unless we loaded a snapshot.
-    // Running the test suite mutates CPU and RAM which would overwrite the
-    // restored snapshot state. If you want to keep the snapshot active at
-    // boot, disable tests or remove the autoexec.z80 file from SPIFFS.
     if (!snapshot_loaded) {
         run_all_tests(spectrum, MODEL_NAME);
         // Reset again after tests to ensure a clean state for the emulator
@@ -190,19 +183,7 @@ extern "C" void app_main(void) {
     }
 
     // Clear both frame buffers before starting emulator to prevent splash screen ghosting
-    for (int i = 0; i < 2; i++) {
-        uint16_t* buffer = display_getBackBuffer();
-        memset(buffer, 0, 320 * 240 * 2); 
-        display_present();
-    }
-    
-    // Dump first few bytes for debugging
-    ESP_LOGI(TAG, "First 16 bytes of ROM:");
-    for (int i = 0; i < 16; i++) {
-        printf("%02X ", spectrum->read(i));
-    }
-    printf("\n");
-    fflush(stdout);
+    display_clear();
     
     ESP_LOGI(TAG, "✓ Initialization complete! Starting emulator task.");
     

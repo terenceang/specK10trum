@@ -202,406 +202,192 @@ bool SpectrumBase::loadROM(const char* filepath) {
     return true;
 }
 
-bool SpectrumBase::loadSnapshot(const char* filepath) {
-    // Read entire file into memory
-    FILE* f = fopen(filepath, "rb");
-    if (!f) {
-        ESP_LOGE(TAG, "Failed to open snapshot: %s", filepath);
-        return false;
-    }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        ESP_LOGE(TAG, "Failed to seek snapshot file");
-        return false;
-    }
-    long size = ftell(f);
-    if (size <= 0) size = 0;
-    if (fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        ESP_LOGE(TAG, "Failed to rewind snapshot file");
-        return false;
+void SpectrumBase::restoreCPUFromSnapshot(const Z80SnapshotHeader& header, const uint8_t* filebuf, size_t got) {
+    if (!header.haveHeader) return;
+    const uint8_t* hdr = header.hdr;
+    
+    // Registers in header (LSB first for 16-bit pairs)
+    uint16_t pc = (uint16_t)hdr[6] | ((uint16_t)hdr[7] << 8);
+    uint16_t sp = (uint16_t)hdr[8] | ((uint16_t)hdr[9] << 8);
+    uint8_t flags12 = hdr[12];
+    uint8_t flags29 = hdr[29];
+
+    // For version 2/3 files prefer extended header PC when present
+    if (pc == 0 && header.extra_len >= 2) {
+        pc = header.ext_pc;
+    } else if (pc == 0 && got >= 34) {
+        pc = (uint16_t)filebuf[32] | ((uint16_t)filebuf[33] << 8);
     }
 
-    uint8_t* filebuf = (uint8_t*)malloc(size > 0 ? (size_t)size : 1);
-    if (!filebuf) {
-        fclose(f);
-        ESP_LOGE(TAG, "Out of memory reading snapshot");
-        return false;
+    // Combine R-register high bit from flags12 bit0
+    uint8_t R_full = (hdr[11] & 0x7F) | ((flags12 & 0x01) ? 0x80 : 0x00);
+    
+    // Restore border color from flags12 bits 1-3
+    m_borderColor = (flags12 >> 1) & 0x07;
+    m_initialBorderColor = m_borderColor;
+    m_renderInitialBorderColor = m_borderColor;
+    m_borderEventCount = 0;
+    m_renderBorderEventCount = 0;
+    ESP_LOGI(TAG, "Restored border color: %u", (unsigned)m_borderColor);
+
+    // Apply to Z80 CPU state
+    m_cpu.a = hdr[0]; m_cpu.f = hdr[1];
+    m_cpu.c = hdr[2]; m_cpu.b = hdr[3];
+    m_cpu.l = hdr[4]; m_cpu.h = hdr[5];
+    m_cpu.e = hdr[13]; m_cpu.d = hdr[14];
+
+    m_cpu.c_ = hdr[15]; m_cpu.b_ = hdr[16];
+    m_cpu.e_ = hdr[17]; m_cpu.d_ = hdr[18];
+    m_cpu.l_ = hdr[19]; m_cpu.h_ = hdr[20];
+    m_cpu.a_ = hdr[21]; m_cpu.f_ = hdr[22];
+
+    m_cpu.iy = (uint16_t)hdr[23] | ((uint16_t)hdr[24] << 8);
+    m_cpu.ix = (uint16_t)hdr[25] | ((uint16_t)hdr[26] << 8);
+    m_cpu.sp = sp; m_cpu.pc = pc;
+    m_cpu.i = hdr[10]; m_cpu.r = R_full;
+
+    m_cpu.iff1 = (hdr[27] != 0) ? 1 : 0;
+    m_cpu.iff2 = (hdr[28] != 0) ? 1 : 0;
+    m_cpu.im = flags29 & 0x03;
+
+    // If PC points to HALT (0x76) mark CPU halted so emulation resumes correctly
+    if (read((uint16_t)pc) == 0x76) {
+        m_cpu.halted = 1;
+        ESP_LOGI(TAG, "Restored PC points to HALT; setting cpu.halted=1");
     }
-    size_t got = fread(filebuf, 1, (size_t)size, f);
+
+    ESP_LOGI(TAG, "CPU Restored: PC=%04X SP=%04X IM=%u IFF1=%u", pc, sp, m_cpu.im, m_cpu.iff1);
+}
+
+bool SpectrumBase::decompressZ80RLE(const uint8_t* src, size_t srclen, uint8_t* dest, size_t destlen, size_t offset) {
+    size_t inpos = offset;
+    size_t outpos = 0;
+
+    while (inpos < srclen && outpos < destlen) {
+        if (inpos + 3 < srclen && src[inpos] == 0xED && src[inpos+1] == 0xED) {
+            uint8_t count = src[inpos+2];
+            uint8_t value = src[inpos+3];
+            inpos += 4;
+            if (count == 0) {
+                if (outpos < destlen) dest[outpos++] = 0xED;
+                if (outpos < destlen) dest[outpos++] = 0xED;
+                if (outpos < destlen) dest[outpos++] = value;
+            } else {
+                for (int i = 0; i < count && outpos < destlen; ++i) dest[outpos++] = value;
+            }
+        } else {
+            dest[outpos++] = src[inpos++];
+        }
+    }
+    return outpos > 0;
+}
+
+void SpectrumBase::loadCompressedMemPage(const uint8_t* src, size_t srclen, uint8_t* memPage, size_t memlen) {
+    size_t dataOff = 0;
+    int ed_cnt = 0;
+    size_t memidx = 0;
+
+    while (dataOff < srclen && memidx < memlen) {
+        uint8_t databyte = src[dataOff++];
+        if (ed_cnt == 0) {
+            if (databyte != 0xED) memPage[memidx++] = databyte;
+            else ed_cnt = 1;
+        } else if (ed_cnt == 1) {
+            if (databyte != 0xED) {
+                if (memidx < memlen) memPage[memidx++] = 0xED;
+                if (memidx < memlen) memPage[memidx++] = databyte;
+                ed_cnt = 0;
+            } else ed_cnt = 2;
+        } else if (ed_cnt == 2) {
+            uint8_t repcnt = databyte;
+            if (dataOff < srclen) {
+                uint8_t repval = src[dataOff++];
+                for (uint8_t i = 0; i < repcnt && memidx < memlen; ++i) memPage[memidx++] = repval;
+            }
+            ed_cnt = 0;
+        }
+    }
+    // Handle trailing ED
+    if (ed_cnt == 1 && memidx < memlen) {
+        memPage[memidx++] = 0xED;
+    }
+}
+
+bool SpectrumBase::loadSnapshot(const char* filepath) {
+    FILE* f = fopen(filepath, "rb");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    size_t got = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    uint8_t* filebuf = (uint8_t*)malloc(got);
+    if (!filebuf) { fclose(f); return false; }
+    fread(filebuf, 1, got, f);
     fclose(f);
 
-    // Parse .z80 30-byte header if present to capture CPU/register state
-    bool haveHeader = false;
-    uint8_t hdr[30] = {0};
+    Z80SnapshotHeader header = {};
+    memset(&header, 0, sizeof(header));
     uint16_t hdr_pc = 0;
     if (got >= 30) {
-        memcpy(hdr, filebuf, 30);
-        haveHeader = true;
-        hdr_pc = (uint16_t)hdr[6] | ((uint16_t)hdr[7] << 8);
+        memcpy(header.hdr, filebuf, 30);
+        header.haveHeader = true;
+        hdr_pc = (uint16_t)header.hdr[6] | ((uint16_t)header.hdr[7] << 8);
     }
 
-    // If an extended header is present (v2/v3 .z80), bytes 30..31 give its length.
-    // In .z80 format, v2/v3 headers are only present if the PC in the main header is 0.
-    uint16_t extra_len = 0;
-    uint16_t ext_pc = 0;
-    if (haveHeader && hdr_pc == 0 && got >= 34) {
-        extra_len = (uint16_t)filebuf[30] | ((uint16_t)filebuf[31] << 8);
-        ESP_LOGI(TAG, "Snapshot extra-header length: %u", extra_len);
-        if (extra_len >= 2 && got >= 34) {
-            ext_pc = (uint16_t)filebuf[32] | ((uint16_t)filebuf[33] << 8);
-            ESP_LOGI(TAG, "Extended header PC: %04X", ext_pc);
-        }
-        // Dump up to first 16 bytes of the extra header for inspection
-        int dump = extra_len;
-        if (dump > 16) dump = 16;
-        if (dump > 0 && got >= 32 + dump) {
-            char bufdump[64];
-            int pos = 0;
-            for (int i = 0; i < dump; ++i) {
-                pos += snprintf(bufdump + pos, sizeof(bufdump) - pos, "%02X ", filebuf[32 + i]);
-            }
-            ESP_LOGI(TAG, "Extra header bytes (first %d): %s", dump, bufdump);
+    if (header.haveHeader && hdr_pc == 0 && got >= 34) {
+        header.extra_len = (uint16_t)filebuf[30] | ((uint16_t)filebuf[31] << 8);
+        if (header.extra_len >= 2) {
+            header.ext_pc = (uint16_t)filebuf[32] | ((uint16_t)filebuf[33] << 8);
         }
     }
 
-    // Determine and log the .z80 version
-    if (haveHeader) {
-        if (hdr_pc != 0) {
-            ESP_LOGI(TAG, "Detected .z80 Version 1 snapshot");
-        } else if (extra_len == 23 || extra_len == 30) {
-            ESP_LOGI(TAG, "Detected .z80 Version 2 snapshot (extra_len=%u)", extra_len);
-        } else if (extra_len == 54 || extra_len == 55) {
-            ESP_LOGI(TAG, "Detected .z80 Version 3 snapshot (extra_len=%u)", extra_len);
-        } else {
-            ESP_LOGI(TAG, "Detected .z80 Version 2/3 snapshot (extra_len=%u)", extra_len);
-        }
-    }
-
-    // Helper to restore CPU state from header bytes (called after memory applied)
-    auto restore_cpu_from_header = [&]() {
-        if (!haveHeader) return;
-        // Registers in header (LSB first for 16-bit pairs)
-        uint8_t A = hdr[0];
-        uint8_t F = hdr[1];
-        uint8_t C = hdr[2];
-        uint8_t B = hdr[3];
-        uint8_t L = hdr[4];
-        uint8_t H = hdr[5];
-        uint16_t pc = (uint16_t)hdr[6] | ((uint16_t)hdr[7] << 8);
-        uint16_t sp = (uint16_t)hdr[8] | ((uint16_t)hdr[9] << 8);
-        uint8_t I = hdr[10];
-        uint8_t R = hdr[11];
-        uint8_t flags12 = hdr[12];
-
-        uint8_t E = hdr[13];
-        uint8_t D = hdr[14];
-        uint8_t C2 = hdr[15];
-        uint8_t B2 = hdr[16];
-        uint8_t E2 = hdr[17];
-        uint8_t D2 = hdr[18];
-        uint8_t L2 = hdr[19];
-        uint8_t H2 = hdr[20];
-        uint8_t A2 = hdr[21];
-        uint8_t F2 = hdr[22];
-        uint16_t IY = (uint16_t)hdr[23] | ((uint16_t)hdr[24] << 8);
-        uint16_t IX = (uint16_t)hdr[25] | ((uint16_t)hdr[26] << 8);
-        uint8_t iff1_byte = hdr[27];
-        uint8_t iff2_byte = hdr[28];
-        uint8_t flags29 = hdr[29];
-
-        // For version 2/3 files prefer extended header PC when present
-        if (hdr_pc == 0 && extra_len >= 2 && ext_pc != 0) {
-            pc = ext_pc;
-        } else if (pc == 0 && got >= 34) {
-            uint16_t addlen = (uint16_t)filebuf[30] | ((uint16_t)filebuf[31] << 8);
-            if (addlen >= 2 && got >= 34) {
-                pc = (uint16_t)filebuf[32] | ((uint16_t)filebuf[33] << 8);
-            }
-        }
-
-        // Combine R-register high bit from flags12 bit0
-        uint8_t R_full = (R & 0x7F) | ((flags12 & 0x01) ? 0x80 : 0x00);
-        
-        // Restore border color from flags12 bits 1-3
-        m_borderColor = (flags12 >> 1) & 0x07;
-        m_initialBorderColor = m_borderColor;
-        m_renderInitialBorderColor = m_borderColor;
-        m_borderEventCount = 0;
-        m_renderBorderEventCount = 0;
-        ESP_LOGI(TAG, "Restored border color: %u", (unsigned)m_borderColor);
-
-        // Log parsed header details for debugging
-        ESP_LOGI(TAG, "Snapshot header: A=%02X F=%02X B=%02X C=%02X D=%02X E=%02X H=%02X L=%02X", A, F, B, C, D, E, H, L);
-        ESP_LOGI(TAG, "Shadow regs: A'=%02X F'=%02X B'=%02X C'=%02X D'=%02X E'=%02X H'=%02X L'=%02X", A2, F2, B2, C2, D2, E2, H2, L2);
-        ESP_LOGI(TAG, "IX=%04X IY=%04X SP=%04X PC=%04X I=%02X R=%02X (full=%02X)", IX, IY, sp, pc, I, R, R_full);
-        ESP_LOGI(TAG, "IFF1=%u IFF2=%u IM=%u flags12=%02X flags29=%02X", (unsigned)(iff1_byte?1:0), (unsigned)(iff2_byte?1:0), (unsigned)(flags29 & 0x03), flags12, flags29);
-
-        // Apply to Z80 CPU state
-        m_cpu.a = A; m_cpu.f = F;
-        m_cpu.b = B; m_cpu.c = C;
-        m_cpu.d = D; m_cpu.e = E;
-        m_cpu.h = H; m_cpu.l = L;
-
-        m_cpu.a_ = A2; m_cpu.f_ = F2;
-        m_cpu.b_ = B2; m_cpu.c_ = C2;
-        m_cpu.d_ = D2; m_cpu.e_ = E2;
-        m_cpu.h_ = H2; m_cpu.l_ = L2;
-
-        m_cpu.ix = IX; m_cpu.iy = IY;
-        m_cpu.sp = sp; m_cpu.pc = pc;
-        m_cpu.i = I; m_cpu.r = R_full;
-
-        m_cpu.iff1 = (iff1_byte != 0) ? 1 : 0;
-        m_cpu.iff2 = iff2_byte ? 1 : 0;
-        m_cpu.im = flags29 & 0x03;
-
-        // If PC points to HALT (0x76) mark CPU halted so emulation resumes correctly
-        uint8_t instr = read((uint16_t)pc);
-        if (instr == 0x76) {
-            m_cpu.halted = 1;
-            ESP_LOGI(TAG, "Restored PC points to HALT; setting cpu.halted=1");
-        }
-
-        // Additional runtime state logging
-        ESP_LOGI(TAG, "CPU runtime: halted=%u ei_delay=%u clocks=%llu", (unsigned)m_cpu.halted, (unsigned)m_cpu.ei_delay, (unsigned long long)m_cpu.clocks);
-        ESP_LOGI(TAG, "CPU control: IFF1=%u IFF2=%u IM=%u", (unsigned)m_cpu.iff1, (unsigned)m_cpu.iff2, (unsigned)m_cpu.im);
-
-        // Dump a few bytes at PC to inspect next instruction(s)
-        uint16_t dump_pc = m_cpu.pc;
-        uint8_t opbuf[8];
-        for (int i = 0; i < 8; ++i) opbuf[i] = read((uint16_t)(dump_pc + i));
-        ESP_LOGI(TAG, "PC=%04X next bytes: %02X %02X %02X %02X %02X %02X %02X %02X", dump_pc, opbuf[0], opbuf[1], opbuf[2], opbuf[3], opbuf[4], opbuf[5], opbuf[6], opbuf[7]);
-    };
-
-    // If the file contains a raw RAM image, try passing it directly
+    bool success = false;
     if (applySnapshotData(filebuf, got)) {
-        restore_cpu_from_header();
-        free(filebuf);
-        ESP_LOGI(TAG, "Snapshot applied as raw image (%zu bytes)", got);
-        return true;
-    }
-
-    // Try simple .z80 RLE decompression starting at common offsets (30-byte header or 0)
-    bool decompressed_ok = false;
-    uint8_t* tmpout = (uint8_t*)malloc(49152); // max 48K raw target for fallback
-    if (!tmpout) {
-        free(filebuf);
-        ESP_LOGE(TAG, "Out of memory for snapshot decompression");
-        return false;
-    }
-
-    auto try_decompress = [&](int offset) -> bool {
-        size_t inpos = offset >= 0 ? (size_t)offset : 0;
-        size_t inlen = got;
-        size_t outpos = 0;
-
-        while (inpos < inlen && outpos < 49152) {
-            // Standard .z80 RLE: 0xED 0xED <count> <value>
-            if (inpos + 3 < inlen && filebuf[inpos] == 0xED && filebuf[inpos+1] == 0xED) {
-                uint8_t count = filebuf[inpos+2];
-                uint8_t value = filebuf[inpos+3];
-                inpos += 4;
-                if (count == 0) {
-                    // Historically some formats may encode ED ED 00 as literal sequence;
-                    // treat as two ED bytes followed by literal 00 and continue.
-                    if (outpos < 49152) tmpout[outpos++] = 0xED;
-                    if (outpos < 49152) tmpout[outpos++] = 0xED;
-                    if (outpos < 49152) tmpout[outpos++] = value; // value is 0
+        success = true;
+    } else {
+        uint8_t* tmpout = (uint8_t*)malloc(49152);
+        if (tmpout) {
+            if (hdr_pc != 0) { // Version 1
+                bool is_compressed = (header.hdr[12] & 0x20) != 0;
+                if (!is_compressed && got >= 30 + 49152) {
+                    success = applySnapshotData(filebuf + 30, 49152);
                 } else {
-                    for (int i = 0; i < count && outpos < 49152; ++i) tmpout[outpos++] = value;
+                    if (decompressZ80RLE(filebuf, got, tmpout, 49152, 30)) {
+                        success = applySnapshotData(tmpout, 49152);
+                    }
                 }
-            } else {
-                tmpout[outpos++] = filebuf[inpos++];
+            } else if (header.extra_len > 0) { // Version 2/3
+                size_t pos = 30 + 2 + header.extra_len;
+                Spectrum128K* s128 = is128k() ? static_cast<Spectrum128K*>(this) : nullptr;
+                uint8_t* tmp48 = s128 ? nullptr : (uint8_t*)calloc(1, 49152);
+                uint16_t pageStart48[12] = {0,0,0,0,0x8000,0xC000,0,0,0x4000,0,0};
+
+                if (s128 && header.extra_len >= 4) writePort(0x7FFD, filebuf[32 + 3]);
+
+                while (pos + 3 <= got) {
+                    uint16_t compLen = (uint16_t)filebuf[pos] | ((uint16_t)filebuf[pos + 1] << 8);
+                    uint8_t pageId = filebuf[pos + 2];
+                    pos += 3;
+                    uint8_t* dest = nullptr;
+                    if (s128 && pageId >= 3 && pageId < 11) dest = s128->getBank(pageId - 3);
+                    else if (tmp48 && pageId < 12 && pageStart48[pageId]) dest = tmp48 + (pageStart48[pageId] - 0x4000);
+
+                    if (dest) {
+                        if (compLen == 0xFFFF) memcpy(dest, filebuf + pos, 0x4000);
+                        else loadCompressedMemPage(filebuf + pos, compLen, dest, 0x4000);
+                        success = true;
+                    }
+                    pos += (compLen == 0xFFFF) ? 0x4000 : compLen;
+                }
+                if (tmp48) { if (success) applySnapshotData(tmp48, 49152); free(tmp48); }
             }
-        }
-
-        if (outpos > 0) {
-            if (applySnapshotData(tmpout, outpos)) return true;
-        }
-        return false;
-    };
-
-    // --- Version 1 Handling ---
-    if (hdr_pc != 0) {
-        bool is_v1_compressed = (hdr[12] & 0x20) != 0;
-        if (!is_v1_compressed && got >= 30 + 49152) {
-            ESP_LOGI(TAG, "Snapshot is v1 uncompressed, applying directly from offset 30");
-            if (applySnapshotData(filebuf + 30, 49152)) {
-                decompressed_ok = true;
-            }
-        } else {
-            decompressed_ok = try_decompress(30);
-        }
-
-        if (decompressed_ok) {
-            restore_cpu_from_header();
             free(tmpout);
-            free(filebuf);
-            ESP_LOGI(TAG, "Snapshot applied from %s (v1)", filepath);
-            return true;
         }
     }
 
-    // Attempt full v2/v3 block parsing (multi-block format)
-    if (hdr_pc == 0 && extra_len > 0) {
-        size_t start = 30 + 2 + extra_len;
-        if (start < got) {
-            ESP_LOGI(TAG, "Attempting v2/v3 block parsing at offset %zu", start);
-
-            // Helper to decompress a compressed page from an in-memory buffer
-            auto loadCompressedMemPageFromBuffer = [&](const uint8_t* src, size_t srclen, uint8_t* memPage, size_t memlen) {
-                size_t dataOff = 0;
-                int ed_cnt = 0;
-                uint8_t repcnt = 0;
-                uint8_t repval = 0;
-                size_t memidx = 0;
-
-                while (dataOff < srclen && memidx < memlen) {
-                    uint8_t databyte = src[dataOff++];
-                    if (ed_cnt == 0) {
-                        if (databyte != 0xED) memPage[memidx++] = databyte;
-                        else ed_cnt = 1;
-                    } else if (ed_cnt == 1) {
-                        if (databyte != 0xED) {
-                            memPage[memidx++] = 0xED;
-                            memPage[memidx++] = databyte;
-                            ed_cnt = 0;
-                        } else ed_cnt = 2;
-                    } else if (ed_cnt == 2) {
-                        repcnt = databyte;
-                        ed_cnt = 3;
-                    } else if (ed_cnt == 3) {
-                        repval = databyte;
-                        for (uint8_t i = 0; i < repcnt && memidx < memlen; ++i) memPage[memidx++] = repval;
-                        ed_cnt = 0;
-                    }
-                }
-            };
-
-            Spectrum128K* s128 = nullptr;
-            if (is128k()) s128 = static_cast<Spectrum128K*>(this);
-
-            // For 48K snapshots we'll collect data into a temporary 48K buffer and call applySnapshotData
-            uint8_t* tmp48 = nullptr;
-            uint16_t pageStart48[12] = {0,0,0,0,0x8000,0xC000,0,0,0x4000,0,0};
-            if (!s128) {
-                tmp48 = (uint8_t*)malloc(49152);
-                if (tmp48) memset(tmp48, 0, 49152);
-            }
-
-            // If this is a 128K snapshot, restore paging register from extra header (header[35])
-            if (s128 && extra_len >= 4) {
-                uint8_t b35 = filebuf[32 + 3];
-                ESP_LOGI(TAG, "Found paging byte in extra header: %02X", b35);
-                // writePort will handle locking and mapping
-                writePort(0x7FFD, b35);
-            }
-
-            size_t pos = start;
-            bool any_written = false;
-            while (pos + 3 <= got) {
-                uint16_t compDataLen = (uint16_t)filebuf[pos] | ((uint16_t)filebuf[pos + 1] << 8);
-                uint8_t hdr2 = filebuf[pos + 2];
-                pos += 3;
-
-                if (compDataLen == 0xFFFF) {
-                    // uncompressed 16KB
-                    if (pos + 0x4000 > got) break;
-                    if (s128) {
-                        if (hdr2 >= 3 && hdr2 < 11) {
-                            uint8_t* bankPtr = s128->getBank(hdr2 - 3);
-                            if (bankPtr) {
-                                memcpy(bankPtr, filebuf + pos, 0x4000);
-                                any_written = true;
-                                ESP_LOGI(TAG, "Applied uncompressed block id=%u -> bank %d", hdr2, hdr2 - 3);
-                            }
-                        }
-                    } else if (tmp48) {
-                        if (hdr2 < 12) {
-                            uint16_t memoff = pageStart48[hdr2];
-                            if (memoff != 0) {
-                                memcpy(tmp48 + (memoff - 0x4000), filebuf + pos, 0x4000);
-                                any_written = true;
-                                ESP_LOGI(TAG, "Buffered uncompressed 48K block id=%u -> offset %04X", hdr2, memoff);
-                            }
-                        }
-                    }
-                    pos += 0x4000;
-                } else {
-                    if (pos + compDataLen > got) break;
-                    if (s128) {
-                        if (hdr2 >= 3 && hdr2 < 11) {
-                            uint8_t* bankPtr = s128->getBank(hdr2 - 3);
-                            if (bankPtr) {
-                                loadCompressedMemPageFromBuffer(filebuf + pos, compDataLen, bankPtr, 0x4000);
-                                any_written = true;
-                                ESP_LOGI(TAG, "Applied compressed block id=%u len=%u -> bank %d", hdr2, compDataLen, hdr2 - 3);
-                            }
-                        }
-                    } else if (tmp48) {
-                        if (hdr2 < 12) {
-                            uint16_t memoff = pageStart48[hdr2];
-                            if (memoff != 0) {
-                                loadCompressedMemPageFromBuffer(filebuf + pos, compDataLen, tmp48 + (memoff - 0x4000), 0x4000);
-                                any_written = true;
-                                ESP_LOGI(TAG, "Buffered compressed 48K block id=%u len=%u -> offset %04X", hdr2, compDataLen, memoff);
-                            }
-                        }
-                    }
-                    pos += compDataLen;
-                }
-            }
-
-            if (any_written) {
-                // Try to heuristically restore 7FFD/paging from extra header bytes (common location)
-                if (s128 && extra_len >= 4) {
-                    // Commonly the paging byte can appear near the start of the extra header; try offsets 2 and 4
-                    uint8_t cand1 = filebuf[32 + 2];
-                    uint8_t cand2 = filebuf[32 + 4 < 32 + extra_len ? 32 + 4 : 32 + 2];
-                    uint8_t cand = 0xFF;
-                    if (cand1 <= 0x3F) cand = cand1;
-                    else if (cand2 <= 0x3F) cand = cand2;
-                    if (cand != 0xFF) {
-                        ESP_LOGI(TAG, "Heuristic paging restore: writing 0x7FFD=%02X", cand);
-                        writePort(0x7FFD, cand);
-                    }
-                }
-
-                // If we buffered a 48K image, apply it now
-                if (!s128 && tmp48) {
-                    applySnapshotData(tmp48, 49152);
-                    free(tmp48);
-                }
-
-                restore_cpu_from_header();
-                free(tmpout);
-                free(filebuf);
-                ESP_LOGI(TAG, "Snapshot applied via v2/v3 block parser (%s)", filepath);
-                return true;
-            }
-            if (tmp48) free(tmp48);
-        }
-    }
-
-    // --- Last Resort Fallbacks ---
-    if (!decompressed_ok && got > 30) decompressed_ok = try_decompress(30);
-    if (!decompressed_ok) decompressed_ok = try_decompress(0);
-
-    if (decompressed_ok) {
-        // restore CPU state now that memory has been applied
-        restore_cpu_from_header();
-        free(tmpout);
-        free(filebuf);
-        ESP_LOGI(TAG, "Snapshot decompressed and applied (fallback) from %s", filepath);
-        return true;
-    }
-
-    free(tmpout);
+    if (success) restoreCPUFromSnapshot(header, filebuf, got);
     free(filebuf);
-
-    ESP_LOGE(TAG, "Snapshot could not be applied (file: %s, size: %zu)", filepath, got);
-    return false;
+    return success;
 }
 
 void SpectrumBase::setKeyboardRow(uint8_t row, uint8_t columns) {
@@ -664,34 +450,41 @@ void SpectrumBase::advanceULA(int tstates) {
 }
 
 void SpectrumBase::dumpMemory(uint16_t start, uint16_t end) {
-    printf("\n=== Memory Dump (0x%04X - 0x%04X) ===\n", start, end);
+    ESP_LOGI(TAG, "Memory Dump (0x%04X - 0x%04X)", start, end);
+    char line[128];
+    int pos = 0;
     for (uint32_t addr = start; addr <= end; addr++) {
-        if ((addr & 0x0F) == 0) {
-            printf("\n%04X: ", (uint16_t)addr);
+        if ((addr & 0x0F) == 0 && pos > 0) {
+            ESP_LOGI(TAG, "%s", line);
+            pos = 0;
         }
-        printf("%02X ", read((uint16_t)addr));
+        if (pos == 0) {
+            pos += snprintf(line + pos, sizeof(line) - pos, "%04X: ", (uint16_t)addr);
+        }
+        pos += snprintf(line + pos, sizeof(line) - pos, "%02X ", read((uint16_t)addr));
     }
-    printf("\n=== End of Dump ===\n");
+    if (pos > 0) {
+        ESP_LOGI(TAG, "%s", line);
+    }
 }
 
 void SpectrumBase::dumpMemoryMap() const {
     size_t count = 0;
     const MemoryRegion* map = getMemoryMap(count);
     if (!map || count == 0) {
-        printf("No memory map available.\n");
+        ESP_LOGI(TAG, "No memory map available.");
         return;
     }
 
-    printf("\n=== Memory Map ===\n");
+    ESP_LOGI(TAG, "Memory Map:");
     for (size_t i = 0; i < count; ++i) {
         const MemoryRegion& region = map[i];
-        printf("%04X-%04X : %-30s %s\n",
+        ESP_LOGI(TAG, "%04X-%04X : %-30s %s",
             region.start,
             region.end,
             region.name,
             region.contended ? "(contended)" : "");
     }
-    printf("=== End of Memory Map ===\n");
 }
 
 void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight) {

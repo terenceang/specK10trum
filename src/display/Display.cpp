@@ -74,11 +74,10 @@ void display_trigger_frame(SpectrumBase* spectrum) {
     }
 }
 
-static const uint16_t s_paletteNormal[8] = {
+static const uint16_t s_palette[16] = {
+    // Normal
     0x0000, 0x001B, 0xF800, 0xF81F, 0x07E0, 0x07FF, 0xFFE0, 0xFFFF,
-};
-
-static const uint16_t s_paletteBright[8] = {
+    // Bright
     0x0000, 0x001F, 0xF800, 0xF81F, 0x07E0, 0x07FF, 0xFFE0, 0xFFFF,
 };
 
@@ -174,6 +173,17 @@ void display_setOrientation(uint8_t madctl) {
     update_display_dimensions();
 }
 
+void display_clear() {
+    size_t bufferSize = s_lcdDisplayWidth * s_lcdDisplayHeight * sizeof(uint16_t);
+    for (int i = 0; i < 2; i++) {
+        if (s_frameBuffers[i]) {
+            memset(s_frameBuffers[i], 0, bufferSize);
+        }
+    }
+    display_present();
+    display_present(); // Clear both buffers
+}
+
 bool display_init() {
     update_display_dimensions();
     size_t bufferSize = s_lcdDisplayWidth * s_lcdDisplayHeight * sizeof(uint16_t);
@@ -181,7 +191,6 @@ bool display_init() {
         s_frameBuffers[i] = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!s_frameBuffers[i]) s_frameBuffers[i] = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
         if (!s_frameBuffers[i]) return false;
-        memset(s_frameBuffers[i], 0, bufferSize);
     }
 
     gpio_config_t io_conf = {
@@ -223,10 +232,7 @@ bool display_init() {
 
     xTaskCreatePinnedToCore(video_task, "video", 4096, NULL, 6, &s_videoTaskHandle, 1);
     
-    // Clear both buffers to black before we ever turn on the backlight
-    for (int i = 0; i < 2; i++) {
-        memset(s_frameBuffers[i], 0, s_lcdDisplayWidth * s_lcdDisplayHeight * sizeof(uint16_t));
-    }
+    display_clear();
 
     return true;
 }
@@ -382,7 +388,7 @@ void display_boot_test() {
         uint16_t* buffer = display_getBackBuffer();
         for (int y = 0; y < s_lcdDisplayHeight; y++) {
             for (int x = 0; x < s_lcdDisplayWidth; x++) {
-                buffer[y * s_lcdDisplayWidth + x] = __builtin_bswap16(s_paletteNormal[(x / (s_lcdDisplayWidth / 8)) % 8]);
+                buffer[y * s_lcdDisplayWidth + x] = __builtin_bswap16(s_palette[(x / (s_lcdDisplayWidth / 8)) % 8]);
             }
         }
         display_present();

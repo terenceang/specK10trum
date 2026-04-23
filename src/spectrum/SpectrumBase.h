@@ -115,6 +115,17 @@ protected:
     void updateMap(int block, uint8_t* ptr, bool writable);
 
 private:
+    struct Z80SnapshotHeader {
+        uint8_t hdr[30];
+        uint16_t extra_len;
+        uint16_t ext_pc;
+        bool haveHeader;
+    };
+
+    void restoreCPUFromSnapshot(const Z80SnapshotHeader& header, const uint8_t* filebuf, size_t got);
+    bool decompressZ80RLE(const uint8_t* src, size_t srclen, uint8_t* dest, size_t destlen, size_t offset);
+    void loadCompressedMemPage(const uint8_t* src, size_t srclen, uint8_t* memPage, size_t memlen);
+    
     // Static callbacks for the Z80 core
     static uint8_t z80_mem_read(void* ctx, uint16_t addr);
     static void z80_mem_write(void* ctx, uint16_t addr, uint8_t val);

@@ -18,6 +18,7 @@ uint16_t* display_getBackBuffer();
 void display_setOrientation(uint8_t madctl);
 void display_renderSpectrum(SpectrumBase* spectrum);
 void display_present();
+void display_clear();
 void display_trigger_frame(SpectrumBase* spectrum);
 void display_test_pattern();
 // Show a BMP splash screen from SPIFFS
