@@ -7,10 +7,13 @@
 
 static const char* TAG = "Audio";
 static const int SAMPLE_RATE = 44100;
-// Samples per Spectrum frame ~= 69888 / (3.5MHz/44100) ~= 880
-static const int SAMPLES_PER_FRAME = 880;
+// Samples per Spectrum frame: 44100 / 50 = 882.
+// Using 882 ensures we stay ahead of the audio clock.
+static const int SAMPLES_PER_FRAME = 882;
 
 static i2s_chan_handle_t tx_handle = NULL;
+static int s_volume = 5;
+static bool s_muted = false;
 
 bool audio_init() {
     ESP_LOGI(TAG, "Initializing modern I2S audio...");
@@ -77,11 +80,13 @@ void audio_play_frame(SpectrumBase* spectrum) {
     // Render beeper into mono buffer
     spectrum->renderBeeperAudio(mono_buf, SAMPLES_PER_FRAME);
 
-    // Duplicate to stereo
+    // Apply volume/mute and duplicate to stereo
+    int vol = s_muted ? 0 : s_volume;
     for (int i = 0; i < SAMPLES_PER_FRAME; ++i) {
-        int16_t s = mono_buf[i];
-        stereo_buf[i * 2 + 0] = s;
-        stereo_buf[i * 2 + 1] = s;
+        int32_t s = (int32_t)mono_buf[i] * vol / 100;
+        int16_t s16 = (int16_t)s;
+        stereo_buf[i * 2 + 0] = s16;
+        stereo_buf[i * 2 + 1] = s16;
     }
 
     size_t bytes_to_write = SAMPLES_PER_FRAME * 2 * sizeof(int16_t);
@@ -104,6 +109,8 @@ void audio_play_tone(int freq_hz, int duration_ms) {
     int state = 0;
     int period_cnt = 0;
 
+    int vol = s_muted ? 0 : s_volume;
+
     while (total_samples > 0) {
         int n = total_samples > CHUNK ? CHUNK : total_samples;
         for (int i = 0; i < n; ++i) {
@@ -112,9 +119,12 @@ void audio_play_tone(int freq_hz, int duration_ms) {
                 period_cnt = 0;
             }
             period_cnt++;
-            mono[i] = state ? 16000 : -16000;
-            stereo[i * 2 + 0] = mono[i];
-            stereo[i * 2 + 1] = mono[i];
+            int32_t s = (state ? 16000 : -16000);
+            s = s * vol / 100;
+            int16_t s16 = (int16_t)s;
+            mono[i] = s16;
+            stereo[i * 2 + 0] = s16;
+            stereo[i * 2 + 1] = s16;
         }
 
         size_t bytes = n * 2 * sizeof(int16_t);
@@ -122,4 +132,24 @@ void audio_play_tone(int freq_hz, int duration_ms) {
         i2s_channel_write(tx_handle, stereo, bytes, &written, portMAX_DELAY);
         total_samples -= n;
     }
+}
+
+void audio_set_volume(int volume) {
+    if (volume < 0) volume = 0;
+    if (volume > 100) volume = 100;
+    s_volume = volume;
+    ESP_LOGI(TAG, "Volume set to %d", s_volume);
+}
+
+int audio_get_volume() {
+    return s_volume;
+}
+
+void audio_set_mute(bool mute) {
+    s_muted = mute;
+    ESP_LOGI(TAG, "Audio %s", s_muted ? "muted" : "unmuted");
+}
+
+bool audio_get_mute() {
+    return s_muted;
 }

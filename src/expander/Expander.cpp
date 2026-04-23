@@ -33,6 +33,20 @@ static esp_err_t write_reg(uint8_t reg, uint8_t value) {
     return err;
 }
 
+static esp_err_t read_reg(uint8_t reg, uint8_t *value) {
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (XL9535_I2C_ADDR << 1) | I2C_MASTER_WRITE, true);
+    i2c_master_write_byte(cmd, reg, true);
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (XL9535_I2C_ADDR << 1) | I2C_MASTER_READ, true);
+    i2c_master_read_byte(cmd, value, I2C_MASTER_LAST_NACK);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(I2C_PORT, cmd, pdMS_TO_TICKS(100));
+    i2c_cmd_link_delete(cmd);
+    return err;
+}
+
 bool expander_init() {
     ESP_LOGI(TAG, "Initializing XL9535 Expanders...");
     
@@ -90,6 +104,14 @@ esp_err_t expander_write_port0(uint8_t value) {
 esp_err_t expander_write_port1(uint8_t value) {
     s_port1_output = value;
     return write_reg(REG_OUTPUT_PORT1, value);
+}
+
+esp_err_t expander_read_port0(uint8_t *value) {
+    return read_reg(REG_INPUT_PORT0, value);
+}
+
+esp_err_t expander_read_port1(uint8_t *value) {
+    return read_reg(REG_INPUT_PORT1, value);
 }
 
 void expander_set_backlight(bool on) {

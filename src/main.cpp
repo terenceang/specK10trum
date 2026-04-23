@@ -73,8 +73,6 @@ static void emulator_task(void* pvParameters) {
     ESP_LOGI(TAG, "Emulator task started on core %d", xPortGetCoreID());
     
     const int T_STATES_PER_FRAME = 69888; // 3.5 MHz / 50.08 Hz
-    TickType_t lastWakeTime = xTaskGetTickCount();
-    const TickType_t frameInterval = pdMS_TO_TICKS(20); // ~50 Hz
     
     while (1) {
         int tStates = 0;
@@ -86,10 +84,66 @@ static void emulator_task(void* pvParameters) {
 
         display_trigger_frame(spectrum);
         // Render and play beeper audio for this frame
+        // This call will block until there is space in the I2S buffer, 
+        // effectively synchronizing the emulator with the audio hardware.
         audio_play_frame(spectrum);
 
-        // Use vTaskDelayUntil alone for precise timing
-        vTaskDelayUntil(&lastWakeTime, frameInterval);
+        // Yield to allow other tasks to run
+        vTaskDelay(1);
+    }
+}
+
+static void input_task(void* pvParameters) {
+    (void)pvParameters;
+    ESP_LOGI(TAG, "Input task started");
+
+    uint8_t p0, p1;
+    bool lastA = false, lastB = false;
+    uint32_t bothPressedStart = 0;
+    bool muted = false;
+
+    while (1) {
+        if (expander_read_port0(&p0) == ESP_OK && expander_read_port1(&p1) == ESP_OK) {
+            // Key A is P14 (Port 1, bit 6? No, doc says P14 is Port 1 bit 4)
+            // Wait, P14 is usually 0x40 if it's bit 6, or 0x10 if it's bit 4.
+            // P10 is bit 0, P11 is bit 1, P12 is bit 2, P13 is bit 3, P14 is bit 4, P15 is bit 5, P16 is bit 6, P17 is bit 7.
+            // So P14 is 0x10.
+            // P02 is Port 0, bit 2 (0x04).
+            
+            bool pressedA = !(p1 & 0x10);
+            bool pressedB = !(p0 & 0x04);
+
+            if (pressedA && pressedB) {
+                if (bothPressedStart == 0) bothPressedStart = xTaskGetTickCount();
+                else if (pdTICKS_TO_MS(xTaskGetTickCount() - bothPressedStart) > 500) {
+                    // Toggle mute on long press of both
+                    muted = !muted;
+                    audio_set_mute(muted);
+                    // Wait for release
+                    while (!(expander_read_port0(&p0) == ESP_OK && expander_read_port1(&p1) == ESP_OK && 
+                           (p1 & 0x10) && (p0 & 0x04))) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                    }
+                    bothPressedStart = 0;
+                    lastA = lastB = false;
+                    continue;
+                }
+            } else {
+                bothPressedStart = 0;
+                
+                if (pressedA && !lastA) {
+                    int vol = audio_get_volume();
+                    audio_set_volume(vol + 10);
+                }
+                if (pressedB && !lastB) {
+                    int vol = audio_get_volume();
+                    audio_set_volume(vol - 10);
+                }
+            }
+            lastA = pressedA;
+            lastB = pressedB;
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
@@ -184,6 +238,9 @@ extern "C" void app_main(void) {
     
     ESP_LOGI(TAG, "✓ Initialization complete! Starting emulator task.");
     
+    // Create input task
+    xTaskCreate(input_task, "input", 4096, NULL, 4, NULL);
+
     // Create emulator task on core 0
     xTaskCreatePinnedToCore(
         emulator_task,

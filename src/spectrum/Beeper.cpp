@@ -54,6 +54,6 @@ void Beeper::renderFrame(int16_t* audio_buf, int num_samples) {
             level = m_renderEvents[evt].level;
             evt++;
         }
-        audio_buf[i] = level ? 16000 : -16000;
+        audio_buf[i] = level ? 12000 : -12000;
     }
 }
