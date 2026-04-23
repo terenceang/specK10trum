@@ -46,6 +46,18 @@ Build with PlatformIO (environment `unihiker_k10`):
 platformio run --environment unihiker_k10
 ```
 
+Development
+-----------
+Prerequisites: install PlatformIO (CLI or VS Code extension), Python 3.8+ and Git. For ESP-IDF based builds, ensure PlatformIO's ESP-IDF toolchain is available via PlatformIO.
+
+- Build: `platformio run --environment unihiker_k10`
+- Upload: `platformio run --environment unihiker_k10 --target upload --upload-port COM5` (adjust port)
+- Monitor: `pio device monitor --port COM5 --baud 115200`
+
+Configuration notes:
+- Board-specific SDK config is `sdkconfig.unihiker_k10` — edit it to enable PSRAM, console routing, and other ESP-IDF options. See the development reference for recommended settings.
+- See the full development guide in the docs: [K10 Development Reference](docs/K10_Development_Reference.md)
+
 References
 ----------
 - ZOT (Z80 / Spectrum / CP/M): https://github.com/antirez/ZOT

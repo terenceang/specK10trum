@@ -586,3 +586,66 @@ board_build.sdkconfig_options =
     CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 board_build.littlefs_dir = littlefs_data
 ```
+
+## 17. Quick Development Guide
+
+This quick guide explains the common local development workflow used for this repository.
+
+Prerequisites
+- Git
+- Python 3.8+ (for PlatformIO Core)
+- PlatformIO (install via `pip install -U platformio` or use the VS Code PlatformIO extension)
+
+Clone and prepare
+
+```bash
+git clone https://github.com/terenceang/specK10trum.git
+cd specK10trum
+python -m venv .venv
+source .venv/Scripts/activate    # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -U platformio
+```
+
+Build, upload, monitor
+
+- Build firmware:
+
+```bash
+platformio run --environment unihiker_k10
+```
+
+- Upload to device (adjust `--upload-port` as needed):
+
+```bash
+platformio run --environment unihiker_k10 --target upload --upload-port COM5
+```
+
+- Open serial monitor:
+
+```bash
+pio device monitor --port COM5 --baud 115200
+```
+
+Running tests
+- PlatformIO unit/integration tests (may be hardware-dependent):
+
+```bash
+pio test -e unihiker_k10
+# or run native tests if configured
+pio test -e native
+```
+
+Configuration tips
+- Edit `sdkconfig.unihiker_k10` to control ESP-IDF options (PSRAM, console routing, TinyUSB, etc.).
+- Use `board_build.sdkconfig_options` in `platformio.ini` to provide defaults for clean builds.
+- To force a clean rebuild after sdkconfig changes:
+
+```powershell
+pio run -t clean
+pio run --environment unihiker_k10
+```
+
+Notes
+- Many tests and runtime features assume the `unihiker_k10` environment and real hardware; when running locally without the board, prefer the `native` environment if available.
+- If you rely on PSRAM, validate hardware presence or enable `CONFIG_SPIRAM_IGNORE_NOTFOUND=y` to allow DRAM fallback.
+
