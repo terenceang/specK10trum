@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <cstring>
 
-static const char* TAG = "TestRunner";
+
 
 class TestRunner {
 public:

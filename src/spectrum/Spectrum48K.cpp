@@ -1,6 +1,7 @@
 #include "Spectrum48K.h"
 #include <esp_log.h>
 #include <string.h>
+#include <stdio.h>
 
 static const char* TAG = "Spectrum48K";
 
@@ -68,6 +69,27 @@ static const SpectrumBase::MemoryRegion s_memoryMap48K[] = {
 const SpectrumBase::MemoryRegion* Spectrum48K::getMemoryMap(size_t& count) const {
     count = sizeof(s_memoryMap48K) / sizeof(s_memoryMap48K[0]);
     return s_memoryMap48K;
+}
+
+bool Spectrum48K::applySnapshotData(const uint8_t* data, size_t len) {
+    if (!m_ram) {
+        ESP_LOGE(TAG, "No RAM allocated, cannot apply snapshot");
+        return false;
+    }
+
+    if (len == RAM_SIZE) {
+        memcpy(m_ram, data, RAM_SIZE);
+        updateMap(1, m_ram, true);
+        updateMap(2, m_ram + 0x4000, true);
+        updateMap(3, m_ram + 0x8000, true);
+        m_videoPagePtr = m_ram;
+        ESP_LOGI(TAG, "Snapshot applied as raw RAM image (%zu bytes)", len);
+        return true;
+    }
+
+    // Only accept exact 48K data here; otherwise fail and let base try other strategies
+    ESP_LOGD(TAG, "applySnapshotData: unsupported snapshot length %zu for 48K", len);
+    return false;
 }
 
 bool Spectrum48K::isContendedAddress(uint16_t addr) const {

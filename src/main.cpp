@@ -161,8 +161,28 @@ extern "C" void app_main(void) {
     // Reset the system
     spectrum->reset();
 
-    // Run all tests while splash is showing
-    run_all_tests(spectrum, MODEL_NAME);
+    // If an autoexec snapshot exists in SPIFFS, attempt to load it now
+    struct stat st_snap;
+    bool snapshot_loaded = false;
+    if (stat("/spiffs/autoexec.z80", &st_snap) == 0) {
+        ESP_LOGI(TAG, "autoexec.z80 found in SPIFFS, attempting to load snapshot...");
+        if (spectrum->loadSnapshot("/spiffs/autoexec.z80")) {
+            ESP_LOGI(TAG, "Snapshot applied successfully.");
+            snapshot_loaded = true;
+        } else {
+            ESP_LOGW(TAG, "Snapshot present but failed to load.");
+        }
+    }
+
+    // Run all tests while splash is showing unless we loaded a snapshot.
+    // Running the test suite mutates CPU and RAM which would overwrite the
+    // restored snapshot state. If you want to keep the snapshot active at
+    // boot, disable tests or remove the autoexec.z80 file from SPIFFS.
+    if (!snapshot_loaded) {
+        run_all_tests(spectrum, MODEL_NAME);
+    } else {
+        ESP_LOGI(TAG, "Skipping test suite because snapshot was loaded.");
+    }
     
     // Ensure splash shows for at least 5 seconds
     int64_t elapsedMs = (esp_timer_get_time() - splashStartTime) / 1000;

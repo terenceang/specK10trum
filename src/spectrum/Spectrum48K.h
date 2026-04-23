@@ -14,6 +14,8 @@ public:
     // 48K specific methods
     uint8_t* getRAM() { return m_ram; }
     uint8_t* getROM() { return m_rom; }
+    // Apply snapshot data provided by the base loader
+    bool applySnapshotData(const uint8_t* data, size_t len) override;
     
     // Contention simulation (for future ULA integration)
     bool isContendedAddress(uint16_t addr) const;

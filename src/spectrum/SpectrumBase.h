@@ -47,6 +47,17 @@ public:
     virtual void reset() override;
     virtual void dumpMemory(uint16_t start, uint16_t end) override;
 
+    // Snapshot loading (shared file handling)
+    // Subclasses should implement `applySnapshotData` to receive the raw or decompressed
+    // RAM image bytes. `loadSnapshot` performs file reading and simple .z80 RLE
+    // decompression and then calls `applySnapshotData`.
+    virtual bool loadSnapshot(const char* filepath);
+
+    // Apply a RAM image (raw or decompressed). Subclasses must implement this to
+    // place the bytes into their memory layout (banks, pointers, etc.).
+    virtual bool applySnapshotData(const uint8_t* data, size_t len) { (void)data; (void)len; return false; }
+    // Query helper for subclass type identification (avoid RTTI/dynamic_cast)
+    virtual bool is128k() const { return false; }
     // CPU execution
     int step() { int t = z80_step(&m_cpu); advanceULA(t); return t; }
     Z80* getCPU() { return &m_cpu; }
