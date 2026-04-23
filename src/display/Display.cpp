@@ -212,7 +212,6 @@ bool display_init() {
     devcfg.pre_cb = lcd_spi_pre_transfer_callback;
     spi_bus_add_device(SPI2_HOST, &devcfg, &s_spi);
 
-    expander_set_backlight(true);
     ili9341_init();
 
     int linesPerStrip = s_lcdDisplayHeight / NUM_STRIPS;
@@ -223,6 +222,12 @@ bool display_init() {
     s_trans_pool = (spi_transaction_t*)heap_caps_malloc(sizeof(spi_transaction_t) * MAX_TRANSACTIONS, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
     xTaskCreatePinnedToCore(video_task, "video", 4096, NULL, 6, &s_videoTaskHandle, 1);
+    
+    // Clear both buffers to black before we ever turn on the backlight
+    for (int i = 0; i < 2; i++) {
+        memset(s_frameBuffers[i], 0, s_lcdDisplayWidth * s_lcdDisplayHeight * sizeof(uint16_t));
+    }
+
     return true;
 }
 
@@ -382,6 +387,10 @@ void display_boot_test() {
         }
         display_present();
     }
+    
+    // Give the asynchronous transfer a moment to start before enabling backlight
+    vTaskDelay(pdMS_TO_TICKS(50));
+    expander_set_backlight(true);
 }
 
 void display_test_pattern() { display_boot_test(); }

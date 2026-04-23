@@ -177,6 +177,8 @@ extern "C" void app_main(void) {
     // boot, disable tests or remove the autoexec.z80 file from SPIFFS.
     if (!snapshot_loaded) {
         run_all_tests(spectrum, MODEL_NAME);
+        // Reset again after tests to ensure a clean state for the emulator
+        spectrum->reset();
     } else {
         ESP_LOGI(TAG, "Skipping test suite because snapshot was loaded.");
     }
@@ -187,10 +189,12 @@ extern "C" void app_main(void) {
         vTaskDelay(pdMS_TO_TICKS(5000 - elapsedMs));
     }
 
-    // Clear screen before starting emulator
-    uint16_t* buffer = display_getBackBuffer();
-    memset(buffer, 0, 320 * 240 * 2); // Assuming standard resolution for clearing
-    display_present();
+    // Clear both frame buffers before starting emulator to prevent splash screen ghosting
+    for (int i = 0; i < 2; i++) {
+        uint16_t* buffer = display_getBackBuffer();
+        memset(buffer, 0, 320 * 240 * 2); 
+        display_present();
+    }
     
     // Dump first few bytes for debugging
     ESP_LOGI(TAG, "First 16 bytes of ROM:");

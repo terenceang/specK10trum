@@ -111,10 +111,8 @@ static void init_tables(void) {
     tables_initialized = 1;
 
     for (int i = 0; i < 256; i++) {
-        /* Count bits for parity. */
-        int bits = 0;
-        for (int b = 0; b < 8; b++)
-            if (i & (1 << b)) bits++;
+        /* Count bits for parity using intrinsic. */
+        int bits = __builtin_popcount(i);
         parity_table[i] = (bits % 2 == 0) ? Z80_PF : 0;
 
         /* S, Z, Y, X, P flags from the byte value. */
