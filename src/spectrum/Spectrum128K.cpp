@@ -118,6 +118,30 @@ uint8_t Spectrum128K::getCurrentBank(uint16_t addr) {
     return m_port7FFD & 0x07;
 }
 
+bool Spectrum128K::applySnapshotData(const uint8_t* data, size_t len) {
+    if (len == 49152) {
+        // Apply 48K snapshot data into 128K standard memory mapping.
+        // 48K memory maps to:
+        // 0x4000 - 0x7FFF -> Bank 5 (Offset 0)
+        // 0x8000 - 0xBFFF -> Bank 2 (Offset 16384)
+        // 0xC000 - 0xFFFF -> Bank 0 (Offset 32768)
+        memcpy(m_ramBanks[5], data, BANK_SIZE);
+        memcpy(m_ramBanks[2], data + BANK_SIZE, BANK_SIZE);
+        memcpy(m_ramBanks[0], data + 2 * BANK_SIZE, BANK_SIZE);
+
+        // Setup paging for 48K state (ROM 1, RAM Bank 0) and lock it
+        m_port7FFD = 0x30;
+        m_pagingLocked = true;
+        updatePaging();
+
+        ESP_LOGI(TAG, "48K snapshot applied to 128K system (%zu bytes)", len);
+        return true;
+    }
+
+    ESP_LOGD(TAG, "applySnapshotData: unsupported snapshot length %zu for 128K", len);
+    return false;
+}
+
 uint8_t Spectrum128K::readAY(uint8_t reg) {
     return (reg < 16) ? m_ayRegisters[reg] : 0xFF;
 }
