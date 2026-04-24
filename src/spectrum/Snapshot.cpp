@@ -74,15 +74,37 @@ bool Snapshot::load(SpectrumBase* spectrum, const char* filepath) {
                 uint8_t* tmp48 = s128 ? nullptr : (uint8_t*)spectrum->allocateMemory(49152, "Snapshot48KTemp");
                 uint16_t pageStart48[12] = {0,0,0,0,0x8000,0xC000,0,0,0x4000,0,0};
 
-                if (s128 && header.extra_len >= 4) spectrum->writePort(0x7FFD, filebuf[32 + 3]);
+                if (s128 && header.extra_len >= 4) {
+                    spectrum->writePort(0x7FFD, filebuf[32 + 3]);
+
+                    // AY sound chip registers
+                    if (header.extra_len >= 23) {
+                        for (int i = 0; i < 16; i++) {
+                            s128->writePort(0xFFFD, i); // Select register
+                            s128->writePort(0xBFFD, filebuf[32 + 7 + i]); // Write data
+                        }
+                        // Restore the user's selected register
+                        s128->writePort(0xFFFD, filebuf[32 + 6]);
+                    }
+                }
 
                 while (pos + 3 <= got) {
                     uint16_t compLen = (uint16_t)filebuf[pos] | ((uint16_t)filebuf[pos + 1] << 8);
                     uint8_t pageId = filebuf[pos + 2];
                     pos += 3;
                     uint8_t* dest = nullptr;
-                    if (s128 && pageId >= 3 && pageId < 11) dest = s128->getBank(pageId - 3);
-                    else if (tmp48 && pageId < 12 && pageStart48[pageId]) dest = tmp48 + (pageStart48[pageId] - 0x4000);
+                    if (s128 && filebuf[34] >= 3 && pageId >= 3 && pageId < 11) {
+                        // 128K snapshot loading into 128K machine
+                        dest = s128->getBank(pageId - 3);
+                    } else if (s128 && pageId < 12 && pageStart48[pageId]) {
+                        // 48K snapshot loading into 128K machine directly
+                        if (pageStart48[pageId] == 0x4000) dest = s128->getBank(5);
+                        else if (pageStart48[pageId] == 0x8000) dest = s128->getBank(2);
+                        else if (pageStart48[pageId] == 0xC000) dest = s128->getBank(0);
+                    } else if (tmp48 && pageId < 12 && pageStart48[pageId]) {
+                        // 48K snapshot (or loading 128K into 48K machine via fallback temp buffer)
+                        dest = tmp48 + (pageStart48[pageId] - 0x4000);
+                    }
 
                     if (dest) {
                         if (compLen == 0xFFFF) {
@@ -94,6 +116,11 @@ bool Snapshot::load(SpectrumBase* spectrum, const char* filepath) {
                     }
                     pos += (compLen == 0xFFFF) ? 0x4000 : compLen;
                 }
+                if (s128 && filebuf[34] < 3) {
+                    // It was a 48K snapshot loaded directly into 128K machine, ensure paging is set to 48K state
+                    s128->writePort(0x7FFD, 0x30);
+                }
+
                 if (tmp48) { if (success) spectrum->applySnapshotData(tmp48, 49152); free(tmp48); }
             }
             free(tmpout);

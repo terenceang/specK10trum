@@ -16,6 +16,7 @@ public:
     uint8_t* getBank(uint8_t bank) { return (bank < 8) ? m_ramBanks[bank] : nullptr; }
     const MemoryRegion* getMemoryMap(size_t& count) const;
     bool is128k() const override { return true; }
+    bool applySnapshotData(const uint8_t* data, size_t len) override;
     
     // AY-3-8912 sound chip access
     uint8_t readAY(uint8_t reg);
