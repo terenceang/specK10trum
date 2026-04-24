@@ -10,6 +10,7 @@
 #include "instrumentation/Instrumentation.h"
 #include "expander/Expander.h"
 #include "audio/Audio.h"
+#include "spectrum/Tape.h"
 
 // ============================================
 // SELECT YOUR MODEL HERE
@@ -217,6 +218,12 @@ extern "C" void app_main(void) {
 
     // If an autoexec snapshot exists in SPIFFS, attempt to load it now
     bool snapshot_loaded = spectrum->loadAutoexec();
+
+    // Mount a virtual cassette if one is present on SPIFFS. LOAD "" from
+    // BASIC then hits the ROM trap and gets the blocks instantly.
+    if (Tape::autoload(spectrum->tape())) {
+        ESP_LOGI(TAG, "Virtual tape mounted; type LOAD \"\" to play.");
+    }
 
     // Run all tests while splash is showing unless we loaded a snapshot.
     if (!snapshot_loaded) {

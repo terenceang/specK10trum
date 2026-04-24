@@ -34,7 +34,38 @@ Practical emulator approach:
 - On load: accept TAP files or sample a provided WAV and decode pulses.
 - Provide a "virtual cassette" UI to mount/unmount tapes and list files.
 
+## This Project
+
+Implemented: **TAP load via ROM trap** (`src/spectrum/Tape.{h,cpp}`).
+
+- On boot, `/spiffs/tape.tap` (or `autoload.tap`) is mounted if present.
+- `SpectrumBase::step()` checks for `PC == 0x0556` and, when the 48K BASIC
+  ROM is paged, services the load directly from the TAP buffer: copies the
+  block's data bytes into memory, adjusts IX/DE/A, sets the carry flag from
+  the XOR parity, then pops PC to RET. Each block advances the tape cursor.
+- For 128K, the trap is gated on bit 4 of port `$7FFD` (48K BASIC ROM
+  selected). The 128K editor ROM at 0x0556 is left alone.
+- Unsupported: TZX (variable-rate and turbo blocks), WAV, SAVE. Turbo
+  loaders that bypass the ROM (e.g. Speedlock) are also out of scope.
+
+TAP block layout (little-endian):
+
+    u16 len              ; bytes that follow (flag + data + xor)
+    u8  flag             ; 0x00 header, 0xFF data
+    u8  data[len - 2]    ; payload
+    u8  xor              ; XOR of flag + data -> parity; valid iff == 0
+
+Header payload (17-byte blocks, flag = 0x00):
+
+    u8  type             ; 0=program 1=num-array 2=char-array 3=bytes
+    u8  filename[10]     ; space-padded
+    u16 data_len
+    u16 param1
+    u16 param2
+
 ## Sources
 
-- World of Spectrum: Tape Formats
-- TAP file specifications
+- [Sinclair Wiki: TAP format](https://sinclair.wiki.zxnet.co.uk/wiki/TAP_format)
+- [Kaitai schema for ZX Spectrum TAP](https://formats.kaitai.io/zx_spectrum_tap/)
+- [ROM disassembly: LD-BYTES at 0x0556](https://skoolkid.github.io/rom/asm/0556.html)
+- [Sinclair Wiki: Spectrum tape interface](https://sinclair.wiki.zxnet.co.uk/wiki/Spectrum_tape_interface)

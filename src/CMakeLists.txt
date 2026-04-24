@@ -3,6 +3,7 @@ idf_component_register(SRCS
     "spectrum/SpectrumBase.cpp"
     "spectrum/Beeper.cpp"
     "spectrum/Snapshot.cpp"
+    "spectrum/Tape.cpp"
     "spectrum/Spectrum48K.cpp"
     "spectrum/Spectrum128K.cpp"
     "z80/z80.c"

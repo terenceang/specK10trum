@@ -21,6 +21,9 @@ public:
     // AY-3-8912 sound chip access
     uint8_t readAY(uint8_t reg);
     void writeAY(uint8_t reg, uint8_t value);
+
+    // Only the 48K BASIC ROM (bit 4 of 0x7FFD) contains LD-BYTES at 0x0556.
+    bool isTapeRomActive() const override { return (m_port7FFD & 0x10) != 0; }
     
 private:
     uint8_t* m_ramBanks[8];   // 8 banks of 16KB each = 128KB total

@@ -12,8 +12,13 @@ specK10trum is an ESP32-targeted project implementing a ZX Spectrum emulator and
 
 Third-party attribution
 -----------------------
-- The Z80 CPU core and reference material used in this project are derived from the ZOT project by antirez: https://github.com/antirez/ZOT
-- ZOT is licensed under the MIT license. Where code or design ideas from ZOT are used (notably the Z80 core and the Z80/Spectrum spec materials), those portions remain under the original MIT terms. See ZOT: https://github.com/antirez/ZOT
+- Z80 CPU core and parts of the Z80 / ZX Spectrum reference material are derived from the ZOT project by antirez (MIT): https://github.com/antirez/ZOT
+- TAP / tape-format layout and the LD-BYTES ROM-trap approach used by the virtual cassette follow the public documentation on:
+    - Sinclair Wiki: https://sinclair.wiki.zxnet.co.uk/wiki/TAP_format
+    - Skoolkid's annotated ZX Spectrum ROM disassembly (LD-BYTES at `$0556`): https://skoolkid.github.io/rom/asm/0556.html
+    - Kaitai Struct schema for ZX Spectrum TAP: https://formats.kaitai.io/zx_spectrum_tap/
+- `.z80` snapshot parsing follows the public World of Spectrum format notes.
+- ZOT is licensed under the MIT license. Where code or design ideas from ZOT are used (notably the Z80 core and the Z80/Spectrum spec materials), those portions remain under the original MIT terms.
 
 License
 -------
@@ -69,20 +74,37 @@ Some changes in this repository (documentation reorganization, small scripts, an
 
 Status / What's Working
 ------------------------
-- PlatformIO build for environment `unihiker_k10` is configured and builds successfully.
-- Core ZX Spectrum sources are present under `src/spectrum` (Z80 core and Spectrum support code).
-- Documentation: Spectrum reference docs have been consolidated under `docs/spectrum/` and board notes are in `docs/K10_Development_Reference.md`.
-- Basic test harness and unit tests are present in `test/`.
+Emulation
+- **Z80 CPU**: full documented + undocumented opcode set (CB / ED / DD / FD / DDCB / FDCB prefixes). Hot dispatch placed in IRAM, page-mapped memory reads/writes inlined with `__builtin_expect` bias. See `src/z80/`.
+- **ZX Spectrum 48K**: ROM + 48 KiB RAM, floating-bus reads, centred 256×192 render with per-scanline border events.
+- **ZX Spectrum 128K**: 8× 16 KiB banked RAM, dual ROM paging via port `$7FFD`, AY register write/read port decoding. Select model in `src/main.cpp` (`SPECTRUM_MODEL_48K` / `SPECTRUM_MODEL_128K`).
+
+Video
+- ILI9341 over SPI at 80 MHz, landscape 320×240, double-buffered with a ping-pong DMA-strip pusher on core 1. Column window programmed once at init; each strip emits only the row window + payload.
+- Renderer uses a 4 KiB DRAM pixel-mask LUT with SWAR pixel expansion; per-attribute paper/ink/diff recomputed only on attribute change.
+
+Audio
+- I2S stereo out at 44.1 kHz. Beeper events sampled per frame with a Q16 linear step; Q15 volume scaling; mute and 0‑100 volume controls routed to the expander buttons.
+
+Storage / I/O
+- SPIFFS partition for assets (`spiffs/`): `48k.rom`, `128k.rom`, optional splash BMP, `autoexec.z80`, `tape.tap`.
+- **Snapshot loader**: `.z80` (v1/v2/v3), including 128K page mapping, RLE decode, and 48K snapshots loaded into a 128K machine via a fallback path. AY register state restored on 128K snapshots.
+- **Virtual cassette**: TAP via ROM `LD-BYTES` trap at `$0556` — instant-load for standard ROM loaders. Autoloads `/spiffs/tape.tap` (or `autoload.tap`). See `docs/spectrum/cassette.md`.
+- XL9535 I²C expander drives the backlight, user LED, and the two front-panel buttons (volume ±, long-press both = mute).
+
+Build / test
+- PlatformIO `unihiker_k10` builds clean under ESP-IDF 5.5 with `-O2`.
+- Self-test harness in `test/` runs the memory-map checks and a Z80 instruction test suite on boot (skipped when a snapshot is autoloaded).
 
 Roadmap / TODO
 --------------
-Planned work (priority order):
+Priority order:
 
-1. Add tape support (digital-only TAP/WAV virtual cassette)
-2. Snapshot support (SNA/Z80 snapshot load/save)
-3. Sound output (beeper / speaker emulation)
-4. AY chip emulation (sound chip support)
-5. Bluetooth provisioning (BT provisioning for network/controls)
-6. Wi‑Fi virtual keyboard and joystick (websocket/HTTP provisioning UI)
+1. TZX cassette format support (variable-rate pilot/sync + data blocks).
+2. SAVE support via `SA-BYTES` ($04C2) trap → write-back to a mounted TAP image.
+3. AY-3-8912 PSG tone synthesis (chip is register-mapped today; no audio output yet).
+4. On-screen file picker for ROMs / snapshots / tapes on SPIFFS.
+5. Wi‑Fi virtual keyboard + joystick (HTTP/websocket provisioning UI).
+6. Bluetooth provisioning (network/controls).
 
-If you'd like, I can turn any of the above into tracked issues, or start on item 1 now.
+Issues and PRs welcome.

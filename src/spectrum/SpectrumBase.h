@@ -8,6 +8,7 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 #include "Beeper.h"
+#include "Tape.h"
 
 class SpectrumBase : public IMemoryBus {
 public:
@@ -60,9 +61,27 @@ public:
     virtual bool applySnapshotData(const uint8_t* data, size_t len) { (void)data; (void)len; return false; }
     // Query helper for subclass type identification (avoid RTTI/dynamic_cast)
     virtual bool is128k() const { return false; }
-    // CPU execution
-    int step() { int t = z80_step(&m_cpu); advanceULA(t); return t; }
+    // CPU execution. Intercepts the ROM LD-BYTES trap for virtual-tape
+    // instant-loading when a TAP is mounted and the 48K BASIC ROM is paged.
+    int step() {
+        if (m_tape.isEnabled() && m_tape.isLoaded()
+            && m_cpu.pc == Tape::LD_BYTES_ENTRY
+            && isTapeRomActive()) {
+            int t = m_tape.serviceLoadTrap(this);
+            advanceULA(t);
+            return t;
+        }
+        int t = z80_step(&m_cpu);
+        advanceULA(t);
+        return t;
+    }
     Z80* getCPU() { return &m_cpu; }
+
+    Tape& tape() { return m_tape; }
+
+    // True when the 48K BASIC ROM (which contains LD-BYTES at 0x0556) is the
+    // currently paged ROM. Default: always (48K model). Overridden by 128K.
+    virtual bool isTapeRomActive() const { return true; }
 
     // Direct memory access for renderer
     inline uint8_t* getPagePtr(int block) { return m_memReadMap[block & 3]; }
@@ -115,6 +134,9 @@ protected:
 
     // Beeper helper
     Beeper m_beeper;
+
+    // Virtual cassette. Services ROM LD-BYTES traps when enabled.
+    Tape m_tape;
 
     // Helper for allocation
     uint8_t* allocateMemory(size_t size, const char* name);

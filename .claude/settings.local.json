@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pio --version)",
+      "Read(//c/Users/TerenceAng/.platformio/penv/Scripts/**)",
+      "Bash(/c/Users/TerenceAng/.platformio/penv/Scripts/platformio.exe run *)",
+      "WebFetch(domain:worldofspectrum.net)",
+      "WebFetch(domain:faqwiki.zxnet.co.uk)",
+      "WebSearch",
+      "WebFetch(domain:sinclair.wiki.zxnet.co.uk)",
+      "WebFetch(domain:documentation.help)",
+      "WebFetch(domain:fileformats.archiveteam.org)",
+      "WebFetch(domain:formats.kaitai.io)",
+      "WebFetch(domain:skoolkid.github.io)"
+    ]
+  }
+}
