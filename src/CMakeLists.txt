@@ -35,5 +35,4 @@ idf_component_register(SRCS
     "../test/test_128k_banking.cpp"
     "../test/z80_test.c"
     REQUIRES ${COMPONENT_REQS}
-    EMBED_FILES "index.html"
 )

@@ -1,4 +1,5 @@
 #include "webserver/Webserver.h"
+#include "webserver/index_html.h"
 #include "input/Input.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -7,14 +8,11 @@
 static const char* TAG = "Webserver";
 static httpd_handle_t s_server = NULL;
 
-extern const uint8_t index_html_start[] asm("_binary_index_html_start");
-extern const uint8_t index_html_end[]   asm("_binary_index_html_end");
-
 /* GET / - Serve embedded index.html */
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
-    return httpd_resp_send(req, (const char*)index_html_start, index_html_end - index_html_start);
+    return httpd_resp_send(req, INDEX_HTML_START, HTTPD_RESP_USE_STRLEN);
 }
 
 /* WS /ws - Handle virtual keyboard events */
@@ -96,7 +94,10 @@ esp_err_t webserver_start()
         .uri       = "/",
         .method    = HTTP_GET,
         .handler   = root_get_handler,
-        .user_ctx  = NULL
+        .user_ctx  = NULL,
+        .is_websocket = false,
+        .handle_ws_control_frames = false,
+        .supported_subprotocol = NULL
     };
     httpd_register_uri_handler(s_server, &root);
 
@@ -106,7 +107,9 @@ esp_err_t webserver_start()
         .method     = HTTP_GET,
         .handler    = ws_handler,
         .user_ctx   = NULL,
-        .is_websocket = true
+        .is_websocket = true,
+        .handle_ws_control_frames = false,
+        .supported_subprotocol = NULL
     };
     httpd_register_uri_handler(s_server, &ws);
 
