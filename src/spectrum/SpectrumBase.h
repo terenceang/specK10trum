@@ -130,7 +130,6 @@ protected:
     uint16_t m_ulaCycle;
 
     uint8_t m_borderColor;
-    uint8_t m_keyboardRows[8];
 
     // Beeper helper
     Beeper m_beeper;

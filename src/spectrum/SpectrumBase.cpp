@@ -1,6 +1,7 @@
 #include "SpectrumBase.h"
 #include "Snapshot.h"
 #include "Spectrum128K.h"
+#include "input/Input.h"
 #include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <esp_psram.h>
@@ -45,7 +46,7 @@ SpectrumBase::SpectrumBase()
         m_memReadMap[i] = nullptr;
         m_memWriteMap[i] = nullptr;
     }
-    memset(m_keyboardRows, 0xFF, 8);
+    input_resetKeyboardRows();
 
     // Initialize CPU
     z80_init(&m_cpu);
@@ -179,7 +180,7 @@ void SpectrumBase::writePortFE(uint8_t value) {
 
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
     uint8_t row = (port >> 8) & 0x1F;
-    uint8_t val = m_keyboardRows[row & 0x07];
+    uint8_t val = input_getKeyboardRow(row & 0x07);
     // EAR input is bit 6; approximate board coupling: EAR = externalEar OR speaker
     if (m_beeper.getExternalEar() || m_beeper.currentSpeakerLevel()) {
         val |= 0x40;
@@ -222,9 +223,7 @@ bool SpectrumBase::loadAutoexec() {
 }
 
 void SpectrumBase::setKeyboardRow(uint8_t row, uint8_t columns) {
-    if (row < 8) {
-        m_keyboardRows[row] = columns;
-    }
+    input_setKeyboardRow(row, columns);
 }
 
 void SpectrumBase::reset() {
@@ -233,7 +232,7 @@ void SpectrumBase::reset() {
     m_borderEventCount = 0;
     m_renderInitialBorderColor = 0;
     m_renderBorderEventCount = 0;
-    memset(m_keyboardRows, 0xFF, 8);
+    input_resetKeyboardRows();
     m_ulaClocks = 0;
     m_ulaScanline = 0;
     m_ulaCycle = 0;

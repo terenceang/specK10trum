@@ -1,0 +1,12 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+// Initialize input subsystem and spawn the input task.
+void input_init();
+
+// Keyboard matrix API (8 rows, active-low columns)
+void input_setKeyboardRow(uint8_t row, uint8_t columns);
+uint8_t input_getKeyboardRow(uint8_t row);
+void input_resetKeyboardRows();

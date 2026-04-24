@@ -10,6 +10,7 @@ idf_component_register(SRCS
     "display/Display.cpp"
     "audio/Audio.cpp"
     "expander/Expander.cpp"
+    "input/Input.cpp"
     "instrumentation/Instrumentation.cpp"
     "../test/test_runner.cpp"
     "../test/test_memory.cpp"
