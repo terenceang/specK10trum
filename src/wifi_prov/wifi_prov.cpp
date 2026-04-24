@@ -12,10 +12,12 @@ static const char* TAG = "wifi_prov";
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_event.h"
-#include "esp_netif.h"
+#include <esp_netif.h>
 #include <string.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "webserver/Webserver.h"
+
 
 static bool s_provisioning_started = false;
 static bool s_watcher_started = false;
@@ -72,6 +74,7 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* evt = (ip_event_got_ip_t*)data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&evt->ip_info.ip));
+        webserver_start();
     }
 }
 

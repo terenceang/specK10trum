@@ -7,6 +7,7 @@ set(COMPONENT_REQS
     esp_event
     esp_netif
     esp_wifi
+    esp_http_server
 )
 
 if(CONFIG_BT_ENABLED)
@@ -27,10 +28,12 @@ idf_component_register(SRCS
     "expander/Expander.cpp"
     "input/Input.cpp"
     "wifi_prov/wifi_prov.cpp"
+    "webserver/Webserver.cpp"
     "instrumentation/Instrumentation.cpp"
     "../test/test_runner.cpp"
     "../test/test_memory.cpp"
     "../test/test_128k_banking.cpp"
     "../test/z80_test.c"
     REQUIRES ${COMPONENT_REQS}
+    EMBED_FILES "index.html"
 )
