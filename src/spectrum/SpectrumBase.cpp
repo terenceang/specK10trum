@@ -4,6 +4,7 @@
 #include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <esp_psram.h>
+#include <esp_attr.h>
 #include <string.h>
 #include <cstdio>
 
@@ -12,20 +13,25 @@ static const char* TAG = "SpectrumBase";
 // Centralized palette
 #include "SpectrumPalette.h"
 
-// Build-time options for attribute LUT caching.
-#ifndef SPECTRUM_ATTR_LUT_ENABLED
-#define SPECTRUM_ATTR_LUT_ENABLED 1
-#endif
+// Pixel-byte -> 4x uint32_t select-mask table. Each entry m[0..3] matches the
+// SWAR layout used by the renderer: m[i] = (bit (7-2i) ? 0xFFFF0000 : 0)
+//                                        | (bit (6-2i) ? 0x0000FFFF : 0)
+// Placed in DRAM so the hot scanline loop never touches PSRAM.
+static DRAM_ATTR uint32_t s_pixel_mask_lut[256][4];
+static bool s_pixel_mask_initialized = false;
 
-#ifndef SPECTRUM_ATTR_LUT_MAX
-// Maximum number of attribute entries to cache (max 128). Set to 0 to disable caching.
-#define SPECTRUM_ATTR_LUT_MAX 128
-#endif
-
-#if SPECTRUM_ATTR_LUT_MAX > 128
-#undef SPECTRUM_ATTR_LUT_MAX
-#define SPECTRUM_ATTR_LUT_MAX 128
-#endif
+static void init_pixel_mask_lut() {
+    if (s_pixel_mask_initialized) return;
+    for (int b = 0; b < 256; ++b) {
+        for (int i = 0; i < 4; ++i) {
+            uint32_t m = 0;
+            if (b & (1 << (7 - 2 * i))) m |= 0xFFFF0000u;
+            if (b & (1 << (6 - 2 * i))) m |= 0x0000FFFFu;
+            s_pixel_mask_lut[b][i] = m;
+        }
+    }
+    s_pixel_mask_initialized = true;
+}
 
 SpectrumBase::SpectrumBase()
     : m_rom(nullptr)
@@ -326,68 +332,12 @@ void SpectrumBase::dumpMemoryMap() const {
 void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight) {
     if (!buffer) return;
 
+    init_pixel_mask_lut();
+
     const int source_width = 256;
     const int source_height = 192;
     const int offset_x = (bufWidth - source_width) / 2;
     const int offset_y = (bufHeight - source_height) / 2;
-
-    // Attribute LUT cache: up to 128 possible attribute combinations
-    static uint16_t* attr_lut[128] = { 0 };
-    static uint32_t attr_last_used[128] = { 0 };
-    static int cached_count = 0;
-    static uint32_t use_counter = 1;
-
-    auto get_lut = [&](int attr_index) -> uint16_t* {
-        if (attr_index < 0 || attr_index >= 128) return nullptr;
-        uint16_t* table = attr_lut[attr_index];
-        if (table) {
-            attr_last_used[attr_index] = use_counter++;
-            return table;
-        }
-
-        if (cached_count >= 128) {
-            uint32_t oldest = UINT32_MAX;
-            int oldest_idx = -1;
-            for (int i = 0; i < 128; ++i) {
-                if (attr_lut[i] && attr_last_used[i] < oldest) {
-                    oldest = attr_last_used[i]; oldest_idx = i;
-                }
-            }
-            if (oldest_idx >= 0) {
-                heap_caps_free(attr_lut[oldest_idx]);
-                attr_lut[oldest_idx] = nullptr;
-                cached_count--;
-            }
-        }
-
-        size_t bytes = 256 * 8 * sizeof(uint16_t);
-        uint16_t* alloc = (uint16_t*)allocateMemory(bytes, "Attr LUT");
-        if (!alloc) return nullptr;
-
-        bool bright = (attr_index & 0x40) != 0;
-        uint16_t ink = spectrum_palette(attr_index & 0x07, bright);
-        uint16_t paper = spectrum_palette((attr_index >> 3) & 0x07, bright);
-
-        uint32_t ink32 = (ink << 16) | ink;
-        uint32_t paper32 = (paper << 16) | paper;
-        uint32_t diff32 = ink32 ^ paper32;
-
-        for (int pix = 0; pix < 256; ++pix) {
-            uint32_t* out32 = (uint32_t*)&alloc[pix * 8];
-            // 32-bit SWAR: Process 2 pixels at a time (4 iterations for 8 pixels)
-            for (int i = 0; i < 4; i++) {
-                uint8_t two_bits = (pix >> (6 - i * 2)) & 0x03;
-                uint32_t mask = (two_bits & 0x02) ? 0xFFFF0000 : 0;
-                mask |= (two_bits & 0x01) ? 0x0000FFFF : 0;
-                out32[i] = paper32 ^ (mask & diff32);
-            }
-        }
-
-        attr_lut[attr_index] = alloc;
-        attr_last_used[attr_index] = use_counter++;
-        cached_count++;
-        return alloc;
-    };
 
     auto get_border_color_for_tstate = [&](uint32_t tstate) -> uint16_t {
         uint8_t color = m_renderInitialBorderColor;
@@ -403,37 +353,28 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
 
     // Render border areas
     for (int y = 0; y < bufHeight; ++y) {
-        // Correctly map the centered active display (192 lines) to Spectrum FIRST_ACTIVE_LINE (64)
         int spectrum_y = FIRST_ACTIVE_LINE + (y - offset_y);
-        
-        // Clamp to valid range (0-311)
         if (spectrum_y < 0) spectrum_y = 0;
         if (spectrum_y >= FRAME_LINES) spectrum_y = FRAME_LINES - 1;
 
         uint32_t tstate_base = spectrum_y * T_STATES_PER_LINE;
         uint32_t* lineStart32 = (uint32_t*)&buffer[y * bufWidth];
         bool is_active_y = (y >= offset_y && y < offset_y + source_height);
-        
+
         if (!is_active_y) {
-            // Full line is border. Sample at the middle of the line (T=112)
             uint16_t border = get_border_color_for_tstate(tstate_base + 112);
-            uint32_t border32 = (border << 16) | border;
+            uint32_t border32 = ((uint32_t)border << 16) | border;
             for (int i = 0; i < bufWidth / 2; ++i) lineStart32[i] = border32;
         } else {
-            // Left border: drawn at T=200...223 of PREVIOUS line
-            // For simplicity, we use the end of the previous line.
             uint32_t tstate_left = (spectrum_y > 0) ? (spectrum_y - 1) * T_STATES_PER_LINE + 210 : 0;
             uint16_t border_left = get_border_color_for_tstate(tstate_left);
-            uint32_t border_left32 = (border_left << 16) | border_left;
-            
-            // Right border: drawn at T=128...151 of CURRENT line.
+            uint32_t border_left32 = ((uint32_t)border_left << 16) | border_left;
+
             uint32_t tstate_right = tstate_base + 140;
             uint16_t border_right = get_border_color_for_tstate(tstate_right);
-            uint32_t border_right32 = (border_right << 16) | border_right;
-            
-            // Render left border
+            uint32_t border_right32 = ((uint32_t)border_right << 16) | border_right;
+
             for (int i = 0; i < offset_x / 2; ++i) lineStart32[i] = border_left32;
-            // Render right border
             for (int i = (offset_x + source_width) / 2; i < bufWidth / 2; ++i) lineStart32[i] = border_right32;
         }
     }
@@ -441,48 +382,40 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     uint8_t* ramBank1 = m_videoPagePtr ? m_videoPagePtr : getPagePtr(1);
     if (!ramBank1) return;
 
-    uint16_t* current_luts[128] = { nullptr };
+    // Per-attribute state cache: avoids recomputing paper/ink/diff when the
+    // attribute repeats across a scanline (very common).
+    int last_attr = -1;
+    uint32_t paper32 = 0, diff32 = 0;
 
     for (int y = 0; y < source_height; ++y) {
-        uint16_t* linePtr = &buffer[(offset_y + y) * bufWidth + offset_x];
+        uint32_t* linePtr32 = (uint32_t*)&buffer[(offset_y + y) * bufWidth + offset_x];
         uint16_t y_off = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2);
         uint16_t attr_off = 0x1800 + ((y >> 3) * 32);
+        const uint8_t* pxRow = &ramBank1[y_off];
+        const uint8_t* attrRow = &ramBank1[attr_off];
 
         for (int xByte = 0; xByte < 32; ++xByte) {
-            uint8_t pixels = ramBank1[y_off | xByte];
-            uint8_t raw_attr = ramBank1[attr_off | xByte];
-            uint8_t attr = raw_attr & 0x7F;
-            uint16_t* lut = current_luts[attr];
-            if (!lut) {
-                lut = get_lut(attr);
-                current_luts[attr] = lut;
-            }
-            if (lut) {
-                uint64_t* src64 = (uint64_t*)&lut[pixels * 8];
-                uint64_t* dst64 = (uint64_t*)linePtr;
-                dst64[0] = src64[0]; dst64[1] = src64[1];
-            } else {
+            uint8_t pixels = pxRow[xByte];
+            uint8_t raw_attr = attrRow[xByte];
+
+            if (raw_attr != last_attr) {
+                last_attr = raw_attr;
                 bool bright = (raw_attr & 0x40) != 0;
                 uint16_t ink = spectrum_palette(raw_attr & 0x07, bright);
                 uint16_t paper = spectrum_palette((raw_attr >> 3) & 0x07, bright);
-                
-                uint32_t ink32 = (ink << 16) | ink;
-                uint32_t paper32 = (paper << 16) | paper;
-                uint32_t diff32 = ink32 ^ paper32;
-                uint32_t* linePtr32 = (uint32_t*)linePtr;
-
-                // 32-bit SWAR: Process 2 pixels at a time
-                for (int i = 0; i < 4; i++) {
-                    uint8_t two_bits = (pixels >> (6 - i * 2)) & 0x03;
-                    uint32_t mask = (two_bits & 0x02) ? 0xFFFF0000 : 0;
-                    mask |= (two_bits & 0x01) ? 0x0000FFFF : 0;
-                    linePtr32[i] = paper32 ^ (mask & diff32);
-                }
+                paper32 = ((uint32_t)paper << 16) | paper;
+                uint32_t ink32 = ((uint32_t)ink << 16) | ink;
+                diff32 = ink32 ^ paper32;
             }
-            linePtr += 8;
+
+            const uint32_t* m = s_pixel_mask_lut[pixels];
+            linePtr32[0] = paper32 ^ (m[0] & diff32);
+            linePtr32[1] = paper32 ^ (m[1] & diff32);
+            linePtr32[2] = paper32 ^ (m[2] & diff32);
+            linePtr32[3] = paper32 ^ (m[3] & diff32);
+            linePtr32 += 4;
         }
     }
-    // Update last rendered border color
     m_lastRenderedBorderColor = m_borderColor;
 }
 

@@ -72,21 +72,29 @@ bool audio_init() {
 void audio_play_frame(SpectrumBase* spectrum) {
     if (!spectrum || !tx_handle) return;
 
-    // Mono samples from beeper
     static int16_t mono_buf[SAMPLES_PER_FRAME];
-    // Stereo interleaved buffer (L,R)
     static int16_t stereo_buf[SAMPLES_PER_FRAME * 2];
 
-    // Render beeper into mono buffer
     spectrum->renderBeeperAudio(mono_buf, SAMPLES_PER_FRAME);
 
-    // Apply volume/mute and duplicate to stereo
-    int vol = s_muted ? 0 : s_volume;
-    for (int i = 0; i < SAMPLES_PER_FRAME; ++i) {
-        int32_t s = (int32_t)mono_buf[i] * vol / 100;
-        int16_t s16 = (int16_t)s;
-        stereo_buf[i * 2 + 0] = s16;
-        stereo_buf[i * 2 + 1] = s16;
+    // Q15 volume factor: 0..100 scaled to [0, 32768]. Replaces per-sample
+    // divide by 100 with a single multiply-shift.
+    const uint32_t vol_q15 = s_muted ? 0u : ((uint32_t)s_volume * 32768u + 50u) / 100u;
+
+    if (vol_q15 == 0) {
+        memset(stereo_buf, 0, sizeof(stereo_buf));
+    } else if (vol_q15 >= 32768u) {
+        for (int i = 0; i < SAMPLES_PER_FRAME; ++i) {
+            int16_t s16 = mono_buf[i];
+            stereo_buf[2 * i + 0] = s16;
+            stereo_buf[2 * i + 1] = s16;
+        }
+    } else {
+        for (int i = 0; i < SAMPLES_PER_FRAME; ++i) {
+            int16_t s16 = (int16_t)(((int32_t)mono_buf[i] * (int32_t)vol_q15) >> 15);
+            stereo_buf[2 * i + 0] = s16;
+            stereo_buf[2 * i + 1] = s16;
+        }
     }
 
     size_t bytes_to_write = SAMPLES_PER_FRAME * 2 * sizeof(int16_t);
@@ -102,14 +110,13 @@ void audio_play_tone(int freq_hz, int duration_ms) {
     const int samp = SAMPLE_RATE;
     int total_samples = (duration_ms * samp) / 1000;
     const int CHUNK = 256;
-    int16_t mono[CHUNK];
     int16_t stereo[CHUNK * 2];
 
-    int toggle_period = samp / (freq_hz * 2); // half-period in samples
+    int toggle_period = samp / (freq_hz * 2);
     int state = 0;
     int period_cnt = 0;
 
-    int vol = s_muted ? 0 : s_volume;
+    const uint32_t vol_q15 = s_muted ? 0u : ((uint32_t)s_volume * 32768u + 50u) / 100u;
 
     while (total_samples > 0) {
         int n = total_samples > CHUNK ? CHUNK : total_samples;
@@ -119,10 +126,8 @@ void audio_play_tone(int freq_hz, int duration_ms) {
                 period_cnt = 0;
             }
             period_cnt++;
-            int32_t s = (state ? 16000 : -16000);
-            s = s * vol / 100;
-            int16_t s16 = (int16_t)s;
-            mono[i] = s16;
+            int32_t raw = state ? 16000 : -16000;
+            int16_t s16 = (int16_t)((raw * (int32_t)vol_q15) >> 15);
             stereo[i * 2 + 0] = s16;
             stereo[i * 2 + 1] = s16;
         }

@@ -46,14 +46,27 @@ void Beeper::copyForFrame() {
 void Beeper::renderFrame(int16_t* audio_buf, int num_samples) {
     if (!audio_buf || num_samples <= 0) return;
 
+    // Fast path: no events this frame -> fill with constant level.
+    const int16_t high = 12000;
+    const int16_t low  = -12000;
+    if (m_renderEventCount == 0) {
+        int16_t v = m_initialLevel ? high : low;
+        for (int i = 0; i < num_samples; ++i) audio_buf[i] = v;
+        return;
+    }
+
+    // Linear Q16 step instead of a 64-bit multiply/divide per sample.
+    const uint32_t step_q16 = (uint32_t)(((uint64_t)FRAME_T_STATES << 16) / (uint32_t)num_samples);
+    uint32_t t_q16 = 0;
     size_t evt = 0;
     uint8_t level = m_initialLevel;
     for (int i = 0; i < num_samples; ++i) {
-        uint32_t sample_tstate = (uint32_t)((uint64_t)i * FRAME_T_STATES / (uint32_t)num_samples);
+        uint32_t sample_tstate = t_q16 >> 16;
         while (evt < m_renderEventCount && m_renderEvents[evt].tstates <= sample_tstate) {
             level = m_renderEvents[evt].level;
             evt++;
         }
-        audio_buf[i] = level ? 12000 : -12000;
+        audio_buf[i] = level ? high : low;
+        t_q16 += step_q16;
     }
 }

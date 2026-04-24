@@ -39,14 +39,18 @@ static SpectrumBase* s_pendingSpectrum = NULL;
 
 // Ping-pong strip buffers allocated in internal RAM (IRAM)
 static const int NUM_STRIPS = 5;
+// Number of queued SPI transactions per strip. Column address (CASET) stays
+// constant for the whole frame so we only emit row (PASET) + RAMWR per strip.
+static const int TRANS_PER_STRIP = 4;
 static uint16_t* s_stripBuffers[2] = { NULL, NULL };
 
 // Pre-allocated SPI transactions to avoid heap churn
-static const int MAX_TRANSACTIONS = NUM_STRIPS * 6 + 2; 
+static const int MAX_TRANSACTIONS = NUM_STRIPS * TRANS_PER_STRIP + 2;
 static spi_transaction_t* s_trans_pool = NULL;
 static int s_trans_count = 0;
 
 static void lcd_push_frame_async_pingpong(const uint16_t* buffer);
+static void lcd_set_column_window_once();
 
 // SPI Pre-transfer callback to handle DC pin
 static void IRAM_ATTR lcd_spi_pre_transfer_callback(spi_transaction_t *t) {
@@ -231,6 +235,10 @@ bool display_init() {
     
     s_trans_pool = (spi_transaction_t*)heap_caps_malloc(sizeof(spi_transaction_t) * MAX_TRANSACTIONS, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
+    // Program the full-width column window once. It never changes for our
+    // landscape panel, so every frame only has to move the row window.
+    lcd_set_column_window_once();
+
     xTaskCreatePinnedToCore(video_task, "video", 4096, NULL, 6, &s_videoTaskHandle, 1);
     
     display_clear();
@@ -264,6 +272,15 @@ void display_present() {
     }
 }
 
+static void lcd_set_column_window_once() {
+    // CASET is fixed for the full-width panel; send it synchronously once so
+    // the async per-strip path doesn't have to re-emit it.
+    uint8_t caset = 0x2A;
+    uint8_t data[4] = { 0, 0, (uint8_t)((s_lcdDisplayWidth - 1) >> 8), (uint8_t)((s_lcdDisplayWidth - 1) & 0xFF) };
+    lcd_send_command(caset);
+    lcd_send_data(data, 4);
+}
+
 static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     if (!s_spi || !buffer || !s_stripBuffers[0] || !s_stripBuffers[1]) return;
 
@@ -279,27 +296,27 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
         while (spi_device_get_trans_result(s_spi, &rtrans, 0) == ESP_OK) {
         }
         if (i >= 2) {
-            for (int j = 0; j < 6; j++) spi_device_get_trans_result(s_spi, &rtrans, portMAX_DELAY);
+            for (int j = 0; j < TRANS_PER_STRIP; j++) spi_device_get_trans_result(s_spi, &rtrans, portMAX_DELAY);
         }
 
         uint16_t* dst = s_stripBuffers[bufIdx];
         memcpy(dst, &buffer[startY * s_lcdDisplayWidth], s_lcdDisplayWidth * height * 2);
-        
+
         spi_transaction_t* t = &s_trans_pool[s_trans_count];
-        memset(t, 0, sizeof(spi_transaction_t) * 6);
+        memset(t, 0, sizeof(spi_transaction_t) * TRANS_PER_STRIP);
 
-        t[0].length = 8; t[0].flags = SPI_TRANS_USE_TXDATA; t[0].tx_data[0] = 0x2A; t[0].user = (void*)0;
+        // PASET (row window) for this strip
+        t[0].length = 8;  t[0].flags = SPI_TRANS_USE_TXDATA; t[0].tx_data[0] = 0x2B; t[0].user = (void*)0;
         t[1].length = 32; t[1].flags = SPI_TRANS_USE_TXDATA; t[1].user = (void*)1;
-        t[1].tx_data[0] = 0; t[1].tx_data[1] = 0; t[1].tx_data[2] = (s_lcdDisplayWidth - 1) >> 8; t[1].tx_data[3] = (s_lcdDisplayWidth - 1) & 0xFF;
-        t[2].length = 8; t[2].flags = SPI_TRANS_USE_TXDATA; t[2].tx_data[0] = 0x2B; t[2].user = (void*)0;
-        t[3].length = 32; t[3].flags = SPI_TRANS_USE_TXDATA; t[3].user = (void*)1;
-        t[3].tx_data[0] = startY >> 8; t[3].tx_data[1] = startY & 0xFF;
-        t[3].tx_data[2] = (startY + height - 1) >> 8; t[3].tx_data[3] = (startY + height - 1) & 0xFF;
-        t[4].length = 8; t[4].flags = SPI_TRANS_USE_TXDATA; t[4].tx_data[0] = 0x2C; t[4].user = (void*)0;
-        t[5].length = s_lcdDisplayWidth * height * 16; t[5].tx_buffer = dst; t[5].user = (void*)1;
+        t[1].tx_data[0] = startY >> 8; t[1].tx_data[1] = startY & 0xFF;
+        t[1].tx_data[2] = (startY + height - 1) >> 8; t[1].tx_data[3] = (startY + height - 1) & 0xFF;
+        // RAMWR + pixel payload
+        t[2].length = 8;  t[2].flags = SPI_TRANS_USE_TXDATA; t[2].tx_data[0] = 0x2C; t[2].user = (void*)0;
+        t[3].length = s_lcdDisplayWidth * height * 16;
+        t[3].tx_buffer = dst; t[3].user = (void*)1;
 
-        for (int j = 0; j < 6; j++) spi_device_queue_trans(s_spi, &t[j], portMAX_DELAY);
-        s_trans_count += 6;
+        for (int j = 0; j < TRANS_PER_STRIP; j++) spi_device_queue_trans(s_spi, &t[j], portMAX_DELAY);
+        s_trans_count += TRANS_PER_STRIP;
     }
 }
 
