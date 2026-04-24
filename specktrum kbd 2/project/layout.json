@@ -1,0 +1,14 @@
+{
+  "name": "ZX Keyboard High Contrast (reference)",
+  "reference": "https://a03e9d35-13f4-4c9c-ac0e-ab0c60daae20.claudeusercontent.com/v1/design/projects/a03e9d35-13f4-4c9c-ac0e-ab0c60daae20/serve/ZX%20Keyboard%20High%20Contrast.html?t=e5d36ff982e924a863d0600ad3656ea9f21b743c06e892af85612e5d66151009.75faa396-d99a-473b-9be3-8f01786a544d.2a5f720f-57d1-4c50-a81b-232b69545d78.1777038137",
+  "rows": 5,
+  "cols": 10,
+  "raw_reference_text": "ZX/KBD HC · v1.0CONNECTED│ws://192.168.1.42:81│RTT 20ms│TX 0DISCONNECT⛶ FULLSCREEN SENT → ESP32-S3 — press any key to begin — MODEK keywordL letterC capsE extendedG graphicsCAPS ○SYM ○   EDIT BLUE ! 1 DEF FN CAPS LOCK RED @ 2 FN TRUE VIDEO MAGENTA # 3 LINE INV. VIDEO GREEN $ 4 OPEN # ◄ CYAN % 5 CLOSE # ▼ YELLOW & 6 MOVE ▲ WHITE ' 7 ERASE ► ( 8 POINT GRAPHICS ) 9 CAT DELETE BLACK _ 0 FORMAT SIN Q PLOT <= ASN COS W DRAW <> ACS TAN E REM >= ATN INT R RUN < VERIFY RND T RAND > MERGE STR $ Y RETURN AND [ CHR $ U IF OR ] CODE I INPUT AT IN PEEK O POKE ; OUT TAB P PRI...",
+  "keys": [
+    ["MODE","K","L","LETTER","CAPS","EXT","GRAPH","SYM","EDIT","BLUE"],
+    ["!","1","DEF","FN","CAPS_LOCK","RED","@","2","FN","VIDEO"],
+    ["#","3","LINE_INV","MAGENTA","$","4","OPEN","LEFT","%","5"],
+    ["^","6","MOVE_UP","'","7","ERASE","RIGHT","(","8","POINT"],
+    ["SPACE","ALT","FN","TAB","SHIFT","CTRL","LOCK","COPY","PASTE",""]
+  ]
+}

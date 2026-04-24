@@ -1,0 +1,19 @@
+ZX Keyboard — initial keymap notes
+
+This file contains a simple, editable human-friendly keymap and mapping notes derived from the referenced design.
+
+- Matrix: 5 rows x 10 cols (see layout.json)
+- Each physical key encodes multiple values on the ZX (keyword, symbol, number). For firmware we'll map each physical key to a primary HID key and provide layers for alternate functions.
+
+Sample mapping (row,col -> label):
+- (0,0) MODE
+- (0,1) K
+- (0,2) L
+... edit `layout.json` to refine labels.
+
+Next actions I can take for you:
+- Generate firmware for QMK (C) or ZMK (Zephyr) with scan matrix and basic keymap.
+- Produce an SVG keyboard diagram matching the high-contrast design.
+- Export a JSON/CSV key list for PCB layout or switch placement.
+
+Tell me which of the above you want next (firmware target or SVG/asset export).
