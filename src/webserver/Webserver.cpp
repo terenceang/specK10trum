@@ -99,7 +99,12 @@ esp_err_t webserver_start()
         .handle_ws_control_frames = false,
         .supported_subprotocol = NULL
     };
-    httpd_register_uri_handler(s_server, &root);
+    err = httpd_register_uri_handler(s_server, &root);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register '/' handler: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "Registered GET / handler");
+    }
 
     /* URI handler for WS */
     httpd_uri_t ws = {
@@ -111,8 +116,14 @@ esp_err_t webserver_start()
         .handle_ws_control_frames = false,
         .supported_subprotocol = NULL
     };
-    httpd_register_uri_handler(s_server, &ws);
+    err = httpd_register_uri_handler(s_server, &ws);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register '/ws' handler: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "Registered GET /ws handler");
+    }
 
+    ESP_LOGI(TAG, "Webserver ready. Open http://<device-ip>/ in a browser.");
     return ESP_OK;
 }
 

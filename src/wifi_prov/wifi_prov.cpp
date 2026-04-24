@@ -16,7 +16,7 @@ static const char* TAG = "wifi_prov";
 #include <string.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include "webserver/Webserver.h"
+#include "display/Display.h"
 
 
 static bool s_provisioning_started = false;
@@ -26,6 +26,8 @@ static bool s_sta_started = false;
 static esp_event_handler_instance_t s_prov_handler = nullptr;
 static esp_event_handler_instance_t s_wifi_handler = nullptr;
 static esp_event_handler_instance_t s_ip_handler = nullptr;
+static SemaphoreHandle_t s_wifi_connected_sem = NULL;
+static char s_last_ip_str[32] = {0};
 
 static void nvs_watcher_task(void* pv)
 {
@@ -61,20 +63,31 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
     if (base == WIFI_EVENT) {
         switch (id) {
         case WIFI_EVENT_STA_START:
+            ESP_LOGI(TAG, "Wi-Fi station started; connecting...");
             s_sta_started = true;
             esp_wifi_connect();
             break;
-        case WIFI_EVENT_STA_DISCONNECTED:
-            ESP_LOGW(TAG, "Wi-Fi disconnected, reconnecting...");
+        case WIFI_EVENT_STA_CONNECTED:
+            ESP_LOGI(TAG, "Wi-Fi connected to AP; waiting for IP...");
+            break;
+        case WIFI_EVENT_STA_DISCONNECTED: {
+            wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*)data;
+            ESP_LOGW(TAG, "Wi-Fi disconnected (reason: %d), reconnecting...", disconnected->reason);
             esp_wifi_connect();
             break;
+        }
         default:
             break;
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* evt = (ip_event_got_ip_t*)data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&evt->ip_info.ip));
-        webserver_start();
+        snprintf(s_last_ip_str, sizeof(s_last_ip_str), "IP: " IPSTR, IP2STR(&evt->ip_info.ip));
+        display_setOverlayText(s_last_ip_str, 0xFFFF);
+
+        if (s_wifi_connected_sem) {
+            xSemaphoreGive(s_wifi_connected_sem);
+        }
     }
 }
 
@@ -167,24 +180,12 @@ static esp_err_t ensure_wifi_initialized()
     return ESP_OK;
 }
 
-static bool start_sta_from_saved_config()
-{
-    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_wifi_set_mode(STA) failed: %d", err);
-        return false;
-    }
-    err = esp_wifi_start();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_wifi_start failed: %d", err);
-        return false;
-    }
-    // esp_wifi_connect() is triggered by WIFI_EVENT_STA_START in wifi_event_cb.
-    return true;
-}
-
 bool wifi_prov_start()
 {
+    if (!s_wifi_connected_sem) {
+        s_wifi_connected_sem = xSemaphoreCreateBinary();
+    }
+
     if (!s_watcher_started) {
         xTaskCreate(nvs_watcher_task, "prov_watcher", 3072, NULL, 3, NULL);
         s_watcher_started = true;
@@ -204,10 +205,9 @@ bool wifi_prov_start()
                                                         prov_event_cb, NULL, &s_prov_handler);
     if (err != ESP_OK) ESP_LOGW(TAG, "WIFI_PROV_EVENT register failed: %d", err);
 
-    wifi_prov_mgr_config_t cfg = {
-        .scheme = wifi_prov_scheme_ble,
-        .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM,
-    };
+    wifi_prov_mgr_config_t cfg = {};
+    cfg.scheme = wifi_prov_scheme_ble;
+    cfg.scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BT;
 
     err = wifi_prov_mgr_init(cfg);
     if (err != ESP_OK) {
@@ -215,19 +215,46 @@ bool wifi_prov_start()
         return false;
     }
 
-    /* 
-     * For testing: We skip the "already provisioned" check so the device
-     * always broadcasts its setup service on boot.
-     */
     bool provisioned = false;
-    if (wifi_prov_mgr_is_provisioned(&provisioned) == ESP_OK && provisioned) {
-        ESP_LOGI(TAG, "Device already provisioned, but starting BLE anyway for discovery...");
+    wifi_prov_mgr_is_provisioned(&provisioned);
+
+    if (provisioned) {
+        wifi_config_t conf;
+        esp_wifi_get_config(WIFI_IF_STA, &conf);
+        if (strlen((const char*)conf.sta.ssid) == 0) {
+            ESP_LOGW(TAG, "Provisioning flag set but SSID is empty! Resetting...");
+            wifi_prov_mgr_reset_provisioning();
+            provisioned = false; 
+        } else {
+            ESP_LOGI(TAG, "Device already provisioned. SSID: '%s'", (char*)conf.sta.ssid);
+        }
+    }
+
+    if (provisioned) {
+        // Already have saved credentials — skip BLE provisioning entirely.
+        // Release the provisioning manager so it doesn't interfere with the
+        // STA connection, then start Wi-Fi directly. The driver auto-connects
+        // using the config loaded from NVS by esp_wifi_init().
+        ESP_LOGI(TAG, "Already provisioned; releasing manager and connecting to saved AP");
+        wifi_prov_mgr_deinit();
+
+        esp_err_t m_err = esp_wifi_set_mode(WIFI_MODE_STA);
+        if (m_err != ESP_OK) {
+            ESP_LOGE(TAG, "esp_wifi_set_mode(STA) failed: %d", m_err);
+            return false;
+        }
+        esp_err_t s_err = esp_wifi_start();
+        if (s_err != ESP_OK && s_err != ESP_ERR_WIFI_CONN) {
+            ESP_LOGE(TAG, "esp_wifi_start failed: %d", s_err);
+            return false;
+        }
+        return true;
     }
 
     const char* service_name = "PROV_speck10";
     const char* pop = "12345678";
 
-    // Use SECURITY_1 (Password protected) as required by most modern versions of the app
+    ESP_LOGI(TAG, "Device not provisioned; starting BLE provisioning service");
     err = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, pop, service_name, NULL);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "wifi_prov_mgr_start_provisioning failed: %d", err);
@@ -236,7 +263,6 @@ bool wifi_prov_start()
     }
 
     s_provisioning_started = true;
-    ESP_LOGI(TAG, "Wi-Fi provisioning started (BLE). Service: %s", service_name);
     return true;
 }
 
@@ -250,6 +276,26 @@ void wifi_prov_stop()
     wifi_prov_mgr_deinit();
     s_provisioning_started = false;
     ESP_LOGI(TAG, "Wi-Fi provisioning stopped");
+}
+
+bool wifi_prov_wait_for_ip(uint32_t timeout_ms)
+{
+    if (!s_wifi_connected_sem) {
+        s_wifi_connected_sem = xSemaphoreCreateBinary();
+    }
+
+    // If the IP event already fired, an earlier overlay may have been
+    // overwritten by the caller — repaint so the display shows the IP.
+    if (s_last_ip_str[0] != '\0') {
+        display_setOverlayText(s_last_ip_str, 0xFFFF);
+        return true;
+    }
+
+    if (xSemaphoreTake(s_wifi_connected_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
+        display_setOverlayText(s_last_ip_str, 0xFFFF);
+        return true;
+    }
+    return false;
 }
 
 bool wifi_prov_apply_credentials(const char* ssid, const char* password)
@@ -320,7 +366,8 @@ void wifi_prov_clear_and_stop(bool clear_saved_creds)
         }
         // Clear the manager's own record so next boot re-enters provisioning.
         // (Safe even if manager is deinitted — it touches NVS directly.)
-        wifi_prov_mgr_config_t cfg = { .scheme = wifi_prov_scheme_ble };
+        wifi_prov_mgr_config_t cfg = {};
+        cfg.scheme = wifi_prov_scheme_ble;
         if (wifi_prov_mgr_init(cfg) == ESP_OK) {
             wifi_prov_mgr_reset_provisioning();
             wifi_prov_mgr_deinit();
@@ -330,6 +377,8 @@ void wifi_prov_clear_and_stop(bool clear_saved_creds)
 }
 
 #else
+
+extern "C" {
 
 bool wifi_prov_start() {
     ESP_LOGW(TAG, "BLE provisioning not enabled in sdkconfig or headers missing.");
@@ -352,5 +401,13 @@ void wifi_prov_clear_and_stop(bool clear_saved_creds)
     (void)clear_saved_creds;
     ESP_LOGI(TAG, "wifi_prov_clear_and_stop: provisioning disabled or headers missing");
 }
+
+bool wifi_prov_wait_for_ip(uint32_t timeout_ms)
+{
+    (void)timeout_ms;
+    return true; // Don't block if provisioning is disabled
+}
+
+} // extern "C"
 
 #endif

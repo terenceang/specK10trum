@@ -25,6 +25,8 @@ void display_test_pattern();
 bool display_showSplash(const char* filename);
 // Boot-time visual test: blink twice and show a 1s color bar
 void display_boot_test();
+// Set an overlay text (e.g. IP address) to be shown on every frame
+void display_setOverlayText(const char* text, uint16_t color);
 
 #ifdef __cplusplus
 }

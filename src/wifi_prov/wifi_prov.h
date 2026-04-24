@@ -3,6 +3,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // Apply credentials received by a provisioner. Saves to NVS and attempts
 // to configure and connect the Wi‑Fi STA interface. This function is safe
 // to call from a provisioning event handler.
@@ -16,6 +20,13 @@ bool wifi_prov_start();
 
 // Stop provisioning and cleanup.
 void wifi_prov_stop();
+
+// Block until Wi-Fi is connected and an IP is obtained.
+bool wifi_prov_wait_for_ip(uint32_t timeout_ms);
+
+#ifdef __cplusplus
+}
+#endif
 
 // Note: Full BLE-based provisioning requires enabling Bluetooth and the
 // IDF `wifi_provisioning` component in `sdkconfig`. The implementation

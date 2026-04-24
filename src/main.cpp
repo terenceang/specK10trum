@@ -13,6 +13,7 @@
 #include "spectrum/Tape.h"
 #include "input/Input.h"
 #include "wifi_prov/wifi_prov.h"
+#include "webserver/Webserver.h"
 
 // ============================================
 // SELECT YOUR MODEL HERE
@@ -194,6 +195,23 @@ extern "C" void app_main(void) {
 
     // Clear both frame buffers before starting emulator to prevent splash screen ghosting
     display_clear();
+
+    // Show "Waiting for Wi-Fi" if not already connected
+    display_setOverlayText("Waiting for Wi-Fi...", 0xFFFF);
+    
+    // Block here until Wi-Fi is ready (or 60s timeout)
+    if (!wifi_prov_wait_for_ip(60000)) {
+        ESP_LOGW(TAG, "Wi-Fi connection timed out. Starting emulator anyway.");
+        display_setOverlayText("Wi-Fi Timeout", 0xF800); // Red text
+    } else {
+        ESP_LOGI(TAG, "Wi-Fi ready, proceeding to emulator.");
+        // The overlay text is updated to the actual IP in wifi_prov.cpp
+        if (webserver_start() != ESP_OK) {
+            ESP_LOGW(TAG, "Webserver failed to start");
+        }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
     
     ESP_LOGI(TAG, "✓ Initialization complete! Starting emulator task.");
     
