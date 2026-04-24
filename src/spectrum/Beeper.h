@@ -26,4 +26,8 @@ private:
     uint8_t m_initialLevel;
     uint8_t m_speakerLevel;
     bool m_externalEar;
+
+    float m_lpFilterState;
+    float m_dcFilterX;
+    float m_dcFilterY;
 };
