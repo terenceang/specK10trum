@@ -45,6 +45,9 @@ void Beeper::copyForFrame() {
 
 void Beeper::renderFrame(int16_t* audio_buf, int num_samples) {
     if (!audio_buf || num_samples <= 0) return;
+    // First generate the raw 1-bit waveform into a temporary buffer
+    int16_t* raw = (int16_t*)malloc(sizeof(int16_t) * num_samples);
+    if (!raw) return;
 
     size_t evt = 0;
     uint8_t level = m_initialLevel;
@@ -54,6 +57,29 @@ void Beeper::renderFrame(int16_t* audio_buf, int num_samples) {
             level = m_renderEvents[evt].level;
             evt++;
         }
-        audio_buf[i] = level ? 12000 : -12000;
+        raw[i] = level ? 12000 : -12000;
     }
+
+    // Apply a small symmetric FIR low-pass to reduce aliasing while preserving character.
+    // Using a simple 9-tap symmetric kernel: [1,2,3,4,5,4,3,2,1] / 25
+    const int taps[9] = {1,2,3,4,5,4,3,2,1};
+    const int taps_sum = 25;
+
+    for (int i = 0; i < num_samples; ++i) {
+        int64_t acc = 0;
+        for (int t = 0; t < 9; ++t) {
+            int idx = i + t - 4; // center the kernel
+            int16_t v = 0;
+            if (idx < 0) v = raw[0];
+            else if (idx >= num_samples) v = raw[num_samples - 1];
+            else v = raw[idx];
+            acc += (int64_t)v * taps[t];
+        }
+        acc /= taps_sum;
+        if (acc > INT16_MAX) acc = INT16_MAX;
+        if (acc < INT16_MIN) acc = INT16_MIN;
+        audio_buf[i] = (int16_t)acc;
+    }
+
+    free(raw);
 }
