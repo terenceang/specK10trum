@@ -143,38 +143,48 @@ static esp_err_t ensure_wifi_initialized()
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
+    ESP_LOGI(TAG, "nvs_flash_init: %s", esp_err_to_name(err));
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "nvs_flash_init failed: %d", err);
+        ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
         return err;
     }
 
     err = esp_netif_init();
+    ESP_LOGI(TAG, "esp_netif_init: %s", esp_err_to_name(err));
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "esp_netif_init failed: %d", err);
+        ESP_LOGE(TAG, "esp_netif_init failed: %s", esp_err_to_name(err));
         return err;
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "esp_netif_init returned ESP_ERR_INVALID_STATE (already initialized)");
     }
 
     err = esp_event_loop_create_default();
+    ESP_LOGI(TAG, "esp_event_loop_create_default: %s", esp_err_to_name(err));
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "esp_event_loop_create_default failed: %d", err);
+        ESP_LOGE(TAG, "esp_event_loop_create_default failed: %s", esp_err_to_name(err));
         return err;
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "esp_event_loop_create_default returned ESP_ERR_INVALID_STATE (already created)");
     }
 
     esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     err = esp_wifi_init(&cfg);
+    ESP_LOGI(TAG, "esp_wifi_init: %s", esp_err_to_name(err));
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_wifi_init failed: %d", err);
+        ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(err));
         return err;
     }
 
     err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                               wifi_event_cb, NULL, &s_wifi_handler);
-    if (err != ESP_OK) ESP_LOGW(TAG, "WIFI_EVENT register failed: %d", err);
+    if (err != ESP_OK) ESP_LOGW(TAG, "WIFI_EVENT register failed: %s", esp_err_to_name(err));
     err = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                               wifi_event_cb, NULL, &s_ip_handler);
-    if (err != ESP_OK) ESP_LOGW(TAG, "IP_EVENT register failed: %d", err);
+    if (err != ESP_OK) ESP_LOGW(TAG, "IP_EVENT register failed: %s", esp_err_to_name(err));
 
     s_wifi_init_done = true;
     return ESP_OK;
@@ -255,6 +265,56 @@ bool wifi_prov_start()
     const char* pop = "12345678";
 
     ESP_LOGI(TAG, "Device not provisioned; starting BLE provisioning service");
+    err = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, pop, service_name, NULL);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "wifi_prov_mgr_start_provisioning failed: %d", err);
+        wifi_prov_mgr_deinit();
+        return false;
+    }
+
+    s_provisioning_started = true;
+    return true;
+}
+
+bool wifi_prov_start_force()
+{
+    if (!s_wifi_connected_sem) {
+        s_wifi_connected_sem = xSemaphoreCreateBinary();
+    }
+
+    if (!s_watcher_started) {
+        xTaskCreate(nvs_watcher_task, "prov_watcher", 3072, NULL, 3, NULL);
+        s_watcher_started = true;
+    }
+
+    if (s_provisioning_started) {
+        ESP_LOGI(TAG, "Provisioning already running");
+        return true;
+    }
+
+    if (ensure_wifi_initialized() != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi subsystem init failed; cannot start provisioning");
+        return false;
+    }
+
+    esp_err_t err = esp_event_handler_instance_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID,
+                                                        prov_event_cb, NULL, &s_prov_handler);
+    if (err != ESP_OK) ESP_LOGW(TAG, "WIFI_PROV_EVENT register failed: %d", err);
+
+    wifi_prov_mgr_config_t cfg = {};
+    cfg.scheme = wifi_prov_scheme_ble;
+    cfg.scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BT;
+
+    err = wifi_prov_mgr_init(cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "wifi_prov_mgr_init failed: %d", err);
+        return false;
+    }
+
+    const char* service_name = "PROV_speck10";
+    const char* pop = "12345678";
+
+    ESP_LOGI(TAG, "Force-starting BLE provisioning service");
     err = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, pop, service_name, NULL);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "wifi_prov_mgr_start_provisioning failed: %d", err);

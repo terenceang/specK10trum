@@ -12,6 +12,7 @@ static httpd_handle_t s_server = NULL;
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
+    ESP_LOGI(TAG, "HTTP GET / - serving index.html");
     return httpd_resp_send(req, INDEX_HTML_START, HTTPD_RESP_USE_STRLEN);
 }
 
@@ -34,7 +35,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
         ESP_LOGE(TAG, "httpd_ws_recv_frame failed to get frame len with %d", ret);
         return ret;
     }
-
+    ESP_LOGI(TAG, "WS frame len=%d type=%d", ws_pkt.len, ws_pkt.type);
     if (ws_pkt.len > 0) {
         buf = (uint8_t*)calloc(1, ws_pkt.len);
         if (buf == NULL) {
@@ -61,6 +62,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
             bool pressed = buf[2] != 0;
 
             if (row < 8 && bit < 5) {
+                ESP_LOGI(TAG, "WS key: row=%d bit=%d pressed=%d", row, bit, pressed);
                 uint8_t current = input_getKeyboardRow(row);
                 if (pressed) {
                     current &= ~(1 << bit); // Clear bit (active low)
@@ -85,7 +87,7 @@ esp_err_t webserver_start()
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
     esp_err_t err = httpd_start(&s_server, &config);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Error starting server!");
+        ESP_LOGE(TAG, "Error starting server: %s", esp_err_to_name(err));
         return err;
     }
 

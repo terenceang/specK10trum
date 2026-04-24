@@ -13,6 +13,7 @@
 #include "spectrum/Tape.h"
 #include "input/Input.h"
 #include "wifi_prov/wifi_prov.h"
+#include <esp_wifi.h>
 #include "webserver/Webserver.h"
 
 // ============================================
@@ -123,8 +124,7 @@ extern "C" void app_main(void) {
         if (!audio_init()) {
             ESP_LOGW(TAG, "Audio initialization failed; continuing without sound");
         }
-        // Start BLE Wi-Fi provisioning scaffold (no-op unless BT enabled)
-        wifi_prov_start();
+        // Do not start provisioning yet; try to connect to saved Wi‑Fi first.
         display_boot_test();
     }
 
@@ -199,10 +199,41 @@ extern "C" void app_main(void) {
     // Show "Waiting for Wi-Fi" if not already connected
     display_setOverlayText("Waiting for Wi-Fi...", 0xFFFF);
     
-    // Block here until Wi-Fi is ready (or 60s timeout)
-    if (!wifi_prov_wait_for_ip(60000)) {
-        ESP_LOGW(TAG, "Wi-Fi connection timed out. Starting emulator anyway.");
-        display_setOverlayText("Wi-Fi Timeout", 0xF800); // Red text
+    // Try up to 4 attempts to obtain an IP from saved Wi-Fi credentials.
+    const int max_attempts = 4;
+    bool wifi_connected = false;
+    // Ensure Wi-Fi subsystem is initialized (this will start the driver when
+    // already provisioned, and will start the provisioning manager otherwise).
+    if (!wifi_prov_start()) {
+        ESP_LOGW(TAG, "wifi_prov_start() failed to initialize Wi‑Fi subsystem");
+    }
+    for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Wi-Fi attempt %d/%d", attempt, max_attempts);
+        display_setOverlayText(msg, 0xFFE0);
+        if (wifi_prov_wait_for_ip(15000)) {
+            wifi_connected = true;
+            break;
+        }
+        ESP_LOGW(TAG, "Wi-Fi attempt %d/%d failed; retrying...", attempt, max_attempts);
+        // Trigger a reconnect attempt via the Wi-Fi driver
+        esp_err_t err = esp_wifi_disconnect();
+        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+            ESP_LOGW(TAG, "esp_wifi_disconnect: %s", esp_err_to_name(err));
+        } else if (err == ESP_ERR_WIFI_NOT_STARTED) {
+            ESP_LOGW(TAG, "esp_wifi_disconnect: %s (Wi‑Fi driver not started)", esp_err_to_name(err));
+        }
+        err = esp_wifi_connect();
+        if (err != ESP_OK) ESP_LOGW(TAG, "esp_wifi_connect: %d", err);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+    }
+
+    if (!wifi_connected) {
+        ESP_LOGW(TAG, "Wi-Fi failed after %d attempts. Starting provisioning mode.", max_attempts);
+        display_setOverlayText("Wi-Fi Timeout - Entering Provisioning", 0xF800); // Red text
+        // Start provisioning without clearing existing credentials; a successful
+        // provisioning will overwrite saved credentials via wifi_prov_apply_credentials().
+        wifi_prov_start_force();
     } else {
         ESP_LOGI(TAG, "Wi-Fi ready, proceeding to emulator.");
         // The overlay text is updated to the actual IP in wifi_prov.cpp

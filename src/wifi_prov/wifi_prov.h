@@ -18,6 +18,11 @@ void wifi_prov_clear_and_stop(bool clear_saved_creds);
 // Start BLE-based Wi-Fi provisioning (non-blocking). Returns true on success.
 bool wifi_prov_start();
 
+// Force-start BLE-based provisioning even if device is already marked provisioned.
+// Useful when you want to re-provision without erasing saved credentials; a
+// successful provisioning run will overwrite saved credentials.
+bool wifi_prov_start_force();
+
 // Stop provisioning and cleanup.
 void wifi_prov_stop();
 
