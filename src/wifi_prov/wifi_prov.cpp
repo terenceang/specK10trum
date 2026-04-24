@@ -222,10 +222,10 @@ bool wifi_prov_start()
     }
 
     const char* service_name = "PROV_speck10";
-    const char* pop = NULL;
+    const char* pop = "12345678";
 
-    // Use SECURITY_0 (no password) for maximum compatibility during initial setup
-    err = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_0, pop, service_name, NULL);
+    // Use SECURITY_1 (Password protected) as required by most modern versions of the app
+    err = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, pop, service_name, NULL);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "wifi_prov_mgr_start_provisioning failed: %d", err);
         wifi_prov_mgr_deinit();
