@@ -441,8 +441,7 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     uint8_t* ramBank1 = m_videoPagePtr ? m_videoPagePtr : getPagePtr(1);
     if (!ramBank1) return;
 
-    uint16_t* current_luts[128];
-    for (int i = 0; i < 128; ++i) current_luts[i] = get_lut(i);
+    uint16_t* current_luts[128] = { nullptr };
 
     for (int y = 0; y < source_height; ++y) {
         uint16_t* linePtr = &buffer[(offset_y + y) * bufWidth + offset_x];
@@ -451,16 +450,21 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
 
         for (int xByte = 0; xByte < 32; ++xByte) {
             uint8_t pixels = ramBank1[y_off | xByte];
-            uint8_t attr = ramBank1[attr_off | xByte];
-            uint16_t* lut = current_luts[attr & 0x7F];
+            uint8_t raw_attr = ramBank1[attr_off | xByte];
+            uint8_t attr = raw_attr & 0x7F;
+            uint16_t* lut = current_luts[attr];
+            if (!lut) {
+                lut = get_lut(attr);
+                current_luts[attr] = lut;
+            }
             if (lut) {
                 uint64_t* src64 = (uint64_t*)&lut[pixels * 8];
                 uint64_t* dst64 = (uint64_t*)linePtr;
                 dst64[0] = src64[0]; dst64[1] = src64[1];
             } else {
-                bool bright = (attr & 0x40) != 0;
-                uint16_t ink = spectrum_palette(attr & 0x07, bright);
-                uint16_t paper = spectrum_palette((attr >> 3) & 0x07, bright);
+                bool bright = (raw_attr & 0x40) != 0;
+                uint16_t ink = spectrum_palette(raw_attr & 0x07, bright);
+                uint16_t paper = spectrum_palette((raw_attr >> 3) & 0x07, bright);
                 
                 uint32_t ink32 = (ink << 16) | ink;
                 uint32_t paper32 = (paper << 16) | paper;
