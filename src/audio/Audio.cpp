@@ -17,6 +17,8 @@ static i2s_chan_handle_t tx_handle = NULL;
 static int s_volume = 5;
 static bool s_muted = false;
 static StreamBufferHandle_t s_audio_stream = NULL;
+static StaticStreamBuffer_t s_audio_stream_struct;
+static uint8_t* s_audio_stream_buffer = NULL;
 static const size_t FRAMES_OF_BUFFER = 8; // number of frames to hold in ring
 
 static void audio_writer_task(void* arg) {
@@ -85,9 +87,17 @@ bool audio_init() {
         return false;
     }
 
-    // Create stream buffer to hold several frames of stereo data.
+    // Create stream buffer in PSRAM to save internal RAM.
     size_t frame_bytes = SAMPLES_PER_FRAME * 2 * sizeof(int16_t);
-    s_audio_stream = xStreamBufferCreate(frame_bytes * FRAMES_OF_BUFFER, frame_bytes);
+    size_t buffer_size = frame_bytes * FRAMES_OF_BUFFER;
+    s_audio_stream_buffer = (uint8_t*)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_audio_stream_buffer) {
+        ESP_LOGW(TAG, "Failed to allocate audio buffer in PSRAM; falling back to internal RAM");
+        s_audio_stream = xStreamBufferCreate(buffer_size, frame_bytes);
+    } else {
+        s_audio_stream = xStreamBufferCreateStatic(buffer_size, frame_bytes, s_audio_stream_buffer, &s_audio_stream_struct);
+    }
+
     if (!s_audio_stream) {
         ESP_LOGW(TAG, "Failed to create audio stream buffer; audio will block");
     } else {

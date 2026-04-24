@@ -12,6 +12,7 @@
 #include "audio/Audio.h"
 #include "spectrum/Tape.h"
 #include "input/Input.h"
+#include "wifi_prov/wifi_prov.h"
 
 // ============================================
 // SELECT YOUR MODEL HERE
@@ -121,6 +122,8 @@ extern "C" void app_main(void) {
         if (!audio_init()) {
             ESP_LOGW(TAG, "Audio initialization failed; continuing without sound");
         }
+        // Start BLE Wi-Fi provisioning scaffold (no-op unless BT enabled)
+        wifi_prov_start();
         display_boot_test();
     }
 

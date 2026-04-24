@@ -189,8 +189,12 @@ bool display_init() {
     update_display_dimensions();
     size_t bufferSize = s_lcdDisplayWidth * s_lcdDisplayHeight * sizeof(uint16_t);
     for (int i = 0; i < 2; i++) {
+        // Explicitly request PSRAM first to save internal RAM for Bluetooth
         s_frameBuffers[i] = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!s_frameBuffers[i]) s_frameBuffers[i] = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+        if (!s_frameBuffers[i]) {
+            ESP_LOGW(TAG, "Framebuffer %d allocation in PSRAM failed, falling back to internal RAM", i);
+            s_frameBuffers[i] = (uint16_t*)heap_caps_malloc(bufferSize, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+        }
         if (!s_frameBuffers[i]) return false;
     }
 
@@ -231,7 +235,7 @@ bool display_init() {
     
     s_trans_pool = (spi_transaction_t*)heap_caps_malloc(sizeof(spi_transaction_t) * MAX_TRANSACTIONS, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-    xTaskCreatePinnedToCore(video_task, "video", 4096, NULL, 6, &s_videoTaskHandle, 1);
+    xTaskCreatePinnedToCore(video_task, "video", 3072, NULL, 6, &s_videoTaskHandle, 1);
     
     display_clear();
 
