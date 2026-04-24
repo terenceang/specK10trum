@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pio --version)",
+      "Read(//c/Users/TerenceAng/.platformio/penv/Scripts/**)",
+      "Bash(/c/Users/TerenceAng/.platformio/penv/Scripts/platformio.exe run *)"
+    ]
+  }
+}

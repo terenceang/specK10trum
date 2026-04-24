@@ -28,24 +28,40 @@
 #include "z80.h"
 #include <string.h>
 
+#if defined(__XTENSA__) || defined(ESP_PLATFORM)
+#include "esp_attr.h"
+#else
+#define IRAM_ATTR
+#endif
+
+#ifndef Z80_HOT
+#define Z80_HOT      __attribute__((hot))
+#endif
+#ifndef Z80_AINLINE
+#define Z80_AINLINE  static inline __attribute__((always_inline))
+#endif
+
+#define Z80_LIKELY(x)   __builtin_expect(!!(x), 1)
+#define Z80_UNLIKELY(x) __builtin_expect(!!(x), 0)
+
 /* ===================================================================
  * HELPER MACROS
  * =================================================================== */
 
 /* Read/write memory using cached page pointers when available, fallback to callbacks. */
-static inline uint8_t RB_func(Z80 *cpu, uint16_t _a) {
+Z80_AINLINE uint8_t RB_func(Z80 *cpu, uint16_t _a) {
     uint8_t* _p = cpu->page_read[_a >> 14];
-    if (_p) return _p[_a & 0x3FFF];
+    if (Z80_LIKELY(_p != 0)) return _p[_a & 0x3FFF];
     return cpu->mem_read(cpu->ctx, _a);
 }
 
-static inline void WB_func(Z80 *cpu, uint16_t _a, uint8_t _v) {
+Z80_AINLINE void WB_func(Z80 *cpu, uint16_t _a, uint8_t _v) {
     uint8_t* _p = cpu->page_write[_a >> 14];
-    if (_p) {
+    if (Z80_LIKELY(_p != 0)) {
         _p[_a & 0x3FFF] = _v;
-    } else {
-        cpu->mem_write(cpu->ctx, _a, _v);
+        return;
     }
+    if (cpu->mem_write) cpu->mem_write(cpu->ctx, _a, _v);
 }
 
 #define RB(addr) RB_func(cpu, (uint16_t)(addr))
@@ -630,7 +646,7 @@ static int exec_ddfdcb(Z80 *cpu, uint16_t ixiy) {
 }
 
 /* Forward declaration: used by DD/FD fallback re-decoding. */
-static int exec_opcode(Z80 *cpu, uint8_t op);
+static int exec_opcode(Z80 *cpu, uint8_t op) Z80_HOT;
 
 /* ===================================================================
  * ED-PREFIX EXECUTION
@@ -1303,7 +1319,7 @@ static int exec_ddfd(Z80 *cpu, uint16_t *ixiy) {
  * This helper does not fetch the first opcode byte and does not update
  * cpu->clocks.
  */
-static int exec_opcode(Z80 *cpu, uint8_t op) {
+Z80_HOT static int exec_opcode(Z80 *cpu, uint8_t op) {
     int tstates = 0;
 
     /* Prefixed instructions. */
@@ -1703,16 +1719,16 @@ static int exec_opcode(Z80 *cpu, uint8_t op) {
     return tstates;
 }
 
-int z80_step(Z80 *cpu) {
+IRAM_ATTR Z80_HOT int z80_step(Z80 *cpu) {
     int tstates;
 
     /* EI enables maskable interrupts only after one full subsequent
      * instruction has completed. */
-    if (cpu->ei_delay)
+    if (Z80_UNLIKELY(cpu->ei_delay))
         cpu->ei_delay = 0;
 
     /* If halted, execute NOPs until an interrupt wakes us up. */
-    if (cpu->halted) {
+    if (Z80_UNLIKELY(cpu->halted)) {
         INC_R();
         tstates = 4;
         cpu->clocks += tstates;
