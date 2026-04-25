@@ -11,8 +11,6 @@
     :root{
       --bg:#0a0a0b; --ink:#e8e6df; --dim:#666;
       --red:#ff3b30; --green:#35c759; --amber:#ffcc1e;
-      /* Minimum 38px keeps labels from clipping; below ~575px viewport the
-         keyboard scrolls horizontally instead of collapsing labels. */
       --key-size: clamp(38px, calc((100vw - 24px) / 14.5), 72px);
       --key-gap:  calc(var(--key-size) * 0.12);
       --row-gap:  calc(var(--key-size) * 0.62);
@@ -26,11 +24,8 @@
       font-family:"JetBrains Mono",ui-monospace,monospace;-webkit-text-size-adjust:100%}
     .zx-app{padding:clamp(6px,1.5vw,16px);display:flex;flex-direction:column;gap:10px;align-items:center}
 
-    /* Scroll wrapper */
     .zx-kbwrap{width:100%;overflow-x:auto;overflow-y:visible;padding-bottom:10px;display:flex;justify-content:center}
-    
-    /* Main container defines the width for both status and keyboard */
-    .zx-main-container{display:flex;flex-direction:column;gap:10px;width:max-content}
+    .zx-main-container{display:flex;flex-direction:column;gap:10px;width:max-content;position:relative}
 
     /* Top status strip */
     .zx-status{display:flex;gap:20px;align-items:center;width:100%;
@@ -40,17 +35,47 @@
       transition:background .2s, box-shadow .2s}
     .zx-dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
     
-    .zx-status-logo{height:20px;width:auto;display:block;flex:0 0 auto}
+    .zx-status-logo{height:20px;width:auto;display:block;flex:0 0 auto;cursor:pointer;
+      transition:opacity .1s}
+    .zx-status-logo:hover{opacity:0.8}
     .zx-status-logo svg{height:100%;width:auto;display:block}
 
     .zx-tx{font-weight:800;color:var(--ink);white-space:nowrap}
 
-    /* Buffer list */
     .zx-buf-list{display:flex;gap:6px;flex:1;min-width:0;overflow:hidden;
       white-space:nowrap;justify-content:flex-end}
     .zx-buf-item{padding:1px 5px;border:1px solid #333;flex:0 0 auto;font-size:10px;border-radius:2px}
     .zx-buf-item.down{background:var(--ink);color:#000;border-color:var(--ink)}
     .zx-buf-item.up{background:transparent;color:var(--dim)}
+
+    /* Menu System */
+    .zx-menu{position:absolute;top:44px;left:0;background:#141416;border:1px solid #444;
+      display:none;flex-direction:column;min-width:180px;z-index:100;
+      box-shadow:0 8px 24px rgba(0,0,0,0.6);border-radius:4px;overflow:hidden}
+    .zx-menu.open{display:flex;animation:zx-pop .12s ease-out}
+    .zx-menu-item{padding:12px 16px;font-size:11px;font-weight:800;cursor:pointer;
+      transition:all .1s;color:var(--dim);text-transform:uppercase;letter-spacing:1px}
+    .zx-menu-item:hover{background:#1a1a1c;color:var(--ink)}
+    .zx-menu-item.danger:hover{color:var(--red)}
+    .zx-menu-sep{height:1px;background:#333}
+
+    /* Submenu for File Picker */
+    .zx-submenu{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+      background:#141416;border:1px solid #444;z-index:200;
+      display:none;flex-direction:column;min-width:280px;max-width:90vw;
+      max-height:80vh;box-shadow:0 12px 48px rgba(0,0,0,0.8);border-radius:6px;overflow:hidden}
+    .zx-submenu.open{display:flex;animation:zx-pop-sub .15s ease-out}
+    .zx-submenu-hdr{padding:14px 16px;background:#1a1a1c;border-bottom:1px solid #333;
+      display:flex;justify-content:space-between;align-items:center}
+    .zx-submenu-title{font-size:11px;font-weight:900;letter-spacing:1px;color:var(--ink)}
+    .zx-submenu-close{cursor:pointer;color:var(--dim);font-size:16px;font-weight:200}
+    .zx-submenu-list{overflow-y:auto;padding:8px 0}
+    .zx-file-item{padding:10px 16px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:10px;color:var(--dim)}
+    .zx-file-item:hover{background:#1a1a1c;color:var(--ink)}
+    .zx-file-item::before{content:"📄";font-size:12px;opacity:0.5}
+
+    @keyframes zx-pop{from{transform:translateY(-4px);opacity:0}to{transform:translateY(0);opacity:1}}
+    @keyframes zx-pop-sub{from{transform:translate(-50%,-48%) scale(0.98);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
 
     /* Keyboard */
     .zx-kb{display:flex;flex-direction:column;gap:var(--row-gap);
@@ -59,7 +84,6 @@
       border:1px solid #333;background:#111;position:relative;width:max-content;
       touch-action:none;-webkit-user-select:none;user-select:none}
 
-    /* Indicators on keyboard - positioned next to row 1 (next to '0') */
     .zx-kb-leds{display:flex;gap:12px;align-items:center;margin-left:32px;height:var(--key-size)}
     .zx-led{display:flex;gap:8px;align-items:center;padding:5px 12px;
       border:1px solid #222;font-size:10px;font-weight:800;color:var(--dim);
@@ -212,11 +236,6 @@
       }</div>`
     : '';
 
-  const host = (function () {
-    try { const h = localStorage.getItem('zx_kb_host'); if (h) return h; } catch (e) {}
-    return 'ws://' + location.host + '/ws';
-  })();
-
   const logoSvg = `
     <svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 1318.41 183.18">
       <defs>
@@ -257,10 +276,29 @@
       <div class="zx-kbwrap">
         <div class="zx-main-container">
           <div class="zx-status">
-            <div class="zx-status-logo">${logoSvg}</div>
+            <div class="zx-status-logo" id="zx-logo">${logoSvg}</div>
             <div class="zx-buf-list" id="zx-buf-list"></div>
             <div class="zx-tx" id="zx-tx">TX: 0</div>
             <div class="zx-dot" id="zx-dot" title="Disconnected"></div>
+            <button id="zx-btn-conn" style="background:rgba(255,255,255,0.03);border:1px solid #333;color:#666;padding:3px 8px;font-family:inherit;font-size:9px;cursor:pointer;border-radius:3px">CONNECT</button>
+            <button id="zx-btn-fs" style="background:rgba(255,255,255,0.03);border:1px solid #333;color:#666;padding:3px 8px;font-family:inherit;font-size:9px;cursor:pointer;border-radius:3px">⛶</button>
+          </div>
+
+          <div class="zx-menu" id="zx-menu">
+            <div class="zx-menu-item" data-action="model">Model</div>
+            <div class="zx-menu-item" data-action="tape">Load Tape</div>
+            <div class="zx-menu-item" data-action="snapshot">Snapshot</div>
+            <div class="zx-menu-item" data-action="settings">Settings</div>
+            <div class="zx-menu-sep"></div>
+            <div class="zx-menu-item danger" data-action="reset">Reset</div>
+          </div>
+
+          <div class="zx-submenu" id="zx-submenu">
+            <div class="zx-submenu-hdr">
+              <span class="zx-submenu-title" id="zx-submenu-title">FILES</span>
+              <span class="zx-submenu-close" id="zx-submenu-close">&times;</span>
+            </div>
+            <div class="zx-submenu-list" id="zx-submenu-list"></div>
           </div>
 
           <div class="zx-kb" id="zx-kb">
@@ -274,12 +312,86 @@
     </div>
   `;
 
-  const dot     = document.getElementById('zx-dot');
-  const txEl    = document.getElementById('zx-tx');
-  const bufEl   = document.getElementById('zx-buf-list');
-  const kb      = document.getElementById('zx-kb');
-  const ledCaps = document.getElementById('zx-led-caps');
-  const ledSym  = document.getElementById('zx-led-sym');
+  const dot      = document.getElementById('zx-dot');
+  const txEl     = document.getElementById('zx-tx');
+  const bufEl    = document.getElementById('zx-buf-list');
+  const kb       = document.getElementById('zx-kb');
+  const logo     = document.getElementById('zx-logo');
+  const menu     = document.getElementById('zx-menu');
+  const btnConn  = document.getElementById('zx-btn-conn');
+  const btnFs    = document.getElementById('zx-btn-fs');
+  const submenu  = document.getElementById('zx-submenu');
+  const sublist  = document.getElementById('zx-submenu-list');
+  const subclose = document.getElementById('zx-submenu-close');
+  const subtitle = document.getElementById('zx-submenu-title');
+  const ledCaps  = document.getElementById('zx-led-caps');
+  const ledSym   = document.getElementById('zx-led-sym');
+
+  const host = (function () {
+    try { const h = localStorage.getItem('zx_kb_host'); if (h) return h; } catch (e) {}
+    return 'ws://' + location.host + '/ws';
+  })();
+
+  // -------- Menu System --------
+  logo.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.classList.toggle('open');
+  });
+
+  document.addEventListener('click', () => {
+    menu.classList.remove('open');
+  });
+
+  menu.addEventListener('click', (e) => {
+    const action = e.target.dataset.action;
+    if (!action) return;
+    if (action === 'snapshot') {
+      openSubmenu('SNAPSHOTS', '/api/snapshots');
+    } else if (action === 'reset') {
+      fetch('/api/reset').then(r => console.log('Reset:', r.status));
+    } else {
+      console.log('Menu action:', action);
+    }
+    menu.classList.remove('open');
+  });
+
+  subclose.addEventListener('click', () => submenu.classList.remove('open'));
+
+  async function openSubmenu(title, api) {
+    subtitle.textContent = title;
+    sublist.innerHTML = '<div style="padding:16px;font-size:10px;color:#666">Loading...</div>';
+    submenu.classList.add('open');
+    
+    try {
+      const res = await fetch(api);
+      const files = await res.json();
+      if (files.length === 0) {
+        sublist.innerHTML = '<div style="padding:16px;font-size:10px;color:#666">No files found on SPIFFS</div>';
+      } else {
+        sublist.innerHTML = files.map(f => `<div class="zx-file-item" data-file="${esc(f)}">${esc(f)}</div>`).join('');
+      }
+    } catch (e) {
+      sublist.innerHTML = '<div style="padding:16px;font-size:10px;color:var(--red)">Failed to load list</div>';
+    }
+  }
+
+  sublist.addEventListener('click', async (e) => {
+    const file = e.target.closest('.zx-file-item')?.dataset.file;
+    if (!file) return;
+    
+    e.target.style.opacity = '0.5';
+    try {
+      const res = await fetch(`/api/load-snapshot?file=${encodeURIComponent(file)}`);
+      if (res.ok) {
+        submenu.classList.remove('open');
+      } else {
+        alert('Failed to load snapshot');
+      }
+    } catch (e) {
+      alert('Error connecting to server');
+    }
+    e.target.style.opacity = '1';
+  });
 
   // -------- WebSocket with exponential-backoff reconnect --------
   let ws = null, txCount = 0, retry = 0, reconnectTimer = 0;
@@ -287,6 +399,7 @@
   function setConn(on) {
     dot.classList.toggle('on', !!on);
     dot.title = on ? 'Connected' : 'Disconnected';
+    btnConn.textContent = on ? 'OFF' : 'ON';
   }
   function scheduleReconnect() {
     setConn(false);
@@ -295,6 +408,7 @@
     reconnectTimer = setTimeout(() => { reconnectTimer = 0; connect(); }, delay);
   }
   function connect() {
+    if (ws) { try { ws.close(); } catch (_) {} }
     try {
       ws = new WebSocket(host);
       ws.binaryType = 'arraybuffer';
@@ -303,7 +417,17 @@
       ws.onerror = () => { try { ws.close(); } catch (_) {} };
     } catch (e) { scheduleReconnect(); }
   }
-  connect();
+  
+  btnConn.onclick = () => {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+    else connect();
+  };
+
+  btnFs.onclick = () => {
+    const el = document.documentElement;
+    if (!document.fullscreenElement) el.requestFullscreen().catch(()=>{});
+    else document.exitFullscreen().catch(()=>{});
+  };
 
   // -------- Sent buffer ring --------
   const BUF_MAX = 18;

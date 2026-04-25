@@ -80,6 +80,9 @@ static void emulator_task(void* pvParameters) {
     const int T_STATES_PER_FRAME = 69888; // 3.5 MHz / 50.08 Hz
     
     while (1) {
+        // Apply any pending commands from the webserver (reset, snapshot load)
+        webserver_apply_pending(spectrum);
+
         int tStates = 0;
         instr_cpu_start();
         while (tStates < T_STATES_PER_FRAME) {
@@ -93,7 +96,8 @@ static void emulator_task(void* pvParameters) {
         // effectively synchronizing the emulator with the audio hardware.
         audio_play_frame(spectrum);
 
-        // Yield to allow other tasks to run
+        // Yielding 1ms here ensures other tasks (Wi-Fi, Webserver) get CPU time
+        // while the audio task is draining the buffer.
         vTaskDelay(1);
     }
 }
@@ -170,13 +174,12 @@ extern "C" void app_main(void) {
     spectrum->reset();
 
     // If an autoexec snapshot exists in SPIFFS, attempt to load it now
-    bool snapshot_loaded = spectrum->loadAutoexec();
+    // bool snapshot_loaded = spectrum->loadAutoexec();
+    bool snapshot_loaded = false;
 
     // Mount a virtual cassette if one is present on SPIFFS. LOAD "" from
     // BASIC then hits the ROM trap and gets the blocks instantly.
-    if (Tape::autoload(spectrum->tape())) {
-        ESP_LOGI(TAG, "Virtual tape mounted; type LOAD \"\" to play.");
-    }
+    // Tape::autoload(spectrum->tape());
 
     // Run all tests while splash is showing unless we loaded a snapshot.
     if (!snapshot_loaded) {
@@ -237,7 +240,7 @@ extern "C" void app_main(void) {
     } else {
         ESP_LOGI(TAG, "Wi-Fi ready, proceeding to emulator.");
         // The overlay text is updated to the actual IP in wifi_prov.cpp
-        if (webserver_start() != ESP_OK) {
+        if (webserver_start(spectrum) != ESP_OK) {
             ESP_LOGW(TAG, "Webserver failed to start");
         }
     }

@@ -331,6 +331,7 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     const int offset_y = (bufHeight - source_height) / 2;
 
     // Attribute LUT cache: up to 128 possible attribute combinations
+    // Optimized: Use a fixed array of pointers and pre-allocate if possible.
     static uint16_t* attr_lut[128] = { 0 };
     static uint32_t attr_last_used[128] = { 0 };
     static int cached_count = 0;
@@ -344,23 +345,27 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
             return table;
         }
 
+        // Limit churn: if we have too many, reuse the oldest instead of free/malloc
+        int target_idx = -1;
         if (cached_count >= 128) {
             uint32_t oldest = UINT32_MAX;
-            int oldest_idx = -1;
             for (int i = 0; i < 128; ++i) {
                 if (attr_lut[i] && attr_last_used[i] < oldest) {
-                    oldest = attr_last_used[i]; oldest_idx = i;
+                    oldest = attr_last_used[i]; target_idx = i;
                 }
-            }
-            if (oldest_idx >= 0) {
-                heap_caps_free(attr_lut[oldest_idx]);
-                attr_lut[oldest_idx] = nullptr;
-                cached_count--;
             }
         }
 
-        size_t bytes = 256 * 8 * sizeof(uint16_t);
-        uint16_t* alloc = (uint16_t*)allocateMemory(bytes, "Attr LUT");
+        uint16_t* alloc = nullptr;
+        if (target_idx != -1) {
+            alloc = attr_lut[target_idx];
+            attr_lut[target_idx] = nullptr;
+            cached_count--;
+        } else {
+            size_t bytes = 256 * 8 * sizeof(uint16_t);
+            alloc = (uint16_t*)allocateMemory(bytes, "Attr LUT");
+        }
+
         if (!alloc) return nullptr;
 
         bool bright = (attr_index & 0x40) != 0;
@@ -376,8 +381,8 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
             // 32-bit SWAR: Process 2 pixels at a time (4 iterations for 8 pixels)
             for (int i = 0; i < 4; i++) {
                 uint8_t two_bits = (pix >> (6 - i * 2)) & 0x03;
-                uint32_t mask = (two_bits & 0x02) ? 0xFFFF0000 : 0;
-                mask |= (two_bits & 0x01) ? 0x0000FFFF : 0;
+                uint32_t mask = (two_bits & 0x02) ? 0x0000FFFF : 0; // bit 7/5/3/1 -> low bits (first pixel)
+                mask |= (two_bits & 0x01) ? 0xFFFF0000 : 0;        // bit 6/4/2/0 -> high bits (second pixel)
                 out32[i] = paper32 ^ (mask & diff32);
             }
         }
@@ -469,8 +474,8 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
                 // 32-bit SWAR: Process 2 pixels at a time
                 for (int i = 0; i < 4; i++) {
                     uint8_t two_bits = (pixels >> (6 - i * 2)) & 0x03;
-                    uint32_t mask = (two_bits & 0x02) ? 0xFFFF0000 : 0;
-                    mask |= (two_bits & 0x01) ? 0x0000FFFF : 0;
+                    uint32_t mask = (two_bits & 0x02) ? 0x0000FFFF : 0;
+                    mask |= (two_bits & 0x01) ? 0xFFFF0000 : 0;
                     linePtr32[i] = paper32 ^ (mask & diff32);
                 }
             }

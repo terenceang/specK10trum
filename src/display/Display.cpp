@@ -45,7 +45,7 @@ static const int NUM_STRIPS = 5;
 static uint16_t* s_stripBuffers[2] = { NULL, NULL };
 
 // Pre-allocated SPI transactions to avoid heap churn
-static const int MAX_TRANSACTIONS = NUM_STRIPS * 6 + 2; 
+static const int MAX_TRANSACTIONS = 40; 
 static spi_transaction_t* s_trans_pool = NULL;
 static int s_trans_count = 0;
 
@@ -92,6 +92,10 @@ static void drawChar(uint16_t* buffer, int x, int y, char c, uint16_t color) {
         {0x66, 0x66, 0x66, 0x3c, 0x18, 0x18, 0x18, 0x00}, // Y
         {0x7e, 0x06, 0x0c, 0x18, 0x30, 0x60, 0x7e, 0x00}, // Z
         {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // Space (at index 38)
+        {0x00, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x00, 0x00}, // - (at index 39)
+        {0x00, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x00}, // / (at index 40)
+        {0x00, 0x01, 0x02, 0x44, 0x28, 0x10, 0x00, 0x00}, // ✓ (approx checkmark) (at index 41)
+        {0x00, 0x3c, 0x42, 0x5a, 0x5a, 0x42, 0x3c, 0x00}, // ? (fallback) (at index 42)
     };
 
     int idx = -1;
@@ -101,6 +105,11 @@ static void drawChar(uint16_t* buffer, int x, int y, char c, uint16_t color) {
     else if (c >= 'A' && c <= 'Z') idx = 12 + (c - 'A');
     else if (c >= 'a' && c <= 'z') idx = 12 + (c - 'a');
     else if (c == ' ') idx = 38;
+    else if (c == '-') idx = 39;
+    else if (c == '/') idx = 40;
+    else if ((unsigned char)c == 0xE2 || (unsigned char)c == 0x80) idx = 41; // Crude check for UTF-8 start of ✓
+    else if (c == '?') idx = 42;
+    else idx = 42; // Fallback to ? for any unknown char
 
     if (idx == -1) return;
 
@@ -358,7 +367,16 @@ void display_present() {
 static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     if (!s_spi || !buffer || !s_stripBuffers[0] || !s_stripBuffers[1]) return;
 
+    // Drain any remaining transactions from the previous frame to avoid overwriting spi_transaction_t structures
+    spi_transaction_t* rtrans;
+    while (s_trans_count > 0) {
+        if (spi_device_get_trans_result(s_spi, &rtrans, portMAX_DELAY) == ESP_OK) {
+            s_trans_count--;
+        }
+    }
+
     int linesPerStrip = s_lcdDisplayHeight / NUM_STRIPS;
+    int pool_idx = 0;
     s_trans_count = 0;
 
     for (int i = 0; i < NUM_STRIPS; i++) {
@@ -366,17 +384,24 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
         int height = (i == NUM_STRIPS - 1) ? (s_lcdDisplayHeight - startY) : linesPerStrip;
         int bufIdx = i & 1;
 
-        spi_transaction_t* rtrans;
+        // Drain any transactions that are already finished for this device (to avoid queue overflow)
         while (spi_device_get_trans_result(s_spi, &rtrans, 0) == ESP_OK) {
+            s_trans_count--;
         }
+
+        // Wait specifically for the strip buffer we want to reuse (ping-pong)
         if (i >= 2) {
-            for (int j = 0; j < 6; j++) spi_device_get_trans_result(s_spi, &rtrans, portMAX_DELAY);
+            for (int j = 0; j < 6; j++) {
+                if (spi_device_get_trans_result(s_spi, &rtrans, portMAX_DELAY) == ESP_OK) {
+                    s_trans_count--;
+                }
+            }
         }
 
         uint16_t* dst = s_stripBuffers[bufIdx];
         memcpy(dst, &buffer[startY * s_lcdDisplayWidth], s_lcdDisplayWidth * height * 2);
         
-        spi_transaction_t* t = &s_trans_pool[s_trans_count];
+        spi_transaction_t* t = &s_trans_pool[pool_idx];
         memset(t, 0, sizeof(spi_transaction_t) * 6);
 
         t[0].length = 8; t[0].flags = SPI_TRANS_USE_TXDATA; t[0].tx_data[0] = 0x2A; t[0].user = (void*)0;
@@ -391,6 +416,7 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
 
         for (int j = 0; j < 6; j++) spi_device_queue_trans(s_spi, &t[j], portMAX_DELAY);
         s_trans_count += 6;
+        pool_idx += 6;
     }
 }
 
@@ -502,5 +528,5 @@ void display_setOverlayText(const char* text, uint16_t color) {
     } else {
         s_overlayText[0] = '\0';
     }
-    s_overlayColor = color;
+    s_overlayColor = __builtin_bswap16(color);
 }

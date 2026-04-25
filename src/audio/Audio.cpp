@@ -131,11 +131,12 @@ void audio_play_frame(SpectrumBase* spectrum) {
 
     size_t bytes_to_write = SAMPLES_PER_FRAME * 2 * sizeof(int16_t);
 
-    // If stream buffer exists, enqueue frame non-blocking; otherwise fall back to blocking write
+    // If stream buffer exists, enqueue frame with blocking wait; this naturally 
+    // throttles the emulator to match real-time audio playback.
     if (s_audio_stream) {
-        size_t sent = xStreamBufferSend(s_audio_stream, stereo_buf, bytes_to_write, 0);
+        size_t sent = xStreamBufferSend(s_audio_stream, stereo_buf, bytes_to_write, portMAX_DELAY);
         if (sent != bytes_to_write) {
-            ESP_LOGW(TAG, "Audio stream full, dropping frame (sent=%d expected=%d)", (int)sent, (int)bytes_to_write);
+            ESP_LOGW(TAG, "Audio stream timeout (sent=%d expected=%d)", (int)sent, (int)bytes_to_write);
         }
     } else {
         size_t written = 0;

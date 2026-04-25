@@ -45,14 +45,16 @@ void Beeper::copyForFrame() {
 
 void Beeper::renderFrame(int16_t* audio_buf, int num_samples) {
     if (!audio_buf || num_samples <= 0) return;
-    // First generate the raw 1-bit waveform into a temporary buffer
-    int16_t* raw = (int16_t*)malloc(sizeof(int16_t) * num_samples);
-    if (!raw) return;
+    
+    // Use a static buffer to avoid malloc in the hot path. 
+    // SAMPLES_PER_FRAME is 882, so 2048 is more than enough.
+    static int16_t raw[2048];
+    int render_samples = (num_samples > 2048) ? 2048 : num_samples;
 
     size_t evt = 0;
     uint8_t level = m_initialLevel;
-    for (int i = 0; i < num_samples; ++i) {
-        uint32_t sample_tstate = (uint32_t)((uint64_t)i * FRAME_T_STATES / (uint32_t)num_samples);
+    for (int i = 0; i < render_samples; ++i) {
+        uint32_t sample_tstate = (uint32_t)((uint64_t)i * FRAME_T_STATES / (uint32_t)render_samples);
         while (evt < m_renderEventCount && m_renderEvents[evt].tstates <= sample_tstate) {
             level = m_renderEvents[evt].level;
             evt++;
@@ -65,13 +67,13 @@ void Beeper::renderFrame(int16_t* audio_buf, int num_samples) {
     const int taps[9] = {1,2,3,4,5,4,3,2,1};
     const int taps_sum = 25;
 
-    for (int i = 0; i < num_samples; ++i) {
+    for (int i = 0; i < render_samples; ++i) {
         int64_t acc = 0;
         for (int t = 0; t < 9; ++t) {
             int idx = i + t - 4; // center the kernel
             int16_t v = 0;
             if (idx < 0) v = raw[0];
-            else if (idx >= num_samples) v = raw[num_samples - 1];
+            else if (idx >= render_samples) v = raw[render_samples - 1];
             else v = raw[idx];
             acc += (int64_t)v * taps[t];
         }
@@ -80,6 +82,4 @@ void Beeper::renderFrame(int16_t* audio_buf, int num_samples) {
         if (acc < INT16_MIN) acc = INT16_MIN;
         audio_buf[i] = (int16_t)acc;
     }
-
-    free(raw);
 }
