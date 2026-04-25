@@ -17,19 +17,10 @@ function StatusBar({ connected, latency, txCount, host, onToggleConn, onFullscre
       padding: "0 12px", gap: 20,
       fontFamily: MONO, fontSize: 11, color: INK,
     }}>
-      <span style={{
-        width: 10, height: 10, borderRadius: "50%",
-        background: connected ? STRIPE.green : "#333",
-        boxShadow: connected ? `0 0 8px ${STRIPE.green}` : "none",
-        transition: "all 0.2s",
-      }} title={connected ? "Connected" : "Offline"} />
-      
-      {/* Logo in place of WS URL */}
+      {/* Logo at far left */}
       <div style={{ height: 20, width: "auto", display: "block" }}>
         <LogoSvg />
       </div>
-      
-      <span style={{ color: INK, fontWeight: 800 }}>TX {txCount.toLocaleString()}</span>
 
       {/* Buffer Display - fills remaining space */}
       <div style={{
@@ -52,7 +43,17 @@ function StatusBar({ connected, latency, txCount, host, onToggleConn, onFullscre
         </div>
       </div>
 
-      <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+      <span style={{ color: INK, fontWeight: 800 }}>TX {txCount.toLocaleString()}</span>
+
+      {/* Dot now at the right */}
+      <span style={{
+        width: 10, height: 10, borderRadius: "50%",
+        background: connected ? STRIPE.green : "#333",
+        boxShadow: connected ? `0 0 8px ${STRIPE.green}` : "none",
+        transition: "all 0.2s",
+      }} title={connected ? "Connected" : "Offline"} />
+
+      <span style={{ display: "flex", gap: 8 }}>
         <button onClick={onToggleConn} style={btnStyle}>{connected ? "OFF" : "ON"}</button>
         <button onClick={onFullscreen} style={btnStyle}>⛶</button>
       </span>
@@ -88,9 +89,9 @@ function LogoSvg() {
       </g>
       <g id="COLOR">
         <path className="st4" d="M70.72,182.48c-9.83,1.37-19.79.23-30.35.58V.19s30.28-.06,30.28-.06l.07,182.36Z"/>
-        <polygon className="st3" points="154.35 182.82 119.43 183.1 119.33 .16 154.34 .07 154.35 182.82"/>
-        <polygon className="st5" points="33.4 182.79 0 183.05 .04 .09 33.42 .12 33.4 182.79"/>
-        <path className="st2" d="M112.33.12l.02,182.69-33,.18.02-182.78c2.99,1.18,5.36.23,8.02.06,8.12-.53,15.67-.08,24.95-.15Z"/>
+        <polygon class="st3" points="154.35 182.82 119.43 183.1 119.33 .16 154.34 .07 154.35 182.82"/>
+        <polygon class="st5" points="33.4 182.79 0 183.05 .04 .09 33.42 .12 33.4 182.79"/>
+        <path class="st2" d="M112.33.12l.02,182.69-33,.18.02-182.78c2.99,1.18,5.36.23,8.02.06,8.12-.53,15.67-.08,24.95-.15Z"/>
       </g>
       <text className="st0" transform="translate(173.96 180.98) scale(1.91 1)"><tspan x="0" y="0">ZX SPECTRUM EMULATOR FOR UNIHIKER H10</tspan></text>
     </svg>
@@ -108,9 +109,9 @@ const btnStyle = {
 };
 
 // -----------------------------------------------------------------------------
-// Mode strip + sticky modifier badges
+// Mode strip — No more indicators here
 // -----------------------------------------------------------------------------
-function ModeStrip({ mode, setMode, stickyCaps, stickySym }) {
+function ModeStrip({ mode, setMode }) {
   const modes = [
     { m: "K", label: "keyword", color: STRIPE.green },
     { m: "L", label: "letter",  color: INK },
@@ -141,11 +142,6 @@ function ModeStrip({ mode, setMode, stickyCaps, stickySym }) {
           );
         })}
       </div>
-      <span style={{ flex: 1 }} />
-      <div style={{ display: "flex", gap: 8 }}>
-        <Indicator label="CAPS" on={stickyCaps} />
-        <Indicator label="SYM" on={stickySym} />
-      </div>
     </div>
   );
 }
@@ -154,17 +150,17 @@ function Indicator({ label, on }) {
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 6,
-      padding: "4px 10px",
+      padding: "5px 12px",
       border: `1px solid ${on ? STRIPE.yellow : "#222"}`,
-      background: on ? `${STRIPE.yellow}08` : "transparent",
+      background: on ? `${STRIPE.yellow}08` : "#0c0c0d",
       borderRadius: 4,
-      transition: "all 0.1s",
+      transition: "all 0.15s",
     }}>
       <span style={{
         width: 6, height: 6, borderRadius: "50%",
-        background: on ? STRIPE.yellow : "#111",
-        boxShadow: on ? `0 0 6px ${STRIPE.yellow}` : "none",
-        transition: "all 0.1s",
+        background: on ? STRIPE.yellow : "#1a1a1c",
+        boxShadow: on ? `0 0 8px ${STRIPE.yellow}` : "none",
+        transition: "all 0.15s",
       }} />
       <span style={{
         fontFamily: MONO, fontSize: 10, fontWeight: 800,
@@ -202,7 +198,14 @@ function Keyboard({ onPress, stickyCaps, stickySym, mode }) {
         ))}
       </div>
 
-      <div style={rowStyle(0)}>{ROW_1.map((k, i) => <Key key={`1-${i}`} k={k} {...keyProps} />)}</div>
+      <div style={rowStyle(0)}>
+        {ROW_1.map((k, i) => <Key key={`1-${i}`} k={k} {...keyProps} />)}
+        {/* Indicators next to "0" */}
+        <div style={{ display: "flex", gap: 12, alignItems: "center", marginLeft: 32, height: 48 }}>
+          <Indicator label="CAPS" on={stickyCaps} />
+          <Indicator label="SYM" on={stickySym} />
+        </div>
+      </div>
       <div style={rowStyle(16)}>{ROW_2.map((k, i) => <Key key={`2-${i}`} k={k} {...keyProps} />)}</div>
       <div style={rowStyle(32)}>{ROW_3.map((k, i) => <Key key={`3-${i}`} k={k} {...keyProps} />)}</div>
       <div style={rowStyle(0)}>{ROW_4.map((k, i) => <Key key={`4-${i}`} k={k} {...keyProps} />)}</div>

@@ -33,28 +33,22 @@
     .zx-main-container{display:flex;flex-direction:column;gap:14px;width:max-content}
 
     /* Top status strip */
-    .zx-status{display:flex;gap:20px;align-items:center;width:100%;
-      padding:8px 14px;border:1px solid #333;background:#141416;
+    .zx-status{display:flex;gap:24px;align-items:center;width:100%;
+      padding:10px 14px;border:1px solid #333;background:#141416;
       font-size:11px}
-    .zx-dot{width:10px;height:10px;border-radius:50%;background:#333;flex:0 0 auto;
-      transition:background .2s, box-shadow .2s}
-    .zx-dot.on{background:var(--green);box-shadow:0 0-8px var(--green)}
     
-    /* Logo in status bar */
+    /* Logo pinned to left */
     .zx-status-logo{height:20px;width:auto;display:block;flex:0 0 auto}
     .zx-status-logo svg{height:100%;width:auto;display:block}
 
+    /* Dot moved to the right */
+    .zx-dot{width:10px;height:10px;border-radius:50%;background:#333;flex:0 0 auto;
+      transition:background .2s, box-shadow .2s}
+    .zx-dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+    
     .zx-tx{font-weight:800;color:var(--ink);white-space:nowrap}
 
-    /* Toggle indicators */
-    .zx-leds{display:flex;gap:10px;align-items:center;font-weight:800}
-    .zx-led{display:flex;gap:6px;align-items:center;padding:3px 8px;
-      border:1px solid #333;font-size:10px;color:var(--dim);border-radius:4px;transition:all .1s}
-    .zx-led .lamp{width:6px;height:6px;border-radius:50%;background:#222;transition:all .1s}
-    .zx-led.on{border-color:var(--amber);color:var(--amber);background:rgba(255,204,30,0.05)}
-    .zx-led.on .lamp{background:var(--amber);box-shadow:0 0 6px var(--amber)}
-
-    /* Buffer list */
+    /* Buffer list - flex:1 pushes TX and Dot to the right */
     .zx-buf-list{display:flex;gap:6px;flex:1;min-width:0;overflow:hidden;
       white-space:nowrap;justify-content:flex-end}
     .zx-buf-item{padding:1px 5px;border:1px solid #333;flex:0 0 auto;font-size:10px;border-radius:2px}
@@ -67,6 +61,15 @@
               var(--kb-pad-b) var(--kb-pad);
       border:1px solid #333;background:#111;position:relative;width:max-content;
       touch-action:none;-webkit-user-select:none;user-select:none}
+
+    /* Indicators on keyboard */
+    .zx-kb-leds{display:flex;gap:12px;align-items:center;margin-left:32px;height:var(--key-size)}
+    .zx-led{display:flex;gap:8px;align-items:center;padding:5px 12px;
+      border:1px solid #222;font-size:10px;font-weight:800;color:var(--dim);
+      border-radius:4px;background:#0c0c0d;transition:all .15s}
+    .zx-led .lamp{width:6px;height:6px;border-radius:50%;background:#1a1a1c;transition:all .15s}
+    .zx-led.on{border-color:var(--amber);color:var(--amber);background:rgba(255,204,30,0.08)}
+    .zx-led.on .lamp{background:var(--amber);box-shadow:0 0 8px var(--amber)}
 
     .zx-row{display:flex;gap:var(--key-gap)}
 
@@ -191,7 +194,17 @@
   const rowsHtml = rows.map((r, i) => {
     const off = ROW_OFFSET_EM[i];
     const ml  = off ? ` style="margin-left:calc(var(--key-size) * ${off})"` : '';
-    return `<div class="zx-row"${ml}>${r.map(keyHTML).join('')}</div>`;
+    let html = `<div class="zx-row"${ml}>${r.map(keyHTML).join('')}`;
+    if (i === 0) {
+      html += `
+        <div class="zx-kb-leds">
+          <div class="zx-led" id="zx-led-caps"><span class="lamp"></span>CAPS</div>
+          <div class="zx-led" id="zx-led-sym"><span class="lamp"></span>SYM</div>
+        </div>
+      `;
+    }
+    html += `</div>`;
+    return html;
   }).join('');
 
   const stripesHtml = (LAYOUT && LAYOUT.STRIPE)
@@ -247,14 +260,10 @@
       <div class="zx-kbwrap">
         <div class="zx-main-container">
           <div class="zx-status">
-            <div class="zx-dot" id="zx-dot" title="Disconnected"></div>
             <div class="zx-status-logo">${logoSvg}</div>
-            <div class="zx-leds">
-              <div class="zx-led" id="zx-led-caps"><span class="lamp"></span>CAPS</div>
-              <div class="zx-led" id="zx-led-sym"><span class="lamp"></span>SYM</div>
-            </div>
-            <div class="zx-tx" id="zx-tx">TX: 0</div>
             <div class="zx-buf-list" id="zx-buf-list"></div>
+            <div class="zx-tx" id="zx-tx">TX: 0</div>
+            <div class="zx-dot" id="zx-dot" title="Disconnected"></div>
           </div>
 
           <div class="zx-kb" id="zx-kb">
