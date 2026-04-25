@@ -4,7 +4,6 @@ const { useState, useEffect, useCallback } = React;
 const { STRIPE } = window.ZX_LAYOUT;
 const { BG, INK, DIM, MONO } = window.ZX_STYLE;
 const StatusBar = window.ZXStatusBar;
-const OutputStrip = window.ZXOutputStrip;
 const ModeStrip = window.ZXModeStrip;
 const Keyboard = window.ZXKeyboard;
 
@@ -93,41 +92,37 @@ function App() {
       padding: 18,
       boxSizing: "border-box",
       display: "flex", flexDirection: "column", gap: 14,
+      alignItems: "center",
     }}>
-      {/* header row — product mark + status bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <div style={{
-          display: "flex", alignItems: "baseline", gap: 10,
-          padding: "0 4px",
-        }}>
-          <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: 4, color: INK }}>ZX/KBD</div>
-          <div style={{ fontSize: 10, color: DIM, letterSpacing: 2 }}>v1.0 · ESP32-S3 · WS</div>
-          {/* mini rainbow */}
-          <div style={{ display: "flex", gap: 0, marginLeft: 6 }}>
-            {["red","yellow","green","cyan"].map(c => (
-              <div key={c} style={{ width: 12, height: 3, background: STRIPE[c] }} />
-            ))}
-          </div>
-        </div>
-        <div style={{ flex: 1 }}>
-          <StatusBar
-            connected={connected} latency={latency} txCount={tx}
-            host={host} onToggleConn={toggleConn} onFullscreen={goFullscreen}
-          />
+      {/* header row — product mark only */}
+      <div style={{
+        display: "flex", alignItems: "baseline", gap: 10,
+        padding: "0 4px", width: "100%", maxWidth: 1200,
+      }}>
+        <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: 4, color: INK }}>ZX/KBD</div>
+        <div style={{ fontSize: 10, color: DIM, letterSpacing: 2 }}>v1.0 · ESP32-S3 · WS</div>
+        {/* mini rainbow */}
+        <div style={{ display: "flex", gap: 0, marginLeft: 6 }}>
+          {["red","yellow","green","cyan"].map(c => (
+            <div key={c} style={{ width: 12, height: 3, background: STRIPE[c] }} />
+          ))}
         </div>
       </div>
 
-      {/* output preview */}
-      <OutputStrip buffer={buffer} />
+      {/* integrated content unit — width is max-content (keyboard width) */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, width: "max-content" }}>
+        <StatusBar
+          connected={connected} latency={latency} txCount={tx} buffer={buffer}
+          host={host} onToggleConn={toggleConn} onFullscreen={goFullscreen}
+        />
 
-      {/* mode + sticky strip */}
-      <ModeStrip
-        mode={mode} setMode={setMode}
-        stickyCaps={stickyCaps} stickySym={stickySym}
-      />
+        {/* mode + sticky strip */}
+        <ModeStrip
+          mode={mode} setMode={setMode}
+          stickyCaps={stickyCaps} stickySym={stickySym}
+        />
 
-      {/* keyboard */}
-      <div style={{ display: "flex", justifyContent: "center", marginTop: 4 }}>
+        {/* keyboard */}
         <Keyboard
           onPress={emit}
           stickyCaps={stickyCaps} stickySym={stickySym}
@@ -139,6 +134,7 @@ function App() {
       <div style={{
         display: "flex", justifyContent: "space-between", alignItems: "center",
         fontSize: 10, color: DIM, padding: "4px 6px", letterSpacing: 0.5,
+        width: "100%", maxWidth: 1200,
       }}>
         <span>sticky modifiers — tap CAPS or SYM, next keystroke is modified. K mode emits BASIC keywords.</span>
         <span>haptic feedback on supported devices</span>
