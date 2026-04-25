@@ -179,8 +179,16 @@ void SpectrumBase::writePortFE(uint8_t value) {
 }
 
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
-    uint8_t row = (port >> 8) & 0x1F;
-    uint8_t val = input_getKeyboardRow(row & 0x07);
+    uint8_t val = 0xFF;
+    // Standard Spectrum keyboard: Address bits A8-A15 select rows.
+    // If a bit is 0, that row is selected. If multiple bits are 0, results are ANDed.
+    uint8_t row_addr = (port >> 8);
+    for (int i = 0; i < 8; i++) {
+        if (!(row_addr & (1 << i))) {
+            val &= input_getKeyboardRow(i);
+        }
+    }
+    
     // EAR input is bit 6; approximate board coupling: EAR = externalEar OR speaker
     if (m_beeper.getExternalEar() || m_beeper.currentSpeakerLevel()) {
         val |= 0x40;
@@ -330,42 +338,19 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     const int offset_x = (bufWidth - source_width) / 2;
     const int offset_y = (bufHeight - source_height) / 2;
 
-    // Attribute LUT cache: up to 128 possible attribute combinations
-    // Optimized: Use a fixed array of pointers and pre-allocate if possible.
+    // Attribute LUT cache: 128 possible attribute combinations (attr & 0x7F).
+    // The cache is sized for the full domain so it never evicts; lookups are
+    // a single pointer load. Entries are filled lazily so we don't pay for
+    // 512 KB of allocations during the first frame.
     static uint16_t* attr_lut[128] = { 0 };
-    static uint32_t attr_last_used[128] = { 0 };
-    static int cached_count = 0;
-    static uint32_t use_counter = 1;
 
     auto get_lut = [&](int attr_index) -> uint16_t* {
-        if (attr_index < 0 || attr_index >= 128) return nullptr;
+        if ((unsigned)attr_index >= 128) return nullptr;
         uint16_t* table = attr_lut[attr_index];
-        if (table) {
-            attr_last_used[attr_index] = use_counter++;
-            return table;
-        }
+        if (table) return table;
 
-        // Limit churn: if we have too many, reuse the oldest instead of free/malloc
-        int target_idx = -1;
-        if (cached_count >= 128) {
-            uint32_t oldest = UINT32_MAX;
-            for (int i = 0; i < 128; ++i) {
-                if (attr_lut[i] && attr_last_used[i] < oldest) {
-                    oldest = attr_last_used[i]; target_idx = i;
-                }
-            }
-        }
-
-        uint16_t* alloc = nullptr;
-        if (target_idx != -1) {
-            alloc = attr_lut[target_idx];
-            attr_lut[target_idx] = nullptr;
-            cached_count--;
-        } else {
-            size_t bytes = 256 * 8 * sizeof(uint16_t);
-            alloc = (uint16_t*)allocateMemory(bytes, "Attr LUT");
-        }
-
+        size_t bytes = 256 * 8 * sizeof(uint16_t);
+        uint16_t* alloc = (uint16_t*)allocateMemory(bytes, "Attr LUT");
         if (!alloc) return nullptr;
 
         bool bright = (attr_index & 0x40) != 0;
@@ -388,8 +373,6 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         }
 
         attr_lut[attr_index] = alloc;
-        attr_last_used[attr_index] = use_counter++;
-        cached_count++;
         return alloc;
     };
 
@@ -445,9 +428,6 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     uint8_t* ramBank1 = m_videoPagePtr ? m_videoPagePtr : getPagePtr(1);
     if (!ramBank1) return;
 
-    uint16_t* current_luts[128];
-    for (int i = 0; i < 128; ++i) current_luts[i] = get_lut(i);
-
     for (int y = 0; y < source_height; ++y) {
         uint16_t* linePtr = &buffer[(offset_y + y) * bufWidth + offset_x];
         uint16_t y_off = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2);
@@ -456,7 +436,7 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         for (int xByte = 0; xByte < 32; ++xByte) {
             uint8_t pixels = ramBank1[y_off | xByte];
             uint8_t attr = ramBank1[attr_off | xByte];
-            uint16_t* lut = current_luts[attr & 0x7F];
+            uint16_t* lut = get_lut(attr & 0x7F);
             if (lut) {
                 uint64_t* src64 = (uint64_t*)&lut[pixels * 8];
                 uint64_t* dst64 = (uint64_t*)linePtr;

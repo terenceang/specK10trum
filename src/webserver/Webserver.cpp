@@ -180,26 +180,52 @@ void webserver_apply_pending(SpectrumBase* spectrum)
 
 static esp_err_t ws_handler(httpd_req_t *req)
 {
-    if (req->method == HTTP_GET) return ESP_OK;
     httpd_ws_frame_t ws_pkt;
     memset(&ws_pkt, 0, sizeof(ws_pkt));
-    if (httpd_ws_recv_frame(req, &ws_pkt, 0) != ESP_OK) return ESP_FAIL;
-    if (ws_pkt.len == 0) return ESP_OK;
+    
+    // First call to get frame header
+    esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
+    if (ret != ESP_OK) {
+        // If it's a GET request and recv_frame fails, it's likely the initial handshake
+        if (req->method == HTTP_GET) {
+            ESP_LOGD(TAG, "WS Handshake received");
+            return ESP_OK;
+        }
+        ESP_LOGE(TAG, "httpd_ws_recv_frame failed with %d", ret);
+        return ret;
+    }
 
-    uint8_t* payload = (uint8_t*)malloc(ws_pkt.len);
-    ws_pkt.payload = payload;
-    if (httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len) != ESP_OK) { free(payload); return ESP_FAIL; }
+    if (ws_pkt.len > 0) {
+        // Key frames are 3 bytes; keep a small stack buffer to avoid heap
+        // churn on the hot path. Anything larger we drop.
+        uint8_t payload[16];
+        if (ws_pkt.len > sizeof(payload)) {
+            ESP_LOGW(TAG, "WS payload too large: %u bytes", (unsigned)ws_pkt.len);
+            return ESP_OK;
+        }
+        ws_pkt.payload = payload;
+        ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "httpd_ws_recv_frame (data) failed with %d", ret);
+            return ret;
+        }
 
-    if (ws_pkt.type == HTTPD_WS_TYPE_BINARY && ws_pkt.len == 3) {
-        uint8_t row = payload[0], bit = payload[1];
-        bool pressed = payload[2] != 0;
-        if (row < 8 && bit < 5) {
-            uint8_t cur = input_getKeyboardRow(row);
-            if (pressed) cur &= ~(1 << bit); else cur |= (1 << bit);
-            input_setKeyboardRow(row, cur);
+        if (ws_pkt.type == HTTPD_WS_TYPE_BINARY && ws_pkt.len == 3) {
+            uint8_t row = payload[0], bit = payload[1];
+            bool pressed = payload[2] != 0;
+            if (row < 8 && bit < 5) {
+                uint8_t cur = input_getKeyboardRow(row);
+                uint8_t old = cur;
+                if (pressed) cur &= ~(1 << bit); else cur |= (1 << bit);
+                if (cur != old) {
+                    ESP_LOGD(TAG, "Key: row %d, bit %d, %s", row, bit, pressed ? "DOWN" : "UP");
+                    input_setKeyboardRow(row, cur);
+                }
+            } else {
+                ESP_LOGW(TAG, "Invalid WS key: row %d, bit %d", row, bit);
+            }
         }
     }
-    free(payload);
     return ESP_OK;
 }
 

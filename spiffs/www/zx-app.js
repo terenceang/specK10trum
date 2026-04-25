@@ -423,33 +423,52 @@
     else connect();
   };
 
+  // Auto-connect on load so the keyboard is live without a manual click.
+  connect();
+
   btnFs.onclick = () => {
     const el = document.documentElement;
     if (!document.fullscreenElement) el.requestFullscreen().catch(()=>{});
     else document.exitFullscreen().catch(()=>{});
   };
 
-  // -------- Sent buffer ring --------
+  // -------- Sent buffer ring (pre-allocated DOM pool) --------
   const BUF_MAX = 18;
-  const bufItems = [];
+  const bufPool = [];
+  for (let i = 0; i < BUF_MAX; i++) {
+    const node = document.createElement('div');
+    node.className = 'zx-buf-item';
+    node.style.display = 'none';
+    bufEl.appendChild(node);
+    bufPool.push(node);
+  }
+  let bufHead = 0, bufLen = 0;
   function pushBuf(label, pressed) {
-    const item = document.createElement('div');
-    item.className = 'zx-buf-item ' + (pressed ? 'down' : 'up');
-    item.textContent = label + (pressed ? '↓' : '↑');
-    bufEl.appendChild(item);
-    bufItems.push(item);
-    while (bufItems.length > BUF_MAX) {
-      const old = bufItems.shift();
-      if (old && old.parentNode) old.parentNode.removeChild(old);
+    let node;
+    if (bufLen < BUF_MAX) {
+      node = bufPool[(bufHead + bufLen) % BUF_MAX];
+      bufLen++;
+    } else {
+      node = bufPool[bufHead];
+      bufHead = (bufHead + 1) % BUF_MAX;
+      bufEl.appendChild(node); // move to tail
     }
+    node.textContent = label + (pressed ? '↓' : '↑');
+    node.className = 'zx-buf-item ' + (pressed ? 'down' : 'up');
+    node.style.display = '';
   }
 
   // -------- Send --------
   const sendBuf = new Uint8Array(3);
+  let txDirty = false;
+  function flushTx() {
+    txDirty = false;
+    txEl.textContent = `TX: ${txCount}`;
+  }
   function sendKey(r, b, pressed, label) {
     sendBuf[0] = r; sendBuf[1] = b; sendBuf[2] = pressed ? 1 : 0;
     txCount++;
-    txEl.textContent = `TX: ${txCount}`;
+    if (!txDirty) { txDirty = true; requestAnimationFrame(flushTx); }
     pushBuf(label || `${r},${b}`, pressed);
     if (ws && ws.readyState === WebSocket.OPEN) {
       try { ws.send(sendBuf); } catch (_) {}
@@ -469,6 +488,8 @@
   }
 
   // -------- Input: Pointer Events with delegation --------
+  // active maps pointerId -> { el, rect } so pointermove can do a cheap
+  // bounding-rect test instead of an elementFromPoint hit-test per event.
   const active = new Map();
 
   function pressMomentary(el) {
@@ -495,15 +516,15 @@
       setToggle(el, s, !toggles[s]);
       return;
     }
-    active.set(pointerId, el);
+    active.set(pointerId, { el, rect: el.getBoundingClientRect() });
     pressMomentary(el);
   }
 
   function onUp(pointerId) {
-    const el = active.get(pointerId);
-    if (!el) return;
+    const entry = active.get(pointerId);
+    if (!entry) return;
     active.delete(pointerId);
-    releaseMomentary(el);
+    releaseMomentary(entry.el);
   }
 
   if (window.PointerEvent) {
@@ -521,14 +542,21 @@
     kb.addEventListener('pointerup',     end);
     kb.addEventListener('pointercancel', end);
     kb.addEventListener('pointermove', (e) => {
-      const el = active.get(e.pointerId);
-      if (!el) return;
-      const under = document.elementFromPoint(e.clientX, e.clientY);
-      if (!under || under.closest('.zx-key') !== el) {
+      const entry = active.get(e.pointerId);
+      if (!entry) return;
+      const r = entry.rect;
+      if (e.clientX < r.left || e.clientX >= r.right ||
+          e.clientY < r.top  || e.clientY >= r.bottom) {
         active.delete(e.pointerId);
-        releaseMomentary(el);
+        releaseMomentary(entry.el);
       }
     });
+    // Recompute cached rects when layout could have shifted.
+    const invalidateRects = () => {
+      active.forEach((entry) => { entry.rect = entry.el.getBoundingClientRect(); });
+    };
+    window.addEventListener('resize', invalidateRects);
+    window.addEventListener('scroll', invalidateRects, { passive: true });
   } else {
     kb.addEventListener('mousedown', (e) => {
       const el = e.target.closest('.zx-key');
@@ -561,7 +589,7 @@
   kb.addEventListener('contextmenu', (e) => e.preventDefault());
 
   function releaseAll() {
-    active.forEach(releaseMomentary);
+    active.forEach((entry) => releaseMomentary(entry.el));
     active.clear();
     ['caps', 'symbol'].forEach((s) => {
       if (!toggles[s]) return;
