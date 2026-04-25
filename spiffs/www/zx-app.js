@@ -15,40 +15,37 @@
          keyboard scrolls horizontally instead of collapsing labels. */
       --key-size: clamp(38px, calc((100vw - 24px) / 14.5), 72px);
       --key-gap:  calc(var(--key-size) * 0.12);
-      --row-gap:  calc(var(--key-size) * 0.75);
+      --row-gap:  calc(var(--key-size) * 0.62);
       --kb-pad:   calc(var(--key-size) * 0.35);
-      --kb-pad-t: calc(var(--key-size) * 1.00);
-      --kb-pad-b: calc(var(--key-size) * 1.35);
+      --kb-pad-t: calc(var(--key-size) * 0.90);
+      --kb-pad-b: calc(var(--key-size) * 0.80);
       --stripe-w: clamp(10px, 1.6vw, 18px);
     }
     *{box-sizing:border-box}
     html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
       font-family:"JetBrains Mono",ui-monospace,monospace;-webkit-text-size-adjust:100%}
-    .zx-app{padding:clamp(8px,2vw,20px);display:flex;flex-direction:column;gap:14px;align-items:center}
+    .zx-app{padding:clamp(6px,1.5vw,16px);display:flex;flex-direction:column;gap:10px;align-items:center}
 
     /* Scroll wrapper */
     .zx-kbwrap{width:100%;overflow-x:auto;overflow-y:visible;padding-bottom:10px;display:flex;justify-content:center}
     
     /* Main container defines the width for both status and keyboard */
-    .zx-main-container{display:flex;flex-direction:column;gap:14px;width:max-content}
+    .zx-main-container{display:flex;flex-direction:column;gap:10px;width:max-content}
 
     /* Top status strip */
-    .zx-status{display:flex;gap:24px;align-items:center;width:100%;
-      padding:10px 14px;border:1px solid #333;background:#141416;
+    .zx-status{display:flex;gap:20px;align-items:center;width:100%;
+      padding:8px 14px;border:1px solid #333;background:#141416;
       font-size:11px}
-    
-    /* Logo pinned to left */
-    .zx-status-logo{height:20px;width:auto;display:block;flex:0 0 auto}
-    .zx-status-logo svg{height:100%;width:auto;display:block}
-
-    /* Dot moved to the right */
     .zx-dot{width:10px;height:10px;border-radius:50%;background:#333;flex:0 0 auto;
       transition:background .2s, box-shadow .2s}
     .zx-dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
     
+    .zx-status-logo{height:20px;width:auto;display:block;flex:0 0 auto}
+    .zx-status-logo svg{height:100%;width:auto;display:block}
+
     .zx-tx{font-weight:800;color:var(--ink);white-space:nowrap}
 
-    /* Buffer list - flex:1 pushes TX and Dot to the right */
+    /* Buffer list */
     .zx-buf-list{display:flex;gap:6px;flex:1;min-width:0;overflow:hidden;
       white-space:nowrap;justify-content:flex-end}
     .zx-buf-item{padding:1px 5px;border:1px solid #333;flex:0 0 auto;font-size:10px;border-radius:2px}
@@ -62,7 +59,7 @@
       border:1px solid #333;background:#111;position:relative;width:max-content;
       touch-action:none;-webkit-user-select:none;user-select:none}
 
-    /* Indicators on keyboard */
+    /* Indicators on keyboard - positioned next to row 1 (next to '0') */
     .zx-kb-leds{display:flex;gap:12px;align-items:center;margin-left:32px;height:var(--key-size)}
     .zx-led{display:flex;gap:8px;align-items:center;padding:5px 12px;
       border:1px solid #222;font-size:10px;font-weight:800;color:var(--dim);
@@ -236,7 +233,7 @@
         <path class="st1" d="M289.95,92.61c-.61,11.21-8.98,21.15-20.77,21.2l-88.51.3c-.26-8.26-1.17-15.16-2.65-23.87l83-.58c4.88-.03,6.26-19.14-1.03-19.24l-63.35-.87c-11.93-.16-21.28-10.1-22.2-21.36-.67-8.11-.64-15.21.09-23.25,1.06-11.64,10.75-21.45,23.06-21.52l87.76-.48-.38,30.36c-4.55-2.28-6.7-5.21-10.82-6.17l-64.79-.1c-2.71,0-4.96,1.07-6.26,2.36-2.04,2.02-2.08,4.82-2.13,7.65-.09,4.99,2.07,8.95,7.37,8.97l57.51.23c13.15.05,23.22,8.51,24.02,21.96.47,7.92.54,15.58.06,24.4Z"/>
         <path class="st1" d="M911.72,113.54c-23.17,1.04-45.47.91-67.73-.02-14.04-.58-23.47-11.48-25.68-24.47-.38-20.04-.72-38.97.06-59.07.58-14.79,12.99-26.7,28.25-26.68l61.57.06c16.56.02,28.43,13.67,28.44,29.64v52.2c.01,13.63-9.49,27.64-24.91,28.34ZM902.73,89.94c4.84-.01,8.07-4.23,8.07-8.49l.07-43.95c0-5.78-4.34-9.38-9.78-10.41l-46.77.07c-5.38,0-9.88,4.62-9.88,9.96l-.04,42.94c0,5.69,4.26,10.01,9.93,10l48.41-.11Z"/>
         <path class="st1" d="M694.05,56.59l57.6,57.31-34.93.1-44.07-44.45c-5.26-.11-9.47-.18-14.91.37l-.2,44.08h-26.02s0-110.78,0-110.78l26.06-.11.14,43.18c5.01.97,9.06.68,13.79.17l43.17-43.27,32.84.12-53.48,53.27Z"/>
-        <path class="st1" d="M1267.31,54.09l-.13,59.91-24.84.04-.04-53.9c-.65-3.78-3.12-6.12-6.93-6.12h-21.88s-.03,59.96-.03,59.96l-24.13.07V33.95s106.76.41,106.76.41c13.98.05,23.21,12.54,22.25,25.66v54.06s-24.98-.02-24.98-.02l-.13-53.78c0-3.7-3.39-6.19-6.77-6.19h-19.14Z"/>
+        <path class="st1" d="M1267.31,54.09l-.13,59.91-24.84.04-.04-53.9c-.65-3.78-3.12-6.12-6.93-6.12h-21.88s-.03,59.96-.03,59.96l-24.13.07V33.95s106.76.41,106.76.41c13.98.05,23.21,12.54,22.25,25.66v54.06s-24.98-.02-24.98-.02l-.13-53.78c0-3.70-3.39-6.19-6.77-6.19h-19.14Z"/>
         <path class="st1" d="M376.69,113.63l-47.08.6-.4,23.73c-.04,2.45-1.09,4.5-.87,7.16l-23.99-.11V34.02s67.8.07,67.8.07c14.12.01,25.53,8.24,26.4,22.97-.09,11.31.58,22.49-.29,34.01s-9.3,22.4-21.56,22.55ZM372.41,61.06c0-4.83-3.27-7.94-8.07-7.94h-28.93c-4.15.25-6.17,2.96-6.16,6.89l.1,32.87,34.08.22c12.6.08,8.95-11,8.98-32.04Z"/>
         <path class="st1" d="M437.52,88.75c.4,2.68,3.09,4.47,5.89,4.48l67.18.1-.06,20.83-77.08-.39c-12.95-.07-21.78-11.51-21.78-23.59v-33.25c.02-11.69,9-22.46,21.25-22.5l56.41-.22c12.61-.05,21.9,10.66,22.16,22.67.18,8.34.51,15.84-.22,24.2h-73.11c-1.32,2.22-1.04,4.96-.63,7.67ZM485.39,63.88c2.46-2.31.88-11.31-4.44-11.46-12.8-.35-25.4-.46-38.22,0-5.97.21-6.53,9.97-4.43,11.36l47.09.1Z"/>
         <path class="st1" d="M1087.33,34.17l24.99-.06.16,52.53c.01,3.75,3.43,6.41,6.86,6.41l26.88-.02c3.07,0,5.65-2.7,5.66-5.98l.16-52.96,25.95-.03-.1,56.04c-.02,12.64-9.52,23.55-22.55,23.77-16.13.27-31.85.74-47.78-.24-12.39-.76-20.72-11.8-20.23-23.5v-55.96Z"/>
