@@ -11,7 +11,8 @@
       "WebFetch(domain:documentation.help)",
       "WebFetch(domain:fileformats.archiveteam.org)",
       "WebFetch(domain:formats.kaitai.io)",
-      "WebFetch(domain:skoolkid.github.io)"
+      "WebFetch(domain:skoolkid.github.io)",
+      "WebFetch(domain:a03e9d35-13f4-4c9c-ac0e-ab0c60daae20.claudeusercontent.com)"
     ]
   }
 }

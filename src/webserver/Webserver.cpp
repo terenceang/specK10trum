@@ -29,14 +29,20 @@ static void log_www_root(void)
     int count = 0;
     struct dirent* ent;
     while ((ent = readdir(dir)) != NULL) {
-        char p[256];
-        snprintf(p, sizeof(p), "%s/%s", WWW_ROOT, ent->d_name);
+        size_t need = strlen(WWW_ROOT) + 1 + strlen(ent->d_name) + 1; /* "/" + NUL */
+        char *p = (char*)malloc(need);
+        if (!p) {
+            ESP_LOGW(TAG, "alloc failed while listing %s/%s", WWW_ROOT, ent->d_name);
+            continue;
+        }
+        snprintf(p, need, "%s/%s", WWW_ROOT, ent->d_name);
         struct stat st;
         if (stat(p, &st) == 0) {
             ESP_LOGI(TAG, "  %-24s %8ld bytes", ent->d_name, (long)st.st_size);
         } else {
             ESP_LOGI(TAG, "  %-24s (stat failed)", ent->d_name);
         }
+        free(p);
         count++;
     }
     closedir(dir);
@@ -72,11 +78,21 @@ static esp_err_t file_get_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    char path[256];
+    char *path = NULL;
     if (strcmp(req->uri, "/") == 0) {
-        snprintf(path, sizeof(path), "%s/index.html", WWW_ROOT);
+        size_t need = strlen(WWW_ROOT) + strlen("/index.html") + 1;
+        path = (char*)malloc(need);
+        if (path) snprintf(path, need, "%s/index.html", WWW_ROOT);
     } else {
-        snprintf(path, sizeof(path), "%s%s", WWW_ROOT, req->uri);
+        size_t need = strlen(WWW_ROOT) + strlen(req->uri) + 1;
+        path = (char*)malloc(need);
+        if (path) snprintf(path, need, "%s%s", WWW_ROOT, req->uri);
+    }
+
+    if (!path) {
+        ESP_LOGE(TAG, "memory allocation failed building path for uri %s", req->uri);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, NULL);
+        return ESP_FAIL;
     }
 
     /* Strip query string if present */
@@ -88,9 +104,11 @@ static esp_err_t file_get_handler(httpd_req_t *req)
         if (strcmp(req->uri, "/") == 0) {
             ESP_LOGW(TAG, "no %s on SPIFFS, serving embedded fallback", path);
             httpd_resp_set_type(req, "text/html");
+            free(path);
             return httpd_resp_send(req, INDEX_HTML_START, HTTPD_RESP_USE_STRLEN);
         }
         ESP_LOGW(TAG, "404 %s (looked for %s)", req->uri, path);
+        free(path);
         httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, NULL);
         return ESP_FAIL;
     }
@@ -98,6 +116,7 @@ static esp_err_t file_get_handler(httpd_req_t *req)
     FILE* f = fopen(path, "rb");
     if (!f) {
         ESP_LOGW(TAG, "fopen(%s) failed after stat OK", path);
+        free(path);
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, NULL);
         return ESP_FAIL;
     }
@@ -119,6 +138,7 @@ static esp_err_t file_get_handler(httpd_req_t *req)
     }
     fclose(f);
     httpd_resp_send_chunk(req, NULL, 0);
+    free(path);
     return ESP_OK;
 }
 
