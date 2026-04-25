@@ -24,61 +24,56 @@
     *{box-sizing:border-box}
     html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
       font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%}
-    .zk-app{padding:clamp(8px,2vw,20px);display:flex;flex-direction:column;gap:14px}
+    .zx-app{padding:clamp(8px,2vw,20px);display:flex;flex-direction:column;gap:14px}
 
     /* Top status strip */
-    .zk-status{display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+    .zx-status{display:flex;gap:12px;align-items:center;flex-wrap:wrap;
       padding:8px 12px;border:2px solid var(--ink);
       font-size:clamp(11px,1.7vw,14px)}
-    .zk-dot{width:12px;height:12px;border-radius:50%;border:2px solid var(--ink);
+    .zx-dot{width:12px;height:12px;border-radius:50%;border:2px solid var(--ink);
       background:#900;flex:0 0 auto;transition:background .15s}
-    .zk-dot.on{background:#2c2}
-    .zk-host{font-weight:800;letter-spacing:.02em}
-    .zk-tx{margin-left:auto;font-weight:700}
+    .zx-dot.on{background:#2c2}
+    .zx-host{font-weight:800;letter-spacing:.02em}
+    .zx-tx{font-weight:700}
 
     /* Toggle indicators, placed next to DELETE visually (right side of strip) */
-    .zk-leds{display:flex;gap:10px;align-items:center;font-weight:800}
-    .zk-led{display:flex;gap:6px;align-items:center;padding:3px 8px;
+    .zx-leds{display:flex;gap:10px;align-items:center;font-weight:800}
+    .zx-led{display:flex;gap:6px;align-items:center;padding:3px 8px;
       border:2px solid var(--ink);font-size:.92em;letter-spacing:.04em}
-    .zk-led .lamp{width:10px;height:10px;border-radius:50%;border:1px solid var(--ink);
+    .zx-led .lamp{width:10px;height:10px;border-radius:50%;border:1px solid var(--ink);
       background:#3a0000;transition:background .1s, box-shadow .1s}
-    .zk-led.on .lamp{background:var(--amber);box-shadow:0 0 8px var(--amber)}
-    .zk-led.on{background:var(--ink);color:#000}
-    .zk-led.on .lamp{border-color:#000}
+    .zx-led.on .lamp{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+    .zx-led.on{background:var(--ink);color:#000}
+    .zx-led.on .lamp{border-color:#000}
 
-    /* Sent-buffer ring */
-    .zk-buf{display:flex;align-items:center;gap:8px;padding:6px 10px;
-      border:2px solid var(--ink);overflow:hidden;
+    /* Sent-buffer list (inside status strip) */
+    .zx-buf-list{display:flex;gap:6px;flex:1;min-width:0;overflow:hidden;
+      white-space:nowrap;justify-content:flex-end;
       font-family:"JetBrains Mono",ui-monospace,monospace;
       font-size:clamp(10px,1.4vw,13px)}
-    .zk-buf-title{font-weight:800;color:var(--dim);flex:0 0 auto}
-    .zk-buf-list{display:flex;gap:6px;flex:1;min-width:0;overflow:hidden;
-      white-space:nowrap;justify-content:flex-end}
-    .zk-buf-item{padding:1px 6px;border:1px solid var(--ink);flex:0 0 auto}
-    .zk-buf-item.down{background:var(--ink);color:#000}
-    .zk-buf-item.up{background:transparent;color:var(--ink)}
+    .zx-buf-item{padding:1px 6px;border:1px solid var(--ink);flex:0 0 auto}
+    .zx-buf-item.down{background:var(--ink);color:#000}
+    .zx-buf-item.up{background:transparent;color:var(--ink)}
 
     /* Keyboard */
-    .zk-kbwrap{overflow-x:auto;overflow-y:visible;padding-bottom:4px}
-    .zk-kb{display:flex;flex-direction:column;gap:var(--row-gap);
+    .zx-kbwrap{overflow-x:auto;overflow-y:visible;padding-bottom:4px}
+    .zx-kb{display:flex;flex-direction:column;gap:var(--row-gap);
       padding:var(--kb-pad-t) calc(var(--kb-pad) + var(--stripe-w) + 10px)
               var(--kb-pad-b) var(--kb-pad);
       border:2px solid var(--ink);position:relative;width:max-content;
       touch-action:none;-webkit-user-select:none;user-select:none}
 
-    /* Product badge — small logo on the keyboard case, bottom-right corner,
-       left of the rainbow stripe. Mimics the Sinclair ZX Spectrum branding. */
-    .zk-badge{position:absolute;
-      bottom:calc(var(--key-size) * 0.22);
+    /* Product badge — embedded SVG logo */
+    .zx-badge{position:absolute;
+      bottom:calc(var(--key-size) * 0.18);
       right:calc(var(--stripe-w) + 14px);
-      height:calc(var(--key-size) * 0.50);
-      width:auto;max-width:60%;
-      image-rendering:pixelated;
-      image-rendering:-webkit-optimize-contrast;
+      height:calc(var(--key-size) * 0.58);
+      width:auto;max-width:65%;
       pointer-events:none;display:block}
-    .zk-row{display:flex;gap:var(--key-gap)}
+    .zx-badge svg{height:100%;width:auto;display:block}
+    .zx-row{display:flex;gap:var(--key-gap)}
 
-    .zk-key{
+    .zx-key{
       width:var(--key-size);height:var(--key-size);
       border:2px solid var(--ink);position:relative;
       display:flex;align-items:center;justify-content:center;
@@ -86,41 +81,41 @@
       -webkit-tap-highlight-color:transparent;
       transition:background .05s, color .05s;
     }
-    .zk-key.w135{width:calc(var(--key-size)*1.35)}
-    .zk-key.w155{width:calc(var(--key-size)*1.55)}
-    .zk-key.w185{width:calc(var(--key-size)*1.85)}
-    .zk-key.pressed,
-    .zk-key.toggled{background:var(--ink);color:#000}
-    .zk-key.toggled{box-shadow:0 0 0 2px var(--amber) inset}
+    .zx-key.w135{width:calc(var(--key-size)*1.35)}
+    .zx-key.w155{width:calc(var(--key-size)*1.55)}
+    .zx-key.w185{width:calc(var(--key-size)*1.85)}
+    .zx-key.pressed,
+    .zx-key.toggled{background:var(--ink);color:#000}
+    .zx-key.toggled{box-shadow:0 0 0 2px var(--amber) inset}
 
     /* Labels — nowrap, sized off --key-size. Floor at 8px; they don't need to be
        touch-accurate, just readable at viewing distance. */
-    .zk-main{font-weight:900;text-align:center;line-height:1.02;
+    .zx-main{font-weight:900;text-align:center;line-height:1.02;
       font-size:max(11px, calc(var(--key-size) * 0.28))}
-    .zk-main.sml{font-size:max(9px, calc(var(--key-size) * 0.14));padding:0 2px;
+    .zx-main.sml{font-size:max(9px, calc(var(--key-size) * 0.14));padding:0 2px;
       letter-spacing:-.02em}
 
-    .zk-lab{position:absolute;white-space:nowrap;font-weight:800;letter-spacing:-.02em}
-    .zk-stripe{top:calc(var(--key-size) * -0.56);left:0;right:0;text-align:center;
+    .zx-lab{position:absolute;white-space:nowrap;font-weight:800;letter-spacing:-.02em}
+    .zx-stripe{top:calc(var(--key-size) * -0.56);left:0;right:0;text-align:center;
       font-size:max(8px, calc(var(--key-size)*0.13))}
-    .zk-above{top:calc(var(--key-size) * -0.32);left:0;right:0;text-align:center;
+    .zx-above{top:calc(var(--key-size) * -0.32);left:0;right:0;text-align:center;
       font-size:max(8px, calc(var(--key-size)*0.15))}
-    .zk-sym{top:6%;right:6%;font-size:max(9px, calc(var(--key-size)*0.18));
+    .zx-sym{top:6%;right:6%;font-size:max(9px, calc(var(--key-size)*0.18));
       font-weight:900;color:var(--red)}
-    .zk-kw{bottom:8%;left:0;right:0;text-align:center;color:var(--green);
+    .zx-kw{bottom:8%;left:0;right:0;text-align:center;color:var(--green);
       font-size:max(8px, calc(var(--key-size)*0.14))}
-    .zk-below{bottom:calc(var(--key-size) * -0.26);left:0;right:0;text-align:center;
+    .zx-below{bottom:calc(var(--key-size) * -0.26);left:0;right:0;text-align:center;
       color:var(--green);font-size:max(8px, calc(var(--key-size)*0.13));font-weight:700}
-    .zk-er{bottom:calc(var(--key-size) * -0.26);left:6%;color:var(--red);
+    .zx-er{bottom:calc(var(--key-size) * -0.26);left:6%;color:var(--red);
       font-size:max(8px, calc(var(--key-size)*0.13))}
-    .zk-eg{bottom:calc(var(--key-size) * -0.26);right:6%;color:var(--green);
+    .zx-eg{bottom:calc(var(--key-size) * -0.26);right:6%;color:var(--green);
       font-size:max(8px, calc(var(--key-size)*0.13))}
 
-    .zk-stripebar{position:absolute;right:0;top:0;bottom:0;width:var(--stripe-w);
+    .zx-stripebar{position:absolute;right:0;top:0;bottom:0;width:var(--stripe-w);
       display:flex;flex-direction:column;pointer-events:none}
-    .zk-stripebar>div{flex:1}
+    .zx-stripebar>div{flex:1}
 
-    .zk-footer{color:var(--dim);font-size:clamp(9px,1.3vw,12px)}
+    .zx-footer{color:var(--dim);font-size:clamp(9px,1.3vw,12px)}
   `;
   document.head.appendChild(style);
 
@@ -173,7 +168,7 @@
       k.wide >= 1.85 ? ' w185' :
       k.wide >= 1.55 ? ' w155' :
       k.wide >= 1.35 ? ' w135' : '';
-    const mainCls  = k.special ? 'zk-main sml' : 'zk-main';
+    const mainCls  = k.special ? 'zx-main sml' : 'zx-main';
     const mainBody = (k.main && k.main.indexOf(' ') >= 0)
       ? k.main.split(' ').map(p => `<div>${esc(p)}</div>`).join('')
       : esc(k.main);
@@ -182,31 +177,31 @@
     if (k.stripeLabel) {
       const col = (k.stripeColor && STRIPE[k.stripeColor])
         ? ` style="color:${STRIPE[k.stripeColor]}"` : '';
-      parts += `<div class="zk-lab zk-stripe"${col}>${esc(k.stripeLabel)}</div>`;
+      parts += `<div class="zx-lab zx-stripe"${col}>${esc(k.stripeLabel)}</div>`;
     }
-    if (k.keywordAbove) parts += `<div class="zk-lab zk-above">${esc(k.keywordAbove)}</div>`;
-    if (k.symbolRed)    parts += `<div class="zk-lab zk-sym">${esc(k.symbolRed)}</div>`;
+    if (k.keywordAbove) parts += `<div class="zx-lab zx-above">${esc(k.keywordAbove)}</div>`;
+    if (k.symbolRed)    parts += `<div class="zx-lab zx-sym">${esc(k.symbolRed)}</div>`;
     parts += `<div class="${mainCls}">${mainBody}</div>`;
-    if (k.keyword)      parts += `<div class="zk-lab zk-kw">${esc(k.keyword)}</div>`;
-    if (k.commandBelow) parts += `<div class="zk-lab zk-below">${esc(k.commandBelow)}</div>`;
-    if (k.eModeRed)     parts += `<div class="zk-lab zk-er">${esc(k.eModeRed)}</div>`;
-    if (k.eModeGreen)   parts += `<div class="zk-lab zk-eg">${esc(k.eModeGreen)}</div>`;
+    if (k.keyword)      parts += `<div class="zx-lab zx-kw">${esc(k.keyword)}</div>`;
+    if (k.commandBelow) parts += `<div class="zx-lab zx-below">${esc(k.commandBelow)}</div>`;
+    if (k.eModeRed)     parts += `<div class="zx-lab zx-er">${esc(k.eModeRed)}</div>`;
+    if (k.eModeGreen)   parts += `<div class="zx-lab zx-eg">${esc(k.eModeGreen)}</div>`;
 
     const m = mapFor(k);
     const data = m ? ` data-r="${m[0]}" data-b="${m[1]}"` : '';
     const spc  = k.special ? ` data-special="${esc(k.special)}"` : '';
     const lbl  = ` data-lbl="${esc(shortLabel(k))}"`;
-    return `<div class="zk-key${wideCls}"${data}${spc}${lbl}>${parts}</div>`;
+    return `<div class="zx-key${wideCls}"${data}${spc}${lbl}>${parts}</div>`;
   }
 
   const rowsHtml = rows.map((r, i) => {
     const off = ROW_OFFSET_EM[i];
     const ml  = off ? ` style="margin-left:calc(var(--key-size) * ${off})"` : '';
-    return `<div class="zk-row"${ml}>${r.map(keyHTML).join('')}</div>`;
+    return `<div class="zx-row"${ml}>${r.map(keyHTML).join('')}</div>`;
   }).join('');
 
   const stripesHtml = (LAYOUT && LAYOUT.STRIPE)
-    ? `<div class="zk-stripebar">${
+    ? `<div class="zx-stripebar">${
         ['red','yellow','green','cyan']
           .map(c => `<div style="background:${STRIPE[c] || '#fff'}"></div>`)
           .join('')
@@ -219,40 +214,69 @@
   })();
 
   root.innerHTML = `
-    <div class="zk-app">
-      <div class="zk-status">
-        <div class="zk-dot" id="zk-dot" title="Disconnected"></div>
-        <div class="zk-host">${esc(host)}</div>
-        <div class="zk-leds">
-          <div class="zk-led" id="zk-led-caps"><span class="lamp"></span>CAPS</div>
-          <div class="zk-led" id="zk-led-sym"><span class="lamp"></span>SYM</div>
+    <div class="zx-app">
+      <div class="zx-status">
+        <div class="zx-dot" id="zx-dot" title="Disconnected"></div>
+        <div class="zx-host">${esc(host)}</div>
+        <div class="zx-leds">
+          <div class="zx-led" id="zx-led-caps"><span class="lamp"></span>CAPS</div>
+          <div class="zx-led" id="zx-led-sym"><span class="lamp"></span>SYM</div>
         </div>
-        <div class="zk-tx" id="zk-tx">TX: 0</div>
+        <div class="zx-tx" id="zx-tx">TX: 0</div>
+        <div class="zx-buf-list" id="zx-buf-list"></div>
       </div>
 
-      <div class="zk-buf" aria-label="Sent frames">
-        <div class="zk-buf-title">SENT</div>
-        <div class="zk-buf-list" id="zk-buf-list"></div>
-      </div>
-
-      <div class="zk-kbwrap">
-        <div class="zk-kb" id="zk-kb">
+      <div class="zx-kbwrap">
+        <div class="zx-kb" id="zx-kb">
           ${rowsHtml}
           ${stripesHtml}
-          <img class="zk-badge" src="/baner.png" alt="SpecK10trum">
+          <div class="zx-badge">
+            <svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 1318.41 183.18">
+              <defs>
+                <style>
+                  .st0 { fill: #fbe8b1; font-family: HelveticaNeueLTPro-Roman, 'Helvetica Neue LT Pro'; font-size: 23.02px; letter-spacing: .1em; }
+                  .st1 { fill: #fff; }
+                  .st2 { fill: #02b07b; }
+                  .st3 { fill: #015dbe; }
+                  .st4 { fill: #fdcb02; }
+                  .st5 { fill: #fd2f2c; }
+                </style>
+              </defs>
+              <g id="TEXT">
+                <path class="st1" d="M289.95,92.61c-.61,11.21-8.98,21.15-20.77,21.2l-88.51.3c-.26-8.26-1.17-15.16-2.65-23.87l83-.58c4.88-.03,6.26-19.14-1.03-19.24l-63.35-.87c-11.93-.16-21.28-10.1-22.2-21.36-.67-8.11-.64-15.21.09-23.25,1.06-11.64,10.75-21.45,23.06-21.52l87.76-.48-.38,30.36c-4.55-2.28-6.7-5.21-10.82-6.17l-64.79-.1c-2.71,0-4.96,1.07-6.26,2.36-2.04,2.02-2.08,4.82-2.13,7.65-.09,4.99,2.07,8.95,7.37,8.97l57.51.23c13.15.05,23.22,8.51,24.02,21.96.47,7.92.54,15.58.06,24.4Z"/>
+                <path class="st1" d="M911.72,113.54c-23.17,1.04-45.47.91-67.73-.02-14.04-.58-23.47-11.48-25.68-24.47-.38-20.04-.72-38.97.06-59.07.58-14.79,12.99-26.7,28.25-26.68l61.57.06c16.56.02,28.43,13.67,28.44,29.64v52.2c.01,13.63-9.49,27.64-24.91,28.34ZM902.73,89.94c4.84-.01,8.07-4.23,8.07-8.49l.07-43.95c0-5.78-4.34-9.38-9.78-10.41l-46.77.07c-5.38,0-9.88,4.62-9.88,9.96l-.04,42.94c0,5.69,4.26,10.01,9.93,10l48.41-.11Z"/>
+                <path class="st1" d="M694.05,56.59l57.6,57.31-34.93.1-44.07-44.45c-5.26-.11-9.47-.18-14.91.37l-.2,44.08h-26.02s0-110.78,0-110.78l26.06-.11.14,43.18c5.01.97,9.06.68,13.79.17l43.17-43.27,32.84.12-53.48,53.27Z"/>
+                <path class="st1" d="M1267.31,54.09l-.13,59.91-24.84.04-.04-53.9c-.65-3.78-3.12-6.12-6.93-6.12h-21.88s-.03,59.96-.03,59.96l-24.13.07V33.95s106.76.41,106.76.41c13.98.05,23.21,12.54,22.25,25.66v54.06s-24.98-.02-24.98-.02l-.13-53.78c0-3.7-3.39-6.19-6.77-6.19h-19.14Z"/>
+                <path class="st1" d="M376.69,113.63l-47.08.6-.4,23.73c-.04,2.45-1.09,4.5-.87,7.16l-23.99-.11V34.02s67.8.07,67.8.07c14.12.01,25.53,8.24,26.4,22.97-.09,11.31.58,22.49-.29,34.01s-9.3,22.4-21.56,22.55ZM372.41,61.06c0-4.83-3.27-7.94-8.07-7.94h-28.93c-4.15.25-6.17,2.96-6.16,6.89l.1,32.87,34.08.22c12.6.08,8.95-11,8.98-32.04Z"/>
+                <path class="st1" d="M437.52,88.75c.4,2.68,3.09,4.47,5.89,4.48l67.18.1-.06,20.83-77.08-.39c-12.95-.07-21.78-11.51-21.78-23.59v-33.25c.02-11.69,9-22.46,21.25-22.5l56.41-.22c12.61-.05,21.9,10.66,22.16,22.67.18,8.34.51,15.84-.22,24.2h-73.11c-1.32,2.22-1.04,4.96-.63,7.67ZM485.39,63.88c2.46-2.31.88-11.31-4.44-11.46-12.8-.35-25.4-.46-38.22,0-5.97.21-6.53,9.97-4.43,11.36l47.09.1Z"/>
+                <path class="st1" d="M1087.33,34.17l24.99-.06.16,52.53c.01,3.75,3.43,6.41,6.86,6.41l26.88-.02c3.07,0,5.65-2.7,5.66-5.98l.16-52.96,25.95-.03-.1,56.04c-.02,12.64-9.52,23.55-22.55,23.77-16.13.27-31.85.74-47.78-.24-12.39-.76-20.72-11.8-20.23-23.5v-55.96Z"/>
+                <path class="st1" d="M556.84,92.97l60.48.11v20.95s-67.99.16-67.99.16c-13.1.03-24.01-8.77-24.95-22.17-.83-11.83-.35-23.17-.3-35.12s8.79-22.5,21.41-22.56l71.73-.38.03,20.4-58.91-.16c-4.8-.01-8.81,2.9-8.84,7.95l-.14,22.97c-.02,3.97,2.75,7.84,7.47,7.85Z"/>
+                <path class="st1" d="M1006.78,93.15l.05,20.96c-12.19-.53-24.17.79-36.27-.52-10.68-1.16-18.13-10.19-18.18-20.45l-.21-39.03c-3.14-.11-5.65.46-8.83-.27v-19.62s8.89-.42,8.89-.42l.13-30.74,25.2.06.08,30.67,29.29.35c-.03,7.05.47,13.59-.26,19.97l-28.88.37-.09,31.61c-.01,3.95,3.01,6.95,6.79,6.96l22.29.1Z"/>
+                <path class="st1" d="M779.83,114.1l-.28-81.38-24.55,14c-.58-5.59-.26-10.77-.18-16.41l27.85-27.06,21.68-.16v110.94s-24.52.06-24.52.06Z"/>
+                <path class="st1" d="M1046,61.53l-.19,52.34-25.54.25.36-58.95c.07-11.57,9.46-20.67,20.75-20.79l35.95-.39-.05,20.15-24.75.18c-3.59.03-6.52,2.96-6.54,7.22Z"/>
+              </g>
+              <g id="COLOR">
+                <path class="st4" d="M70.72,182.48c-9.83,1.37-19.79.23-30.35.58V.19s30.28-.06,30.28-.06l.07,182.36Z"/>
+                <polygon class="st3" points="154.35 182.82 119.43 183.1 119.33 .16 154.34 .07 154.35 182.82"/>
+                <polygon class="st5" points="33.4 182.79 0 183.05 .04 .09 33.42 .12 33.4 182.79"/>
+                <path class="st2" d="M112.33.12l.02,182.69-33,.18.02-182.78c2.99,1.18,5.36.23,8.02.06,8.12-.53,15.67-.08,24.95-.15Z"/>
+              </g>
+              <text class="st0" transform="translate(173.96 180.98) scale(1.91 1)"><tspan x="0" y="0">ZX SPECTRUM EMULATOR FOR UNIHIKER H10</tspan></text>
+            </svg>
+          </div>
         </div>
       </div>
 
-      <div class="zk-footer">Binary [row,bit,pressed] → /ws · CAPS/SYM are toggles</div>
+      <div class="zx-footer">Binary [row,bit,pressed] → /ws · CAPS/SYM are toggles</div>
     </div>
   `;
 
-  const dot     = document.getElementById('zk-dot');
-  const txEl    = document.getElementById('zk-tx');
-  const bufEl   = document.getElementById('zk-buf-list');
-  const kb      = document.getElementById('zk-kb');
-  const ledCaps = document.getElementById('zk-led-caps');
-  const ledSym  = document.getElementById('zk-led-sym');
+  const dot     = document.getElementById('zx-dot');
+  const txEl    = document.getElementById('zx-tx');
+  const bufEl   = document.getElementById('zx-buf-list');
+  const kb      = document.getElementById('zx-kb');
+  const ledCaps = document.getElementById('zx-led-caps');
+  const ledSym  = document.getElementById('zx-led-sym');
 
   // -------- WebSocket with exponential-backoff reconnect --------
   let ws = null, txCount = 0, retry = 0, reconnectTimer = 0;
@@ -278,12 +302,31 @@
   }
   connect();
 
+  // Ensure the top status width matches the keyboard width and stays aligned.
+  function syncStatusToKb() {
+    const status = document.querySelector('.zx-status');
+    const app = document.querySelector('.zx-app');
+    if (!status || !kb || !app) return;
+    // Width equals the intrinsic keyboard width
+    status.style.width = kb.offsetWidth + 'px';
+    // Align left edge of status to left edge of keyboard within the app
+    const appRect = app.getBoundingClientRect();
+    const kbRect = kb.getBoundingClientRect();
+    status.style.marginLeft = Math.max(0, kbRect.left - appRect.left) + 'px';
+  }
+  // Run once and while resizing
+  window.addEventListener('resize', syncStatusToKb);
+  // When fonts load or initial layout stabilizes
+  window.addEventListener('load', () => { setTimeout(syncStatusToKb, 30); });
+  // Also run shortly after script inserts the DOM
+  setTimeout(syncStatusToKb, 50);
+
   // -------- Sent buffer ring --------
   const BUF_MAX = 18;
   const bufItems = [];
   function pushBuf(label, pressed) {
     const item = document.createElement('div');
-    item.className = 'zk-buf-item ' + (pressed ? 'down' : 'up');
+    item.className = 'zx-buf-item ' + (pressed ? 'down' : 'up');
     item.textContent = label + (pressed ? '↓' : '↑');  // ↓ / ↑
     bufEl.appendChild(item);
     bufItems.push(item);
@@ -360,7 +403,7 @@
 
   if (window.PointerEvent) {
     kb.addEventListener('pointerdown', (e) => {
-      const el = e.target.closest('.zk-key');
+      const el = e.target.closest('.zx-key');
       if (!el) return;
       e.preventDefault();
       try { kb.setPointerCapture(e.pointerId); } catch (_) {}
@@ -377,14 +420,14 @@
       const el = active.get(e.pointerId);
       if (!el) return;
       const under = document.elementFromPoint(e.clientX, e.clientY);
-      if (!under || under.closest('.zk-key') !== el) {
+      if (!under || under.closest('.zx-key') !== el) {
         active.delete(e.pointerId);
         releaseMomentary(el);
       }
     });
   } else {
     kb.addEventListener('mousedown', (e) => {
-      const el = e.target.closest('.zk-key');
+      const el = e.target.closest('.zx-key');
       if (!el) return;
       e.preventDefault();
       onDown(el, 'mouse');
@@ -398,7 +441,7 @@
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t  = e.changedTouches[i];
         const el = document.elementFromPoint(t.clientX, t.clientY);
-        const key = el && el.closest('.zk-key');
+        const key = el && el.closest('.zx-key');
         if (key) onDown(key, t.identifier);
       }
     }, { passive: false });
@@ -421,7 +464,7 @@
     // Toggles
     ['caps', 'symbol'].forEach((s) => {
       if (!toggles[s]) return;
-      const el = kb.querySelector(`.zk-key[data-special="${s}"]`);
+      const el = kb.querySelector(`.zx-key[data-special="${s}"]`);
       if (el) setToggle(el, s, false);
     });
   }
