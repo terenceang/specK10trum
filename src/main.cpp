@@ -93,10 +93,11 @@ static void emulator_task(void* pvParameters) {
         display_trigger_frame(spectrum);
         // Render and play beeper audio for this frame.
         // This call blocks on the I2S stream buffer when it is full, which is
-        // what synchronises the emulator to real time. With FreeRTOS at 100 Hz
-        // a vTaskDelay(1) here would add a full 10 ms tick to every 20 ms
-        // frame, so we rely on the audio block alone for pacing.
+        // what synchronises the emulator to real time.
         audio_play_frame(spectrum);
+        
+        // Yield to allow other tasks (like Webserver) to run
+        vTaskDelay(1);
     }
 }
 

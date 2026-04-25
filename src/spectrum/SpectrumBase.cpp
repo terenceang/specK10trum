@@ -183,11 +183,16 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
     // Standard Spectrum keyboard: Address bits A8-A15 select rows.
     // If a bit is 0, that row is selected. If multiple bits are 0, results are ANDed.
     uint8_t row_addr = (port >> 8);
+    bool any_selected = false;
     for (int i = 0; i < 8; i++) {
         if (!(row_addr & (1 << i))) {
             val &= input_getKeyboardRow(i);
+            any_selected = true;
         }
     }
+    
+    // If no rows were selected (all address bits high), the port returns 0xFF
+    if (!any_selected) val = 0xFF;
     
     // EAR input is bit 6; approximate board coupling: EAR = externalEar OR speaker
     if (m_beeper.getExternalEar() || m_beeper.currentSpeakerLevel()) {

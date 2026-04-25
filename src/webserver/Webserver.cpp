@@ -180,37 +180,64 @@ void webserver_apply_pending(SpectrumBase* spectrum)
 
 static esp_err_t ws_handler(httpd_req_t *req)
 {
+    const int fd = httpd_req_to_sockfd(req);
+
     httpd_ws_frame_t ws_pkt;
     memset(&ws_pkt, 0, sizeof(ws_pkt));
-    
-    // First call to get frame header
+
+    // First call: peek at the frame header.
     esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
     if (ret != ESP_OK) {
-        // If it's a GET request and recv_frame fails, it's likely the initial handshake
+        // The framework calls us once with method == HTTP_GET right after the
+        // upgrade handshake completes; there is no frame yet, so recv_frame
+        // returns an error. Treat that as the connect event.
         if (req->method == HTTP_GET) {
-            ESP_LOGD(TAG, "WS Handshake received");
+            ESP_LOGI(TAG, "Keyboard connected (fd=%d)", fd);
             return ESP_OK;
         }
-        ESP_LOGE(TAG, "httpd_ws_recv_frame failed with %d", ret);
+        ESP_LOGW(TAG, "Keyboard disconnected (fd=%d, recv err=%d)", fd, ret);
         return ret;
     }
 
     if (ws_pkt.len > 0) {
-        // Key frames are 3 bytes; keep a small stack buffer to avoid heap
-        // churn on the hot path. Anything larger we drop.
+        // Key frames are 3-byte BINARY; keep a small stack buffer to avoid
+        // heap churn on the hot path. We must always drain the payload bytes
+        // we said we'd read, otherwise they sit in the kernel buffer and the
+        // next header read mis-parses them ("WS frame is not properly
+        // masked"), desynchronising the stream.
         uint8_t payload[16];
-        if (ws_pkt.len > sizeof(payload)) {
-            ESP_LOGW(TAG, "WS payload too large: %u bytes", (unsigned)ws_pkt.len);
+
+        // Browser tab close arrives as a CLOSE frame (type=8, 2-byte status
+        // payload). Drain it and return OK so httpd unwinds the session
+        // without logging "uri handler execution failed".
+        if (ws_pkt.type == HTTPD_WS_TYPE_CLOSE) {
+            uint16_t status = 0;
+            if (ws_pkt.len >= 2 && ws_pkt.len <= sizeof(payload)) {
+                ws_pkt.payload = payload;
+                if (httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len) == ESP_OK) {
+                    status = (uint16_t)((payload[0] << 8) | payload[1]);
+                }
+            }
+            ESP_LOGI(TAG, "Keyboard disconnected (fd=%d, status=%u)", fd, status);
             return ESP_OK;
+        }
+
+        if (ws_pkt.type != HTTPD_WS_TYPE_BINARY ||
+            ws_pkt.len > sizeof(payload)) {
+            ESP_LOGW(TAG, "Unexpected WS frame type=%d len=%u; closing",
+                     (int)ws_pkt.type, (unsigned)ws_pkt.len);
+            return ESP_FAIL;
         }
         ws_pkt.payload = payload;
         ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "httpd_ws_recv_frame (data) failed with %d", ret);
+            // EAGAIN/ENOTCONN here usually means the client tore the socket
+            // down mid-frame; httpd will close it on our return.
+            ESP_LOGW(TAG, "Keyboard disconnected (fd=%d, payload err=%d)", fd, ret);
             return ret;
         }
 
-        if (ws_pkt.type == HTTPD_WS_TYPE_BINARY && ws_pkt.len == 3) {
+        if (ws_pkt.len == 3) {
             uint8_t row = payload[0], bit = payload[1];
             bool pressed = payload[2] != 0;
             if (row < 8 && bit < 5) {
@@ -218,12 +245,16 @@ static esp_err_t ws_handler(httpd_req_t *req)
                 uint8_t old = cur;
                 if (pressed) cur &= ~(1 << bit); else cur |= (1 << bit);
                 if (cur != old) {
-                    ESP_LOGD(TAG, "Key: row %d, bit %d, %s", row, bit, pressed ? "DOWN" : "UP");
                     input_setKeyboardRow(row, cur);
+                    ESP_LOGI(TAG, "Key %s: row=%u bit=%u row_state=0x%02X",
+                             pressed ? "DOWN" : "UP  ",
+                             (unsigned)row, (unsigned)bit, (unsigned)cur);
                 }
             } else {
-                ESP_LOGW(TAG, "Invalid WS key: row %d, bit %d", row, bit);
+                ESP_LOGW(TAG, "Invalid WS key: row=%u bit=%u", (unsigned)row, (unsigned)bit);
             }
+        } else {
+            ESP_LOGW(TAG, "Unexpected BINARY len=%u (want 3)", (unsigned)ws_pkt.len);
         }
     }
     return ESP_OK;
@@ -236,6 +267,17 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     config.lru_purge_enable = true;
     config.uri_match_fn     = httpd_uri_match_wildcard;
     config.max_uri_handlers = 12;
+    config.stack_size       = 8192;
+    // Default recv_wait_timeout is 5 s. With marginal Wi-Fi the 9-byte WS
+    // keystroke frame can split across segments and the payload arrives
+    // late, so we let it breathe. TCP keepalive culls truly dead sockets
+    // before the LRU sweep does.
+    config.recv_wait_timeout   = 30;
+    config.send_wait_timeout   = 10;
+    config.keep_alive_enable   = true;
+    config.keep_alive_idle     = 30;
+    config.keep_alive_interval = 10;
+    config.keep_alive_count    = 3;
 
     ESP_LOGI(TAG, "Starting Webserver...");
     if (httpd_start(&s_server, &config) != ESP_OK) return ESP_FAIL;
