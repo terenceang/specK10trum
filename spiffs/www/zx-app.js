@@ -15,17 +15,16 @@
          keyboard scrolls horizontally instead of collapsing labels. */
       --key-size: clamp(38px, calc((100vw - 24px) / 14.5), 72px);
       --key-gap:  calc(var(--key-size) * 0.12);
-      --row-gap:  calc(var(--key-size) * 0.95);
+      --row-gap:  calc(var(--key-size) * 0.75);
       --kb-pad:   calc(var(--key-size) * 0.35);
+      --kb-pad-t: calc(var(--key-size) * 1.00);
+      --kb-pad-b: calc(var(--key-size) * 1.35);
       --stripe-w: clamp(10px, 1.6vw, 18px);
     }
     *{box-sizing:border-box}
     html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
       font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%}
     .zk-app{padding:clamp(8px,2vw,20px);display:flex;flex-direction:column;gap:14px}
-
-    /* Banner */
-    .zk-banner{display:block;max-width:100%;height:auto;border:2px solid var(--ink)}
 
     /* Top status strip */
     .zk-status{display:flex;gap:12px;align-items:center;flex-wrap:wrap;
@@ -62,10 +61,21 @@
     /* Keyboard */
     .zk-kbwrap{overflow-x:auto;overflow-y:visible;padding-bottom:4px}
     .zk-kb{display:flex;flex-direction:column;gap:var(--row-gap);
-      padding:calc(var(--row-gap)*1.1) calc(var(--kb-pad) + var(--stripe-w) + 8px)
-              var(--row-gap) var(--kb-pad);
+      padding:var(--kb-pad-t) calc(var(--kb-pad) + var(--stripe-w) + 10px)
+              var(--kb-pad-b) var(--kb-pad);
       border:2px solid var(--ink);position:relative;width:max-content;
       touch-action:none;-webkit-user-select:none;user-select:none}
+
+    /* Product badge — small logo on the keyboard case, bottom-right corner,
+       left of the rainbow stripe. Mimics the Sinclair ZX Spectrum branding. */
+    .zk-badge{position:absolute;
+      bottom:calc(var(--key-size) * 0.22);
+      right:calc(var(--stripe-w) + 14px);
+      height:calc(var(--key-size) * 0.50);
+      width:auto;max-width:60%;
+      image-rendering:pixelated;
+      image-rendering:-webkit-optimize-contrast;
+      pointer-events:none;display:block}
     .zk-row{display:flex;gap:var(--key-gap)}
 
     .zk-key{
@@ -99,11 +109,11 @@
       font-weight:900;color:var(--red)}
     .zk-kw{bottom:8%;left:0;right:0;text-align:center;color:var(--green);
       font-size:max(8px, calc(var(--key-size)*0.14))}
-    .zk-below{bottom:calc(var(--key-size) * -0.32);left:0;right:0;text-align:center;
+    .zk-below{bottom:calc(var(--key-size) * -0.26);left:0;right:0;text-align:center;
       color:var(--green);font-size:max(8px, calc(var(--key-size)*0.13));font-weight:700}
-    .zk-er{bottom:calc(var(--key-size) * -0.32);left:6%;color:var(--red);
+    .zk-er{bottom:calc(var(--key-size) * -0.26);left:6%;color:var(--red);
       font-size:max(8px, calc(var(--key-size)*0.13))}
-    .zk-eg{bottom:calc(var(--key-size) * -0.32);right:6%;color:var(--green);
+    .zk-eg{bottom:calc(var(--key-size) * -0.26);right:6%;color:var(--green);
       font-size:max(8px, calc(var(--key-size)*0.13))}
 
     .zk-stripebar{position:absolute;right:0;top:0;bottom:0;width:var(--stripe-w);
@@ -210,8 +220,6 @@
 
   root.innerHTML = `
     <div class="zk-app">
-      <img class="zk-banner" src="/baner.png" alt="SpecK10trum">
-
       <div class="zk-status">
         <div class="zk-dot" id="zk-dot" title="Disconnected"></div>
         <div class="zk-host">${esc(host)}</div>
@@ -231,6 +239,7 @@
         <div class="zk-kb" id="zk-kb">
           ${rowsHtml}
           ${stripesHtml}
+          <img class="zk-badge" src="/baner.png" alt="SpecK10trum">
         </div>
       </div>
 
