@@ -394,7 +394,7 @@
     const action = e.target.dataset.action;
     if (!action) return;
     if (action === 'snapshot') {
-      openSubmenu('FILES', '/api/files');
+      openSubmenu('SNAPSHOTS', '/api/files');
     } else if (action === 'reset') {
       fetch('/api/reset').then(r => console.log('Reset:', r.status));
     } else if (action.startsWith('tape_mode_')) {

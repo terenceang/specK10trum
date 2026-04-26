@@ -105,8 +105,10 @@ static esp_err_t file_get_handler(httpd_req_t *req)
 /* API: List available files (ROMs, snapshots, tapes) */
 static esp_err_t files_list_handler(httpd_req_t *req)
 {
+    ESP_LOGI(TAG, "Listing files from %s...", SPIFFS_ROOT);
     DIR* dir = opendir(SPIFFS_ROOT);
     if (!dir) {
+        ESP_LOGE(TAG, "Failed to open spiffs root: %s", SPIFFS_ROOT);
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Storage error");
         return ESP_OK;
     }
@@ -117,19 +119,24 @@ static esp_err_t files_list_handler(httpd_req_t *req)
 
     struct dirent* ent;
     bool first = true;
+    int count = 0;
     while ((ent = readdir(dir)) != NULL) {
         const char* ext = strrchr(ent->d_name, '.');
         if (!ext) continue;
         if (strcasecmp(ext, ".z80") == 0 || strcasecmp(ext, ".sna") == 0 ||
             strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 ||
             strcasecmp(ext, ".tsx") == 0) {
+            
+            ESP_LOGD(TAG, "Found valid file: %s", ent->d_name);
             char buf[512];
             int len = snprintf(buf, sizeof(buf), "%s\"%s\"", first ? "" : ",", ent->d_name);
             httpd_resp_send_chunk(req, buf, len);
             first = false;
+            count++;
         }
     }
     closedir(dir);
+    ESP_LOGI(TAG, "Returned %d files", count);
     httpd_resp_send_chunk(req, "]", 1);
     httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
