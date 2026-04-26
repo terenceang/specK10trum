@@ -53,10 +53,27 @@ public:
     // Address of the 48K ROM LD-BYTES routine.
     static constexpr uint16_t LD_BYTES_ENTRY = 0x0556;
 
+    // Standard Spectrum Tape timings (T-states)
+    static constexpr uint16_t T_PILOT = 2168;
+    static constexpr uint16_t T_SYNC1 = 667;
+    static constexpr uint16_t T_SYNC2 = 735;
+    static constexpr uint16_t T_ZERO  = 855;
+    static constexpr uint16_t T_ONE   = 1710;
+    static constexpr uint16_t C_PILOT_HDR = 8063;
+    static constexpr uint16_t C_PILOT_DAT = 3223;
+
 private:
     void buildBlockList();
     void resetPlaybackState();
     void nextState();
+
+    // Pulse generator helpers
+    void startDataState();
+    bool advanceBit();
+
+    // Data extraction helpers
+    bool isDataBlock(int idx) const;
+    bool getBlockContent(int idx, const uint8_t** data, uint32_t* length, uint8_t* flag = nullptr) const;
 
     uint8_t* m_data;
     size_t   m_size;

@@ -187,47 +187,45 @@ void Tape::buildBlockList() {
     if (!m_data) return;
 
     if (m_is_tzx) {
-        // Skip "ZXTape!\x1A" (8 bytes) + version (2 bytes)
-        size_t p = 10;
+        size_t p = 10; // Skip header
         while (p < m_size && m_num_blocks < MAX_TAPE_BLOCKS) {
             uint8_t type = m_data[p++];
-            
             switch (type) {
-                case 0x10: { // Standard Speed Data
-                    uint32_t pause_ms = m_data[p] | (m_data[p + 1] << 8);
+                case 0x10: { // Standard Speed
+                    uint32_t pause = m_data[p] | (m_data[p + 1] << 8);
                     uint16_t len = m_data[p + 2] | (m_data[p + 3] << 8);
                     const uint8_t* data = &m_data[p + 4];
-                    addBlock(type, data, len, pause_ms, 2168, (data[0] < 128) ? 8063 : 3223, 667, 735, 855, 1710, 8);
+                    addBlock(type, data, len, pause, T_PILOT, (data[0] < 128) ? C_PILOT_HDR : C_PILOT_DAT, T_SYNC1, T_SYNC2, T_ZERO, T_ONE, 8);
                     p += 4 + len;
                     break;
                 }
-                case 0x11: { // Turbo Speed Data
-                    uint16_t pilot_len = m_data[p] | (m_data[p + 1] << 8);
-                    uint16_t sync1 = m_data[p + 2] | (m_data[p + 3] << 8);
-                    uint16_t sync2 = m_data[p + 4] | (m_data[p + 5] << 8);
+                case 0x11: { // Turbo Speed
+                    uint16_t pilot = m_data[p] | (m_data[p + 1] << 8);
+                    uint16_t s1 = m_data[p + 2] | (m_data[p + 3] << 8);
+                    uint16_t s2 = m_data[p + 4] | (m_data[p + 5] << 8);
                     uint16_t zero = m_data[p + 6] | (m_data[p + 7] << 8);
                     uint16_t one = m_data[p + 8] | (m_data[p + 9] << 8);
-                    uint16_t pilot_count = m_data[p + 10] | (m_data[p + 11] << 8);
-                    uint8_t used_bits = m_data[p + 12];
-                    uint32_t pause_ms = m_data[p + 13] | (m_data[p + 14] << 8);
+                    uint16_t pcount = m_data[p + 10] | (m_data[p + 11] << 8);
+                    uint8_t bits = m_data[p + 12];
+                    uint32_t pause = m_data[p + 13] | (m_data[p + 14] << 8);
                     uint32_t len = m_data[p + 15] | (m_data[p + 16] << 8) | (m_data[p + 17] << 16);
-                    addBlock(type, &m_data[p + 18], len, pause_ms, pilot_len, pilot_count, sync1, sync2, zero, one, used_bits);
+                    addBlock(type, &m_data[p + 18], len, pause, pilot, pcount, s1, s2, zero, one, bits);
                     p += 18 + len;
                     break;
                 }
                 case 0x14: { // Pure Data
                     uint16_t zero = m_data[p] | (m_data[p + 1] << 8);
                     uint16_t one = m_data[p + 2] | (m_data[p + 3] << 8);
-                    uint8_t used_bits = m_data[p + 4];
-                    uint32_t pause_ms = m_data[p + 5] | (m_data[p + 6] << 8);
+                    uint8_t bits = m_data[p + 4];
+                    uint32_t pause = m_data[p + 5] | (m_data[p + 6] << 8);
                     uint32_t len = m_data[p + 7] | (m_data[p + 8] << 8) | (m_data[p + 9] << 16);
-                    addBlock(type, &m_data[p + 10], len, pause_ms, 0, 0, 0, 0, zero, one, used_bits);
+                    addBlock(type, &m_data[p + 10], len, pause, 0, 0, 0, 0, zero, one, bits);
                     p += 10 + len;
                     break;
                 }
                 case 0x20: { // Pause
-                    uint32_t pause_ms = m_data[p] | (m_data[p + 1] << 8);
-                    addBlock(type, nullptr, 0, pause_ms);
+                    uint32_t pause = m_data[p] | (m_data[p + 1] << 8);
+                    addBlock(type, nullptr, 0, pause);
                     p += 2;
                     break;
                 }
@@ -242,7 +240,7 @@ void Tape::buildBlockList() {
             uint16_t len = m_data[p] | (m_data[p + 1] << 8);
             if (p + 2 + len > m_size) break;
             const uint8_t* data = &m_data[p + 2];
-            addBlock(0x10, data, len, 1000, 2168, (data[0] < 128) ? 8063 : 3223, 667, 735, 855, 1710, 8);
+            addBlock(0x10, data, len, 1000, T_PILOT, (data[0] < 128) ? C_PILOT_HDR : C_PILOT_DAT, T_SYNC1, T_SYNC2, T_ZERO, T_ONE, 8);
             p += 2 + len;
         }
     }
@@ -250,19 +248,14 @@ void Tape::buildBlockList() {
 
 void Tape::advance(uint32_t tstates) {
     if (!m_playing || m_paused || !m_data) return;
-
     if (m_current_pulse_len == 0) return;
 
     m_tstate_counter += tstates;
-
     while (m_playing && m_tstate_counter >= m_current_pulse_len) {
         m_tstate_counter -= m_current_pulse_len;
         m_ear = !m_ear;
 
-        if (m_state_pulses_left > 0) {
-            m_state_pulses_left--;
-        }
-
+        if (m_state_pulses_left > 0) m_state_pulses_left--;
         if (m_state_pulses_left == 0) {
             nextState();
             if (m_current_pulse_len == 0) {
@@ -273,12 +266,36 @@ void Tape::advance(uint32_t tstates) {
     }
 }
 
-void Tape::nextState() {
-    if (m_current_block_idx >= m_num_blocks) {
-        stop();
-        return;
+void Tape::startDataState() {
+    m_pstate = PlayState::DATA;
+    m_data_byte_idx = 0;
+    m_data_bit_idx = 0;
+    if (!advanceBit()) {
+        m_pstate = PlayState::PAUSE;
+        m_state_pulses_left = 1;
+        m_current_pulse_len = m_blocks[m_current_block_idx].pause_tstates;
+    }
+}
+
+bool Tape::advanceBit() {
+    const TapeBlockInternal& b = m_blocks[m_current_block_idx];
+    if (m_data_byte_idx >= b.length) return false;
+
+    uint8_t bits = (m_data_byte_idx == b.length - 1) ? b.used_bits : 8;
+    if (m_data_bit_idx >= bits) {
+        m_data_bit_idx = 0;
+        m_data_byte_idx++;
+        if (m_data_byte_idx >= b.length) return false;
     }
 
+    uint8_t bit = (b.data[m_data_byte_idx] & (0x80 >> m_data_bit_idx)) ? 1 : 0;
+    m_current_pulse_len = bit ? b.one_len : b.zero_len;
+    m_state_pulses_left = 2;
+    return true;
+}
+
+void Tape::nextState() {
+    if (m_current_block_idx >= m_num_blocks) { stop(); return; }
     const TapeBlockInternal& b = m_blocks[m_current_block_idx];
 
     switch (m_pstate) {
@@ -287,90 +304,51 @@ void Tape::nextState() {
                 m_pstate = PlayState::PILOT;
                 m_state_pulses_left = b.pilot_count;
                 m_current_pulse_len = b.pilot_len;
-            } else {
-                m_pstate = PlayState::DATA;
-                m_data_byte_idx = 0;
-                m_data_bit_idx = 0;
-                m_state_pulses_left = 2; // Start of first bit
-                if (b.length > 0) {
-                    uint8_t bit = (b.data[0] & 0x80) ? 1 : 0;
-                    m_current_pulse_len = bit ? b.one_len : b.zero_len;
-                } else {
-                    m_current_pulse_len = 0; // End of block
-                }
-            }
+            } else startDataState();
             break;
-
         case PlayState::PILOT:
-            m_pstate = PlayState::SYNC1;
-            m_state_pulses_left = 1;
-            m_current_pulse_len = b.sync1_len;
+            m_pstate = PlayState::SYNC1; m_state_pulses_left = 1; m_current_pulse_len = b.sync1_len;
             break;
-
         case PlayState::SYNC1:
-            m_pstate = PlayState::SYNC2;
-            m_state_pulses_left = 1;
-            m_current_pulse_len = b.sync2_len;
+            m_pstate = PlayState::SYNC2; m_state_pulses_left = 1; m_current_pulse_len = b.sync2_len;
             break;
-
         case PlayState::SYNC2:
-            m_pstate = PlayState::DATA;
-            m_data_byte_idx = 0;
-            m_data_bit_idx = 0;
-            m_state_pulses_left = 2;
-            if (b.length > 0) {
-                uint8_t bit = (b.data[0] & 0x80) ? 1 : 0;
-                m_current_pulse_len = bit ? b.one_len : b.zero_len;
-            } else {
-                m_current_pulse_len = 0;
-            }
+            startDataState();
             break;
-
         case PlayState::DATA:
-        {
-            m_state_pulses_left = 2; // Always 2 pulses per bit
             m_data_bit_idx++;
-
-            bool lastByte = (m_data_byte_idx == b.length - 1);
-            uint8_t bitsInThisByte = lastByte ? b.used_bits : 8;
-
-            if (m_data_bit_idx >= bitsInThisByte) {
-                m_data_bit_idx = 0;
-                m_data_byte_idx++;
+            if (!advanceBit()) {
+                m_pstate = PlayState::PAUSE; m_state_pulses_left = 1; m_current_pulse_len = b.pause_tstates; m_ear = false;
             }
-
-            if (m_data_byte_idx < b.length) {
-                uint8_t bit = (b.data[m_data_byte_idx] & (0x80 >> m_data_bit_idx)) ? 1 : 0;
-                m_current_pulse_len = bit ? b.one_len : b.zero_len;
-            } else {
-                m_pstate = PlayState::PAUSE;
-                m_state_pulses_left = 1;
-                m_current_pulse_len = b.pause_tstates;
-                m_ear = false; // SILENCE
-            }
-        }
             break;
-
         case PlayState::PAUSE:
-            m_current_block_idx++;
-            m_pstate = PlayState::IDLE;
-            m_current_pulse_len = 1; // Transition immediately
-            m_state_pulses_left = 0;
-            if (m_current_block_idx < m_num_blocks) {
-                nextState();
-            } else {
-                stop();
-            }
+            m_current_block_idx++; m_pstate = PlayState::IDLE; m_current_pulse_len = 1; m_state_pulses_left = 0;
+            if (m_current_block_idx < m_num_blocks) nextState(); else stop();
             break;
     }
 }
 
+bool Tape::isDataBlock(int idx) const {
+    if (idx < 0 || idx >= m_num_blocks) return false;
+    const TapeBlockInternal& b = m_blocks[idx];
+    return b.data != nullptr && b.length > 0 && (b.type == 0x10 || b.type == 0x11 || b.type == 0x14);
+}
+
+bool Tape::getBlockContent(int idx, const uint8_t** data, uint32_t* length, uint8_t* flag) const {
+    if (!isDataBlock(idx)) return false;
+    const TapeBlockInternal& b = m_blocks[idx];
+    if (b.type == 0x14) {
+        if (data) *data = b.data; if (length) *length = b.length; if (flag) *flag = 0xFF;
+    } else {
+        if (data) *data = b.data + 1; if (length) *length = (b.length >= 2) ? b.length - 2 : 0;
+        if (flag) *flag = b.data[0];
+    }
+    return true;
+}
+
 int Tape::seekToNextDataBlock() {
     while (m_current_block_idx < m_num_blocks) {
-        const TapeBlockInternal& b = m_blocks[m_current_block_idx];
-        if (b.data != nullptr && b.length > 0 && (b.type == 0x10 || b.type == 0x11 || b.type == 0x14)) {
-            return m_current_block_idx;
-        }
+        if (isDataBlock(m_current_block_idx)) return m_current_block_idx;
         m_current_block_idx++;
     }
     return -1;
@@ -378,17 +356,12 @@ int Tape::seekToNextDataBlock() {
 
 int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     Z80* cpu = spectrum->getCPU();
+    if (seekToNextDataBlock() < 0) { trapReturn(spectrum, cpu, false); return 11; }
 
-    if (seekToNextDataBlock() < 0) {
-        trapReturn(spectrum, cpu, false);
-        return 11;
-    }
-
-    const TapeBlockInternal& block = m_blocks[m_current_block_idx];
-    const uint8_t* data = block.data;
-    const uint32_t blockLen = block.length;
-    
-    // Consume this block.
+    const uint8_t* content; uint32_t contentLen; uint8_t tapeFlag;
+    getBlockContent(m_current_block_idx, &content, &contentLen, &tapeFlag);
+    const uint8_t* raw = m_blocks[m_current_block_idx].data;
+    const uint32_t rawLen = m_blocks[m_current_block_idx].length;
     m_current_block_idx++;
 
     const uint8_t  expectedFlag = cpu->a;
@@ -396,115 +369,54 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     const uint16_t IX = cpu->ix;
     const bool     isLoad = (cpu->f & Z80_CF) != 0;
 
-    // Standard Spectrum data blocks have: [Flag] [Data...] [Checksum]
-    uint32_t dataAvailable = (blockLen >= 2) ? (blockLen - 2) : 0;
-    uint8_t tapeFlag = (blockLen > 0) ? data[0] : 0xFF;
-
-    if (tapeFlag != expectedFlag) {
-        trapReturn(spectrum, cpu, false);
-        return 11;
-    }
-
-    if (DE > dataAvailable) {
-        trapReturn(spectrum, cpu, false);
-        return 11;
-    }
+    if (tapeFlag != expectedFlag || DE > contentLen) { trapReturn(spectrum, cpu, false); return 11; }
 
     uint8_t parity = tapeFlag;
     for (uint16_t i = 0; i < DE; ++i) {
-        uint8_t b = data[1 + i];
-        parity ^= b;
+        uint8_t b = content[i]; parity ^= b;
         if (isLoad) spectrum->write((uint16_t)(IX + i), b);
     }
     
-    const uint8_t checksumByte = data[blockLen - 1];
-    bool ok = true;
-    if (DE == dataAvailable) {
-        parity ^= checksumByte;
-        ok = (parity == 0);
-    }
-
-    cpu->ix = (uint16_t)(IX + DE);
-    cpu->d = 0;
-    cpu->e = 0;
-    cpu->a = checksumByte;
-
+    bool ok = (DE != contentLen) || ((parity ^ raw[rawLen - 1]) == 0);
+    cpu->ix = (uint16_t)(IX + DE); cpu->d = 0; cpu->e = 0; cpu->a = raw[rawLen - 1];
     trapReturn(spectrum, cpu, ok);
     return 11;
 }
 
 void Tape::instaload(SpectrumBase* spectrum) {
     if (!m_enabled || m_num_blocks == 0) return;
-
     Z80* cpu = spectrum->getCPU();
-    uint16_t lastCodeStart = 0;
-    uint16_t totalProgLen = 0;
+    uint16_t lastCodeStart = 0, totalProgLen = 0;
     bool hasCode = false, hasBasic = false;
 
-    ESP_LOGI(TAG, "Starting instaload. Blocks: %d", m_num_blocks);
-
     for (int i = 0; i < (m_num_blocks - 1); i++) {
-        const TapeBlockInternal& b = m_blocks[i];
-        
-        // Standard Spectrum header is 19 bytes
-        if (b.length == 19 && b.data && b.data[0] == 0x00) {
-            uint8_t type = b.data[1];
-            uint16_t len = b.data[12] | (b.data[13] << 8);
-            uint16_t start = b.data[14] | (b.data[15] << 8);
+        const uint8_t* hData; uint32_t hLen; uint8_t hFlag;
+        if (getBlockContent(i, &hData, &hLen, &hFlag) && hLen == 17 && hFlag == 0x00) {
+            uint8_t type = hData[0];
+            uint16_t len = hData[11] | (hData[12] << 8);
+            uint16_t start = hData[13] | (hData[14] << 8);
             
-            const TapeBlockInternal& db = m_blocks[i + 1];
-            bool isValidDataBlock = false;
-            size_t dataOffset = 0, dataLength = 0;
-            
-            if (db.data && db.length >= 2) {
-                if (db.type == 0x10 || db.type == 0x11) {
-                    if (db.data[0] == 0xFF || db.data[0] == 0x00) {
-                        isValidDataBlock = true;
-                        dataOffset = 1; 
-                        dataLength = db.length - 2;
-                    }
-                } else if (db.type == 0x14) {
-                    isValidDataBlock = true;
-                    dataOffset = 0;
-                    dataLength = db.length;
-                }
-            }
-            
-            if (isValidDataBlock) {
-                if (dataLength > len) dataLength = len;
-                uint16_t loadAddr = (type == 0) ? 23755 : start;
-
-                ESP_LOGI(TAG, "Loading block type %d to 0x%04X, len %zu", type, loadAddr, dataLength);
-                for (uint16_t j = 0; j < dataLength; j++) {
-                    spectrum->write((uint16_t)(loadAddr + j), db.data[dataOffset + j]);
-                }
-
-                if (type == 0) {
-                    hasBasic = true;
-                    totalProgLen = (uint16_t)dataLength;
-                } else if (type == 3 && start != 16384) {
-                    lastCodeStart = start;
-                    hasCode = true;
-                }
-                i++; // Skip data block
+            const uint8_t* dData; uint32_t dLen;
+            if (getBlockContent(i + 1, &dData, &dLen)) {
+                if (dLen > len) dLen = len;
+                uint16_t addr = (type == 0) ? 23755 : start;
+                for (uint16_t j = 0; j < dLen; j++) spectrum->write((uint16_t)(addr + j), dData[j]);
+                if (type == 0) { hasBasic = true; totalProgLen = (uint16_t)dLen; }
+                else if (type == 3 && start != 16384) { lastCodeStart = start; hasCode = true; }
+                i++;
             }
         }
     }
 
     if (hasBasic) {
-        uint16_t vars = (uint16_t)(23755 + totalProgLen);
-        uint16_t eLine = (uint16_t)(vars + 1);
+        uint16_t vars = (uint16_t)(23755 + totalProgLen), eLine = (uint16_t)(vars + 1);
         spectrum->write(23635, 23755 & 0xFF); spectrum->write(23636, 23755 >> 8);
         spectrum->write(23627, vars & 0xFF);  spectrum->write(23628, vars >> 8);
         spectrum->write(23641, eLine & 0xFF); spectrum->write(23642, eLine >> 8);
         spectrum->write(23645, eLine & 0xFF); spectrum->write(23646, eLine >> 8);
         spectrum->write(23647, eLine & 0xFF); spectrum->write(23648, eLine >> 8);
     }
-
     if (hasCode) {
-        cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0;
-        cpu->pc = lastCodeStart;
-    } else if (hasBasic) {
-        cpu->pc = 23755;
-    }
+        cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = lastCodeStart;
+    } else if (hasBasic) cpu->pc = 23755;
 }
