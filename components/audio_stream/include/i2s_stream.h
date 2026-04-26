@@ -258,14 +258,23 @@ typedef struct {
         .dma_desc_num = 3,                                                      \
         .dma_frame_num = 312,                                                   \
         .auto_clear = true,                                                     \
+        .auto_clear_before_cb = false,                                          \
+        .allow_pd = false,                                                      \
+        .intr_priority = 0,                                                     \
     },                                                                          \
     .std_cfg = {                                                                \
         .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(rate),                           \
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_ADF_CONFIG(bits, channel),     \
         .gpio_cfg = {                                                           \
+            .mclk = (gpio_num_t)-1,                                             \
+            .bclk = (gpio_num_t)-1,                                             \
+            .ws = (gpio_num_t)-1,                                               \
+            .dout = (gpio_num_t)-1,                                             \
+            .din = (gpio_num_t)-1,                                              \
             .invert_flags = {                                                   \
                 .mclk_inv = false,                                              \
                 .bclk_inv = false,                                              \
+                .ws_inv   = false,                                              \
             },                                                                  \
         },                                                                      \
     },                                                                          \
@@ -292,6 +301,8 @@ typedef struct {
         .clk_cfg = I2S_PDM_TX_CLK_DEFAULT_CONFIG(16000),                        \
         .slot_cfg = I2S_PDM_TX_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),\
         .gpio_cfg = {                                                           \
+            .clk = (gpio_num_t)-1,                                              \
+            .dout = (gpio_num_t)-1,                                             \
             .invert_flags = {                                                   \
                 .clk_inv = false,                                               \
             },                                                                  \
@@ -321,6 +332,8 @@ typedef struct {
         .clk_cfg = I2S_PDM_RX_CLK_DEFAULT_CONFIG(16000),                        \
         .slot_cfg = I2S_PDM_RX_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),\
         .gpio_cfg = {                                                           \
+            .clk = (gpio_num_t)-1,                                              \
+            .din = (gpio_num_t)-1,                                              \
             .invert_flags = {                                                   \
                 .clk_inv = false,                                               \
             },                                                                  \
@@ -351,6 +364,11 @@ typedef struct {
         .slot_cfg = I2S_TDM_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO,                  \
                                                         I2S_TDM_SLOT0 | I2S_TDM_SLOT1 | I2S_TDM_SLOT2 | I2S_TDM_SLOT3),  \
         .gpio_cfg = {                                                           \
+            .mclk = (gpio_num_t)-1,                                             \
+            .bclk = (gpio_num_t)-1,                                             \
+            .ws = (gpio_num_t)-1,                                               \
+            .dout = (gpio_num_t)-1,                                             \
+            .din = (gpio_num_t)-1,                                              \
             .invert_flags = {                                                   \
                 .mclk_inv = false,                                              \
                 .bclk_inv = false,                                              \

@@ -45,12 +45,9 @@ bool audio_init() {
     i2s_cfg.chan_cfg.id = I2S_NUM_0;
     i2s_cfg.use_alc = true;
     
-    // Modern IDF I2S config (UniHiker K10 pins)
+    // Note: Pin configuration is handled via get_i2s_pins in board_pins_config.h
+    // which is called by the ADF I2S stream driver during startup.
     i2s_cfg.std_cfg.clk_cfg.sample_rate_hz = SAMPLE_RATE;
-    i2s_cfg.std_cfg.gpio_cfg.bclk = GPIO_NUM_0;
-    i2s_cfg.std_cfg.gpio_cfg.ws = GPIO_NUM_38;
-    i2s_cfg.std_cfg.gpio_cfg.dout = GPIO_NUM_45;
-    i2s_cfg.std_cfg.gpio_cfg.mclk = GPIO_NUM_3;
 
     s_i2s_writer = i2s_stream_init(&i2s_cfg);
     if (!s_i2s_writer) {
