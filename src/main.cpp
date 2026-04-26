@@ -48,7 +48,7 @@ static inline void run_all_tests(IMemoryBus* /*spectrum*/, const char* /*modelNa
 #endif
 
 static const char* TAG = "Main";
-static SpectrumHardware* spectrum = nullptr;
+static SpectrumBase* spectrum = nullptr;
 
 // Simple timestamp logger for boot profiling (milliseconds since start)
 static int64_t s_boot_start_us = 0;

@@ -102,8 +102,8 @@ static esp_err_t file_get_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* API: List snapshots (*.sna, *.z80) */
-static esp_err_t snapshots_list_handler(httpd_req_t *req)
+/* API: List available files (ROMs, snapshots, tapes) */
+static esp_err_t files_list_handler(httpd_req_t *req)
 {
     DIR* dir = opendir(SPIFFS_ROOT);
     if (!dir) {
@@ -135,8 +135,8 @@ static esp_err_t snapshots_list_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* API: Load a snapshot or tape */
-static esp_err_t snapshot_load_handler(httpd_req_t *req)
+/* API: Load a file (snapshot, ROM, or tape) */
+static esp_err_t file_load_handler(httpd_req_t *req)
 {
     char buf[1024];
     if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK) {
@@ -179,13 +179,19 @@ void webserver_apply_pending(SpectrumBase* spectrum)
             if (!spectrum->tape().load(s_pending_load_path)) {
                 ESP_LOGW(TAG, "Tape load failed: %s", s_pending_load_path);
             }
+        } else if (ext && strcasecmp(ext, ".rom") == 0) {
+            ESP_LOGI(TAG, "Loading ROM: %s", s_pending_load_path);
+            if (!spectrum->loadROM(s_pending_load_path)) {
+                ESP_LOGW(TAG, "ROM load failed: %s", s_pending_load_path);
+            }
+            spectrum->reset();
         } else {
             ESP_LOGI(TAG, "Applying snapshot: %s", s_pending_load_path);
             if (!Snapshot::load(spectrum, s_pending_load_path)) {
                 ESP_LOGW(TAG, "Snapshot load failed: %s", s_pending_load_path);
             }
         }
-        // Loading a snapshot supersedes any queued reset.
+        // Loading a snapshot or ROM supersedes any queued reset.
         s_pending_reset = false;
         return;
     }
@@ -315,11 +321,19 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     httpd_uri_t ws = { "/ws", HTTP_GET, ws_handler, NULL, true, false, NULL };
     httpd_register_uri_handler(s_server, &ws);
 
-    httpd_uri_t api_list = { "/api/snapshots", HTTP_GET, snapshots_list_handler, NULL, false, false, NULL };
+    httpd_uri_t api_list = { "/api/files", HTTP_GET, files_list_handler, NULL, false, false, NULL };
     httpd_register_uri_handler(s_server, &api_list);
 
-    httpd_uri_t api_load = { "/api/load-snapshot", HTTP_GET, snapshot_load_handler, NULL, false, false, NULL };
+    /* Backwards-compatible alias expected by some clients */
+    httpd_uri_t api_snapshots = { "/api/snapshots", HTTP_GET, files_list_handler, NULL, false, false, NULL };
+    httpd_register_uri_handler(s_server, &api_snapshots);
+
+    httpd_uri_t api_load = { "/api/load", HTTP_GET, file_load_handler, NULL, false, false, NULL };
     httpd_register_uri_handler(s_server, &api_load);
+
+    // Alias for old JS versions/cache
+    httpd_uri_t api_load_old = { "/api/load-snapshot", HTTP_GET, file_load_handler, NULL, false, false, NULL };
+    httpd_register_uri_handler(s_server, &api_load_old);
 
     httpd_uri_t api_reset = { "/api/reset", HTTP_GET, reset_handler, NULL, false, false, NULL };
     httpd_register_uri_handler(s_server, &api_reset);

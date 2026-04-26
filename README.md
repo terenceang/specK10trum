@@ -95,7 +95,7 @@ Storage / I/O
     - **Feedback**: Features authentic border stripes (Red/Cyan pilot, Yellow/Blue data) and loading sounds through the speakers.
 - **Connectivity & Provisioning**:
     - **BLE Provisioning**: Easy Wi‑Fi setup using the "ESP Provisioning" app. Service name: `PROV_speck10` (POP: `12345678`).
-    - **Wi‑Fi Virtual Keyboard**: Low-latency WebSocket-based keyboard accessible via browser. Clear IP overlays appear on the Spectrum screen when connected.
+    - **Wi‑Fi Virtual Keyboard & File Picker**: Low-latency WebSocket-based keyboard and a built-in file picker for ROMs, snapshots, and tapes accessible via browser. Clear IP overlays appear on the Spectrum screen when connected.
     - **Fallback SoftAP**: If configured Wi‑Fi is unavailable, the device creates an open hotspot named `SpecK10trum-Connect` (192.168.4.1) for direct access.
 - XL9535 I²C expander drives the backlight, user LED, and the two front-panel buttons (volume ±, long-press both = mute).
 
@@ -109,7 +109,7 @@ Priority order:
 
 1. SAVE support via `SA-BYTES` ($04C2) trap → write-back to a mounted TAP image.
 2. AY-3-8912 PSG tone synthesis (chip is register-mapped today; no audio output yet).
-3. On-screen file picker for ROMs / snapshots / tapes on SPIFFS.
+
 
 
 Issues and PRs welcome.

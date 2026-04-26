@@ -312,7 +312,7 @@
             <div class="zx-menu-item" data-action="tape_instant">Tape Mode: Instant</div>
             <div class="zx-menu-item" data-action="tape_normal">Tape Mode: Normal</div>
             <div class="zx-menu-item" data-action="tape_player">Tape Mode: Player</div>
-            <div class="zx-menu-item" data-action="snapshot">Load File</div>
+            <div class="zx-menu-item" data-action="snapshot">Load Snapshot</div>
             <div class="zx-menu-item" data-action="settings">Settings</div>
             <div class="zx-menu-sep"></div>
             <div class="zx-menu-item danger" data-action="reset">Reset</div>
@@ -322,6 +322,10 @@
             <div class="zx-submenu-hdr">
               <span class="zx-submenu-title" id="zx-submenu-title">FILES</span>
               <span class="zx-submenu-close" id="zx-submenu-close">&times;</span>
+            </div>
+            <div style="padding:10px 16px; border-bottom:1px solid #333">
+              <input type="text" id="zx-file-filter" placeholder="Filter files..." 
+                     style="width:100%; background:#0c0c0d; border:1px solid #444; color:#fff; padding:6px 10px; font-size:11px; border-radius:4px; outline:none">
             </div>
             <div class="zx-submenu-list" id="zx-submenu-list"></div>
           </div>
@@ -367,6 +371,7 @@
   const sublist  = document.getElementById('zx-submenu-list');
   const subclose = document.getElementById('zx-submenu-close');
   const subtitle = document.getElementById('zx-submenu-title');
+  const fileFilter = document.getElementById('zx-file-filter');
   const ledCaps  = document.getElementById('zx-led-caps');
   const ledSym   = document.getElementById('zx-led-sym');
 
@@ -389,7 +394,7 @@
     const action = e.target.dataset.action;
     if (!action) return;
     if (action === 'snapshot') {
-      openSubmenu('SNAPSHOTS/TAPES', '/api/snapshots');
+      openSubmenu('FILES', '/api/files');
     } else if (action === 'reset') {
       fetch('/api/reset').then(r => console.log('Reset:', r.status));
     } else if (action.startsWith('tape_mode_')) {
@@ -437,23 +442,36 @@
 
   subclose.addEventListener('click', () => submenu.classList.remove('open'));
 
+  let allFiles = [];
+
   async function openSubmenu(title, api) {
     subtitle.textContent = title;
     sublist.innerHTML = '<div style="padding:16px;font-size:10px;color:#666">Loading...</div>';
     submenu.classList.add('open');
+    fileFilter.value = '';
     
     try {
       const res = await fetch(api);
-      const files = await res.json();
-      if (files.length === 0) {
-        sublist.innerHTML = '<div style="padding:16px;font-size:10px;color:#666">No files found on SPIFFS</div>';
-      } else {
-        sublist.innerHTML = files.map(f => `<div class="zx-file-item" data-file="${esc(f)}">${esc(f)}</div>`).join('');
-      }
+      allFiles = await res.json();
+      renderFileList(allFiles);
     } catch (e) {
       sublist.innerHTML = '<div style="padding:16px;font-size:10px;color:var(--red)">Failed to load list</div>';
     }
   }
+
+  function renderFileList(files) {
+    if (files.length === 0) {
+      sublist.innerHTML = '<div style="padding:16px;font-size:10px;color:#666">No matching files found</div>';
+    } else {
+      sublist.innerHTML = files.map(f => `<div class="zx-file-item" data-file="${esc(f)}">${esc(f)}</div>`).join('');
+    }
+  }
+
+  fileFilter.addEventListener('input', (e) => {
+    const term = e.target.value.toLowerCase();
+    const filtered = allFiles.filter(f => f.toLowerCase().includes(term));
+    renderFileList(filtered);
+  });
 
   sublist.addEventListener('click', async (e) => {
     const file = e.target.closest('.zx-file-item')?.dataset.file;
@@ -461,7 +479,7 @@
     
     e.target.style.opacity = '0.5';
     try {
-      const res = await fetch(`/api/load-snapshot?file=${encodeURIComponent(file)}`);
+      const res = await fetch(`/api/load?file=${encodeURIComponent(file)}`);
       if (res.ok) {
         submenu.classList.remove('open');
       } else {

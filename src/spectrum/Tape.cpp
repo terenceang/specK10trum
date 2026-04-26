@@ -336,9 +336,10 @@ void Tape::nextState() {
             break;
 
         case PlayState::DATA:
+        {
             m_state_pulses_left = 2; // Always 2 pulses per bit
             m_data_bit_idx++;
-            
+
             bool lastByte = (m_data_byte_idx == b.length - 1);
             uint8_t bitsInThisByte = lastByte ? b.used_bits : 8;
 
@@ -356,6 +357,7 @@ void Tape::nextState() {
                 m_current_pulse_len = b.pause_tstates;
                 m_ear = false; // SILENCE
             }
+        }
             break;
 
         case PlayState::PAUSE:

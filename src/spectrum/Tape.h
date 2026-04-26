@@ -50,6 +50,9 @@ public:
     // Notify that LOAD "" was typed
     void notifyLoad();
 
+    // Attempt to autoload a tape from known SPIFFS paths
+    static bool autoload(Tape& tape);
+
     // Address of the 48K ROM LD-BYTES routine.
     static constexpr uint16_t LD_BYTES_ENTRY = 0x0556;
 
