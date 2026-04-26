@@ -21,21 +21,46 @@
 #define portTICK_RATE_MS portTICK_PERIOD_MS
 #endif
 
+// Combined structure to match ESP-IDF 5.x i2s_std_gpio_config_t layout
+// AND satisfy ADF's i2s_stream_idf5.c PDM member access
 typedef struct {
-    int bck_io_num;
-    int ws_io_num;
-    int data_out_num;
-    int data_in_num;
-    int mck_io_num;
+    union {
+        gpio_num_t mclk;            
+        gpio_num_t mck_io_num;
+    };
+    union {
+        gpio_num_t bclk;            
+        gpio_num_t bck_io_num;
+    };
+    union {
+        gpio_num_t ws;              
+        gpio_num_t ws_io_num;
+    };
+    union {
+        gpio_num_t dout;            
+        gpio_num_t data_out_num;
+    };
+    union {
+        gpio_num_t din;             
+        gpio_num_t data_in_num;
+    };
+    struct {
+        uint32_t mclk_inv: 1;   
+        uint32_t bclk_inv: 1;   
+        uint32_t ws_inv: 1;     
+    } invert_flags;             
 } board_i2s_pin_t;
 
 inline esp_err_t get_i2s_pins(int port, board_i2s_pin_t *pins) {
     if (pins) {
-        pins->bck_io_num = 0;
-        pins->ws_io_num = 38;
-        pins->data_out_num = 45;
-        pins->data_in_num = -1;
-        pins->mck_io_num = 3;
+        pins->mclk = GPIO_NUM_3;
+        pins->bclk = GPIO_NUM_0;
+        pins->ws = GPIO_NUM_38;
+        pins->dout = GPIO_NUM_45;
+        pins->din = (gpio_num_t)-1; // I2S_GPIO_UNUSED
+        pins->invert_flags.mclk_inv = 0;
+        pins->invert_flags.bclk_inv = 0;
+        pins->invert_flags.ws_inv = 0;
         return ESP_OK;
     }
     return ESP_FAIL;
