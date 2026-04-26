@@ -338,9 +338,12 @@ bool Tape::getBlockContent(int idx, const uint8_t** data, uint32_t* length, uint
     if (!isDataBlock(idx)) return false;
     const TapeBlockInternal& b = m_blocks[idx];
     if (b.type == 0x14) {
-        if (data) *data = b.data; if (length) *length = b.length; if (flag) *flag = 0xFF;
+        if (data) *data = b.data;
+        if (length) *length = b.length;
+        if (flag) *flag = 0xFF;
     } else {
-        if (data) *data = b.data + 1; if (length) *length = (b.length >= 2) ? b.length - 2 : 0;
+        if (data) *data = b.data + 1;
+        if (length) *length = (b.length >= 2) ? b.length - 2 : 0;
         if (flag) *flag = b.data[0];
     }
     return true;
