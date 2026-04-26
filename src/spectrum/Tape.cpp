@@ -17,7 +17,7 @@ Tape::Tape()
     : m_data(nullptr)
     , m_size(0)
     , m_enabled(false)
-    , m_mode(TapeMode::NORMAL)
+    , m_mode(TapeMode::INSTANT)
     , m_playing(false)
     , m_paused(false)
     , m_ear(false)
@@ -127,9 +127,13 @@ void Tape::rewind() {
 }
 
 void Tape::fastForward() {
-    m_current_block_idx = m_num_blocks - 1;
-    m_pstate = PlayState::IDLE;
-    ESP_LOGI(TAG, "Tape FFWD to last block");
+    if (m_current_block_idx < m_num_blocks - 1) {
+        m_current_block_idx++;
+        m_pstate = PlayState::IDLE;
+        m_state_pulses_left = 0;
+        m_tstate_counter = 0;
+        ESP_LOGI(TAG, "Tape FFWD to block %d", m_current_block_idx);
+    }
 }
 
 void Tape::pause() {
@@ -368,43 +372,57 @@ void Tape::nextState() {
 int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     Z80* cpu = spectrum->getCPU();
 
+    // Skip any non-data blocks (like pauses or metadata) until we find a data-carrying block
+    while (m_current_block_idx < m_num_blocks) {
+        const TapeBlockInternal& b = m_blocks[m_current_block_idx];
+        if (b.data != nullptr && b.length > 0 && (b.type == 0x10 || b.type == 0x11 || b.type == 0x14)) {
+            break;
+        }
+        ESP_LOGD(TAG, "Instant load: skipping non-data block %d (type=0x%02X)", m_current_block_idx, b.type);
+        m_current_block_idx++;
+    }
+
     if (m_num_blocks == 0 || m_current_block_idx >= m_num_blocks) {
+        ESP_LOGW(TAG, "Instant load: no more data blocks available");
         trapReturn(spectrum, cpu, false);
         return 11;
     }
 
     const TapeBlockInternal& block = m_blocks[m_current_block_idx];
-    
-    // We only support instant-loading of standard data blocks (0x10) for now.
-    // TAP blocks are parsed as type 0x10.
-    if (block.type != 0x10) {
-        ESP_LOGW(TAG, "Instant load: block %d is not type 0x10 (type=0x%02X), skipping", 
-                 m_current_block_idx, block.type);
-        m_current_block_idx++;
-        trapReturn(spectrum, cpu, false);
-        return 11;
-    }
-
     const uint8_t* data = block.data;
-    const uint8_t tapeFlag = data[0];
-    const uint16_t dataBytes = (uint16_t)(block.length - 2);
+    const uint16_t blockLen = (uint16_t)block.length;
 
     const uint8_t  expectedFlag = cpu->a;
     const uint16_t DE = (uint16_t)(((uint16_t)cpu->d << 8) | cpu->e);
     const uint16_t IX = cpu->ix;
     const bool     isLoad = (cpu->f & Z80_CF) != 0;
 
+    // Standard Spectrum data blocks have: [Flag] [Data...] [Checksum]
+    // blockLen includes Flag and Checksum.
+    uint16_t dataAvailable = (blockLen >= 2) ? (blockLen - 2) : 0;
+    uint8_t tapeFlag = (blockLen > 0) ? data[0] : 0xFF;
+
+    ESP_LOGI(TAG, "Instant load block %d: type=0x%02X, flag=0x%02X (exp=0x%02X), len=%u (exp=%u)", 
+             m_current_block_idx, block.type, tapeFlag, expectedFlag, dataAvailable, DE);
+
+    // If it's a Pure Data block (0x14), it doesn't have a flag or checksum byte in the TZX spec,
+    // but the Spectrum LD-BYTES routine ALWAYS expects a flag byte at the start of the "pulse" stream.
+    // However, most TZX 'Pure Data' blocks used for standard loaders ARE prefixed with a flag.
+    // We'll trust the first byte of the block is the flag if it's not a standard block too.
+
     // Consume this block.
     m_current_block_idx++;
 
     if (tapeFlag != expectedFlag) {
-        ESP_LOGD(TAG, "Flag mismatch: wanted 0x%02X, got 0x%02X", expectedFlag, tapeFlag);
+        ESP_LOGW(TAG, "Instant load: flag mismatch (wanted 0x%02X, got 0x%02X)", expectedFlag, tapeFlag);
         trapReturn(spectrum, cpu, false);
         return 11;
     }
 
-    if (DE > dataBytes) {
-        ESP_LOGW(TAG, "Block too short: asked %u, have %u", DE, dataBytes);
+    // Note: Some loaders might ask for FEWER bytes than the block contains (e.g. reading header).
+    // This is fine. If they ask for MORE, we fail.
+    if (DE > dataAvailable) {
+        ESP_LOGW(TAG, "Instant load: block too short (asked %u, have %u)", DE, dataAvailable);
         trapReturn(spectrum, cpu, false);
         return 11;
     }
@@ -415,20 +433,83 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
         parity ^= b;
         if (isLoad) spectrum->write((uint16_t)(IX + i), b);
     }
-    const uint8_t parityByte = data[1 + dataBytes];
-    parity ^= parityByte;
-    const bool ok = (parity == 0);
+    
+    // The LD-BYTES routine expects the parity of ALL bytes including the final checksum byte 
+    // to be zero. The checksum byte is the last byte of the block.
+    const uint8_t checksumByte = data[blockLen - 1];
+    
+    // If we read exactly the data length, the next byte to 'XOR' for parity check is the checksum byte.
+    // If the loader read a partial block, we can't easily verify parity against the block's checksum 
+    // without reading the rest of the block's data. For now, if partial, we'll just succeed if flag matched.
+    bool ok = true;
+    if (DE == dataAvailable) {
+        parity ^= checksumByte;
+        ok = (parity == 0);
+        if (!ok) ESP_LOGW(TAG, "Instant load: parity error");
+    }
 
     cpu->ix = (uint16_t)(IX + DE);
     cpu->d = 0;
     cpu->e = 0;
-    cpu->a = parityByte;
+    cpu->a = checksumByte; // LD-BYTES returns last byte read (usually checksum) in A
 
     trapReturn(spectrum, cpu, ok);
 
-    ESP_LOGI(TAG, "INSTANT %s flag=0x%02X len=%u -> %s",
+    ESP_LOGI(TAG, "INSTANT %s %s -> %s",
              isLoad ? "LOAD" : "VERIFY",
-             tapeFlag, DE, ok ? "OK" : "PARITY-ERR");
+             (DE == dataAvailable) ? "Full" : "Partial",
+             ok ? "OK" : "PARITY-ERR");
 
     return 11;
+}
+
+void Tape::instantLoad(SpectrumBase* spectrum) {
+    if (!m_enabled || m_num_blocks == 0) return;
+
+    ESP_LOGI(TAG, "Starting Instant Load memory injection...");
+    Z80* cpu = spectrum->getCPU();
+    uint16_t lastCodeStart = 0;
+    bool hasCode = false;
+
+    for (int i = 0; i < m_num_blocks; i++) {
+        const TapeBlockInternal& b = m_blocks[i];
+        // We look for standard header blocks (Type 0x10, first byte 0x00, length 19)
+        if (b.type == 0x10 && b.length == 19 && b.data[0] == 0x00) {
+            uint8_t type = b.data[1];
+            uint16_t len = b.data[12] | (b.data[13] << 8);
+            uint16_t start = b.data[14] | (b.data[15] << 8);
+            
+            if (type == 0) start = 23755; // BASIC programs always load to PROG area
+
+            ESP_LOGI(TAG, "Found header: Type=%d, Len=%d, Start=%d", type, len, start);
+
+            // The next block should be the data block (Type 0x10, first byte 0xFF)
+            if (i + 1 < m_num_blocks) {
+                const TapeBlockInternal& db = m_blocks[i + 1];
+                if (db.type == 0x10 && db.data[0] == 0xFF) {
+                    // Inject data (skipping flag and checksum)
+                    uint16_t actualDataLen = (uint16_t)(db.length - 2);
+                    if (actualDataLen > len) actualDataLen = len; // Safety
+
+                    ESP_LOGI(TAG, "Injecting data block (%d bytes) to 0x%04X", actualDataLen, start);
+                    for (uint16_t j = 0; j < actualDataLen; j++) {
+                        spectrum->write((uint16_t)(start + j), db.data[1 + j]);
+                    }
+
+                    if (type == 3) { // CODE
+                        lastCodeStart = start;
+                        hasCode = true;
+                    }
+                    i++; // Skip the data block in the next iteration
+                }
+            }
+        }
+    }
+
+    if (hasCode) {
+        ESP_LOGI(TAG, "Instant load complete. Jumping to 0x%04X", lastCodeStart);
+        cpu->pc = lastCodeStart;
+    } else {
+        ESP_LOGI(TAG, "Instant load complete. No CODE blocks found to auto-run.");
+    }
 }

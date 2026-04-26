@@ -57,6 +57,7 @@
       transition:all .1s;color:var(--dim);text-transform:uppercase;letter-spacing:1px}
     .zx-menu-item:hover{background:#1a1a1c;color:var(--ink)}
     .zx-menu-item.danger:hover{color:var(--red)}
+    .zx-menu-item.selected{color:var(--green)}
     .zx-menu-sep{height:1px;background:#333}
 
     /* Submenu for File Picker */
@@ -95,6 +96,20 @@
     .zx-player-btn:hover{background:#444;color:#fff;}
     .zx-player-btn:active{background:#222;}
     .zx-player-label{font-size:10px;color:var(--dim);text-align:center;word-break:break-all;}
+    .zx-player-refresh{background:transparent;border:1px solid #333;color:var(--dim);padding:4px 8px;border-radius:4px;cursor:pointer}
+    .zx-player-refresh:hover{color:var(--ink);border-color:#555}
+    .zx-player-files{max-height:140px;overflow:auto;border-top:1px solid #333;padding-top:8px;margin-top:8px}
+    .zx-player-file{padding:8px 10px;font-size:11px;cursor:pointer;color:var(--dim)}
+    .zx-player-file:hover{background:#1a1a1c;color:var(--ink)}
+    .zx-player-file.selected{color:var(--green)}
+
+    /* Toggle Switch */
+    .zx-switch { position: relative; display: inline-block; width: 34px; height: 20px; }
+    .zx-switch input { opacity: 0; width: 0; height: 0; }
+    .zx-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: .4s; border-radius: 20px; }
+    .zx-slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: #aaa; transition: .4s; border-radius: 50%; }
+    input:checked + .zx-slider { background-color: var(--green); }
+    input:checked + .zx-slider:before { transform: translateX(14px); background-color: #fff; }
 
     @keyframes spin{100%{transform:rotate(360deg);}}
     @keyframes zx-pop{from{transform:translateY(-4px);opacity:0}to{transform:translateY(0);opacity:1}}
@@ -309,9 +324,7 @@
 
           <div class="zx-menu" id="zx-menu">
             <div class="zx-menu-item" data-action="model">Model</div>
-            <div class="zx-menu-item" data-action="tape_instant">Tape Mode: Instant</div>
-            <div class="zx-menu-item" data-action="tape_normal">Tape Mode: Normal</div>
-            <div class="zx-menu-item" data-action="tape_player">Tape Mode: Player</div>
+            <div class="zx-menu-item" data-action="tape_player">Tape Player</div>
             <div class="zx-menu-item" data-action="snapshot">Load Snapshot</div>
             <div class="zx-menu-item" data-action="settings">Settings</div>
             <div class="zx-menu-sep"></div>
@@ -331,20 +344,46 @@
           </div>
 
           <div class="zx-player" id="zx-player">
-            <div class="zx-player-label" id="zx-player-label">NO TAPE LOADED</div>
-            <div class="zx-player-deck">
-              <div class="zx-player-cassette">
-                <div class="zx-player-reel" id="zx-reel-left"></div>
-                <div class="zx-player-reel" id="zx-reel-right"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <div class="zx-player-label" id="zx-player-label" style="font-weight:bold; color:var(--ink)">NO TAPE LOADED</div>
+              <div style="display:flex; gap:8px; align-items:center">
+                <button id="zx-player-refresh" class="zx-player-refresh" title="Refresh tapes">⟳</button>
+                <span id="zx-player-close" style="cursor:pointer; color:var(--dim); font-size:16px">&times;</span>
               </div>
             </div>
+
+            <div style="display:flex; gap:6px;">
+              <button class="zx-player-btn" id="zx-btn-load-tape" style="flex:2">LOAD TAPE</button>
+              <button class="zx-player-btn" id="zx-btn-instant-load" style="flex:1">INSTANT LOAD</button>
+            </div>
+
+            <div id="zx-cassette-deck">
+              <div class="zx-player-deck">
+                <div class="zx-player-cassette">
+                  <div class="zx-player-reel" id="zx-reel-left"></div>
+                  <div class="zx-player-reel" id="zx-reel-right"></div>
+                </div>
+              </div>
+            </div>
+
             <div class="zx-player-controls">
               <div class="zx-player-btn" data-tape="tape_play">PLAY</div>
               <div class="zx-player-btn" data-tape="tape_stop">STOP</div>
               <div class="zx-player-btn" data-tape="tape_rewind">REW</div>
               <div class="zx-player-btn" data-tape="tape_ffwd">FFWD</div>
-              <div class="zx-player-btn" data-tape="tape_pause">PAUSE</div>
               <div class="zx-player-btn" data-tape="tape_eject">EJECT</div>
+            </div>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:4px 0;">
+              <span style="font-size:10px; font-weight:bold; color:var(--dim);">AUTO PLAY</span>
+              <label class="zx-switch">
+                <input type="checkbox" id="zx-auto-play-toggle">
+                <span class="zx-slider"></span>
+              </label>
+            </div>
+
+            <div class="zx-player-files" id="zx-player-files" style="display:none">
+              <div style="padding:8px 10px;color:var(--dim);font-size:11px">No tapes</div>
             </div>
           </div>
 
@@ -374,11 +413,28 @@
   const fileFilter = document.getElementById('zx-file-filter');
   const ledCaps  = document.getElementById('zx-led-caps');
   const ledSym   = document.getElementById('zx-led-sym');
+  const playerRefresh = document.getElementById('zx-player-refresh');
 
   const host = (function () {
     try { const h = localStorage.getItem('zx_kb_host'); if (h) return h; } catch (e) {}
     return 'ws://' + location.host + '/ws';
   })();
+
+  // Tape mode state (instant|normal|player). Persist in localStorage.
+  let currentTapeMode = (function () { try { return localStorage.getItem('zx_tape_mode') || 'normal'; } catch (_) { return 'normal'; } })();
+  // Last-loaded tape filename persisted across sessions
+  let lastTape = (function () { try { return localStorage.getItem('zx_last_tape') || null; } catch (_) { return null; } })();
+  
+  function updateTapeUI() {
+    const autoPlayToggle = document.getElementById('zx-auto-play-toggle');
+    const cassetteDeck = document.getElementById('zx-cassette-deck');
+    if (autoPlayToggle) {
+      autoPlayToggle.checked = (currentTapeMode === 'normal');
+    }
+    if (cassetteDeck) {
+      cassetteDeck.style.display = (currentTapeMode === 'normal') ? 'none' : 'block';
+    }
+  }
 
   // -------- Menu System --------
   logo.addEventListener('click', (e) => {
@@ -394,18 +450,12 @@
     const action = e.target.dataset.action;
     if (!action) return;
     if (action === 'snapshot') {
-      openSubmenu('SNAPSHOTS', '/api/files');
+      openSubmenu('SNAPSHOTS', '/api/snapshots');
+    } else if (action === 'tape_player') {
+      document.getElementById('zx-player').classList.add('open');
+      updateTapeUI();
     } else if (action === 'reset') {
       fetch('/api/reset').then(r => console.log('Reset:', r.status));
-    } else if (action.startsWith('tape_mode_')) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ cmd: action }));
-      }
-      if (action === 'tape_mode_player') {
-        document.getElementById('zx-player').classList.add('open');
-      } else {
-        document.getElementById('zx-player').classList.remove('open');
-      }
     } else {
       console.log('Menu action:', action);
     }
@@ -414,9 +464,46 @@
 
   // Tape Player Controls
   const tapePlayer = document.getElementById('zx-player');
+  const autoPlayToggle = document.getElementById('zx-auto-play-toggle');
+  const btnLoadTape = document.getElementById('zx-btn-load-tape');
+  const btnInstantLoad = document.getElementById('zx-btn-instant-load');
+
+  autoPlayToggle.addEventListener('change', (e) => {
+    currentTapeMode = e.target.checked ? 'normal' : 'player';
+    try { localStorage.setItem('zx_tape_mode', currentTapeMode); } catch(_) {}
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode }));
+    }
+    updateTapeUI();
+  });
+
+  btnLoadTape.addEventListener('click', () => {
+    const filesList = document.getElementById('zx-player-files');
+    if (filesList.style.display === 'none') {
+      filesList.style.display = 'block';
+      loadTapeList();
+    } else {
+      filesList.style.display = 'none';
+    }
+  });
+
+  btnInstantLoad.addEventListener('click', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ cmd: 'tape_instant_load' }));
+    }
+    document.getElementById('zx-player-label').textContent = 'INSTANT LOADED';
+  });
+
+  const btnPlayerClose = document.getElementById('zx-player-close');
+  if (btnPlayerClose) {
+    btnPlayerClose.addEventListener('click', () => {
+      tapePlayer.classList.remove('open');
+    });
+  }
+
   tapePlayer.addEventListener('click', (e) => {
     const btn = e.target.closest('.zx-player-btn');
-    if (!btn) return;
+    if (!btn || btn.id === 'zx-btn-load-tape' || btn.id === 'zx-btn-instant-load') return;
     const cmd = btn.dataset.tape;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ cmd }));
@@ -439,6 +526,8 @@
       document.getElementById('zx-player-label').textContent = 'NO TAPE LOADED';
     }
   });
+
+  if (playerRefresh) playerRefresh.addEventListener('click', () => loadTapeList());
 
   subclose.addEventListener('click', () => submenu.classList.remove('open'));
 
@@ -491,6 +580,63 @@
     e.target.style.opacity = '1';
   });
 
+  // --- Tape player file list / loader ---
+  async function loadTapeList() {
+    const container = document.getElementById('zx-player-files');
+    if (!container) return;
+    container.innerHTML = '<div style="padding:8px 10px;color:var(--dim);font-size:11px">Loading...</div>';
+    try {
+      const res = await fetch('/api/tapes');
+      if (!res.ok) throw new Error('Failed');
+      const files = await res.json();
+      renderPlayerTapeList(files);
+    } catch (e) {
+      container.innerHTML = '<div style="padding:8px 10px;color:var(--red);font-size:11px">Failed to load tapes</div>';
+    }
+  }
+
+  function renderPlayerTapeList(files) {
+    const container = document.getElementById('zx-player-files');
+    if (!container) return;
+    if (!files || files.length === 0) {
+      container.innerHTML = '<div style="padding:8px 10px;color:var(--dim);font-size:11px">No tapes found</div>';
+      return;
+    }
+    container.innerHTML = files.map(f => `<div class="zx-player-file" data-file="${esc(f)}">${esc(f)}</div>`).join('');
+    container.querySelectorAll('.zx-player-file').forEach(el => {
+      // mark previously loaded tape if present
+      try {
+        if (lastTape && el.dataset.file === lastTape) {
+          el.classList.add('selected');
+          const lbl = document.getElementById('zx-player-label'); if (lbl) lbl.textContent = lastTape;
+        }
+      } catch(_) {}
+
+      el.addEventListener('click', async (ev) => {
+        const file = el.dataset.file;
+        if (!file) return;
+        // visual
+        container.querySelectorAll('.zx-player-file').forEach(i => i.classList.remove('selected'));
+        el.classList.add('selected');
+        document.getElementById('zx-player-label').textContent = 'LOADING ' + file;
+        try {
+          const res = await fetch(`/api/load?file=${encodeURIComponent(file)}`);
+          if (res.ok) {
+            document.getElementById('zx-player-label').textContent = file;
+            // persist last-loaded tape
+            try { localStorage.setItem('zx_last_tape', file); lastTape = file; } catch(_) {}
+            // auto-start playback
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ cmd: 'tape_play' }));
+          } else {
+            document.getElementById('zx-player-label').textContent = 'LOAD FAILED';
+          }
+        } catch (e) {
+          document.getElementById('zx-player-label').textContent = 'ERROR';
+        }
+      });
+    });
+  }
+
   // -------- WebSocket with exponential-backoff reconnect --------
   let ws = null, txCount = 0, retry = 0, reconnectTimer = 0;
 
@@ -510,7 +656,10 @@
     try {
       ws = new WebSocket(host);
       ws.binaryType = 'arraybuffer';
-      ws.onopen  = () => { retry = 0; setConn(true); };
+      ws.onopen  = () => { retry = 0; setConn(true);
+        // Inform firmware of current tape mode on connect
+        try { if (currentTapeMode && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode })); } catch(_) {}
+      };
       ws.onclose = scheduleReconnect;
       ws.onerror = () => { try { ws.close(); } catch (_) {} };
     } catch (e) { scheduleReconnect(); }
@@ -697,4 +846,7 @@
   }
   document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
   window.addEventListener('blur', releaseAll);
+
+  // Initialize UI
+  updateTapeUI();
 })();

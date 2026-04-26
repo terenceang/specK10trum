@@ -139,6 +139,7 @@ protected:
     uint16_t m_ulaCycle;
 
     uint8_t m_borderColor;
+    uint8_t m_lastSpeakerBit; // Bit 4 of last port 0xFE write
 
     // Beeper helper
     Beeper m_beeper;

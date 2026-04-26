@@ -23,6 +23,7 @@ static SpectrumBase* s_spectrum = NULL;
 // page-pointer rebuild) and was the cause of "Reset does nothing".
 static volatile bool s_pending_reset = false;
 static volatile bool s_pending_load  = false;
+static volatile bool s_pending_instant_load = false;
 static char s_pending_load_path[512];
 
 static const char* mime_for(const char* path)
@@ -120,20 +121,39 @@ static esp_err_t files_list_handler(httpd_req_t *req)
     struct dirent* ent;
     bool first = true;
     int count = 0;
+
+    // Decide which file types to expose based on the request URI.
+    // If called via /api/snapshots -> only snapshot files (.z80, .sna)
+    // If called via /api/tapes     -> only tape files (.tap, .tzx, .tsx)
+    // If called via /api/files or unspecified -> expose snapshots and tapes (backwards-compatible)
+    const char* uri = req->uri;
+    bool wantSnapshots = false, wantTapes = false, wantRoms = false;
+    if (strstr(uri, "/api/snapshots")) {
+        wantSnapshots = true;
+    } else if (strstr(uri, "/api/tapes")) {
+        wantTapes = true;
+    } else {
+        // default: list snapshots and tapes (and .roms)
+        wantSnapshots = true;
+        wantTapes = true;
+        wantRoms = true;
+    }
+
     while ((ent = readdir(dir)) != NULL) {
         const char* ext = strrchr(ent->d_name, '.');
         if (!ext) continue;
-        if (strcasecmp(ext, ".z80") == 0 || strcasecmp(ext, ".sna") == 0 ||
-            strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 ||
-            strcasecmp(ext, ".tsx") == 0) {
-            
-            ESP_LOGD(TAG, "Found valid file: %s", ent->d_name);
-            char buf[512];
-            int len = snprintf(buf, sizeof(buf), "%s\"%s\"", first ? "" : ",", ent->d_name);
-            httpd_resp_send_chunk(req, buf, len);
-            first = false;
-            count++;
-        }
+        bool include = false;
+        if (wantSnapshots && (strcasecmp(ext, ".z80") == 0 || strcasecmp(ext, ".sna") == 0)) include = true;
+        if (wantTapes && (strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 || strcasecmp(ext, ".tsx") == 0)) include = true;
+        if (wantRoms && (strcasecmp(ext, ".rom") == 0)) include = true;
+        if (!include) continue;
+
+        ESP_LOGD(TAG, "Found valid file: %s", ent->d_name);
+        char buf[512];
+        int len = snprintf(buf, sizeof(buf), "%s\"%s\"", first ? "" : ",", ent->d_name);
+        httpd_resp_send_chunk(req, buf, len);
+        first = false;
+        count++;
     }
     closedir(dir);
     ESP_LOGI(TAG, "Returned %d files", count);
@@ -217,6 +237,12 @@ void webserver_apply_pending(SpectrumBase* spectrum)
         display_clear();
         spectrum->reset();
     }
+
+    if (s_pending_instant_load) {
+        s_pending_instant_load = false;
+        ESP_LOGI(TAG, "Applying instant load");
+        spectrum->tape().instantLoad(spectrum);
+    }
 }
 
 /* API: Tape Control */
@@ -254,7 +280,9 @@ static esp_err_t tape_handler(httpd_req_t *req)
     else if (strcmp(cmd, "ffwd") == 0) s_spectrum->tape().fastForward();
     else if (strcmp(cmd, "pause") == 0) s_spectrum->tape().pause();
     else if (strcmp(cmd, "eject") == 0) s_spectrum->tape().eject();
+    else if (strcmp(cmd, "instant_load") == 0) s_pending_instant_load = true;
 
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_sendstr(req, "OK");
     return ESP_OK;
 }
@@ -306,6 +334,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
             else if (strstr(json, "\"cmd\":\"tape_ffwd\"")) s_spectrum->tape().fastForward();
             else if (strstr(json, "\"cmd\":\"tape_pause\"")) s_spectrum->tape().pause();
             else if (strstr(json, "\"cmd\":\"tape_eject\"")) s_spectrum->tape().eject();
+            else if (strstr(json, "\"cmd\":\"tape_instant_load\"")) s_pending_instant_load = true;
             else if (strstr(json, "\"cmd\":\"tape_mode_instant\"")) s_spectrum->tape().setMode(TapeMode::INSTANT);
             else if (strstr(json, "\"cmd\":\"tape_mode_normal\"")) s_spectrum->tape().setMode(TapeMode::NORMAL);
             else if (strstr(json, "\"cmd\":\"tape_mode_player\"")) s_spectrum->tape().setMode(TapeMode::PLAYER);
@@ -343,6 +372,10 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     /* Backwards-compatible alias expected by some clients */
     httpd_uri_t api_snapshots = { "/api/snapshots", HTTP_GET, files_list_handler, NULL, false, false, NULL };
     httpd_register_uri_handler(s_server, &api_snapshots);
+
+    // Explicit tapes listing endpoint
+    httpd_uri_t api_tapes = { "/api/tapes", HTTP_GET, files_list_handler, NULL, false, false, NULL };
+    httpd_register_uri_handler(s_server, &api_tapes);
 
     httpd_uri_t api_load = { "/api/load", HTTP_GET, file_load_handler, NULL, false, false, NULL };
     httpd_register_uri_handler(s_server, &api_load);

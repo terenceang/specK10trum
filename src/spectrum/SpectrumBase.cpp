@@ -41,6 +41,7 @@ SpectrumBase::SpectrumBase()
     , m_ulaScanline(0)
     , m_ulaCycle(0)
     , m_borderColor(0)
+    , m_lastSpeakerBit(0)
 {
     for (int i = 0; i < 4; i++) {
         m_memReadMap[i] = nullptr;
@@ -174,8 +175,8 @@ void SpectrumBase::writePortFE(uint8_t value) {
     }
 
     // Speaker (bit 4) handling: delegate to Beeper
-    uint8_t newSpeaker = (value >> 4) & 0x01;
-    m_beeper.recordEvent(m_ulaClocks, newSpeaker);
+    m_lastSpeakerBit = (value >> 4) & 0x01;
+    m_beeper.recordEvent(m_ulaClocks, m_lastSpeakerBit | (m_tape.getEar() ? 1 : 0));
 }
 
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
@@ -237,6 +238,7 @@ void SpectrumBase::setKeyboardRow(uint8_t row, uint8_t columns) {
 
 void SpectrumBase::reset() {
     m_borderColor = 0;
+    m_lastSpeakerBit = 0;
     m_initialBorderColor = 0;
     m_borderEventCount = 0;
     m_renderInitialBorderColor = 0;
@@ -262,6 +264,14 @@ void SpectrumBase::reset() {
 }
 
 void SpectrumBase::advanceULA(int tstates) {
+    // Check if Tape EAR changed to record beeper events for loading sounds
+    static bool s_lastTapeEar = false;
+    bool curTapeEar = m_tape.getEar();
+    if (curTapeEar != s_lastTapeEar) {
+        m_beeper.recordEvent(m_ulaClocks, m_lastSpeakerBit | (curTapeEar ? 1 : 0));
+        s_lastTapeEar = curTapeEar;
+    }
+
     m_ulaClocks += (uint32_t)tstates;
     if (m_ulaClocks >= FRAME_T_STATES) {
         m_ulaClocks -= FRAME_T_STATES;

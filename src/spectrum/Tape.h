@@ -47,6 +47,9 @@ public:
     // Service a LD-BYTES trap (only used in INSTANT mode or when appropriate)
     int serviceLoadTrap(SpectrumBase* spectrum);
 
+    // Direct memory injection for standard tapes (Header + Data)
+    void instantLoad(SpectrumBase* spectrum);
+
     // Address of the 48K ROM LD-BYTES routine.
     static constexpr uint16_t LD_BYTES_ENTRY = 0x0556;
 
