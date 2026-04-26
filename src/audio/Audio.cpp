@@ -14,7 +14,7 @@ static const int SAMPLE_RATE = 44100;
 static const int SAMPLES_PER_FRAME = 882;
 
 static i2s_chan_handle_t tx_handle = NULL;
-static int s_volume = 5;
+static int s_volume = 30;
 static bool s_muted = false;
 static StreamBufferHandle_t s_audio_stream = NULL;
 static StaticStreamBuffer_t s_audio_stream_struct;
@@ -87,6 +87,16 @@ bool audio_init() {
         return false;
     }
 
+    // Prefill DMA with silence so the DAC doesn't clock out uninitialised
+    // descriptor contents before the first real write. Covers both the boot
+    // gap before the splash beep and the gap before the emulator task starts.
+    {
+        // BSS, not stack — keeps the main task off an overflow path.
+        static int16_t silence[512 * 2];
+        size_t written = 0;
+        i2s_channel_write(tx_handle, silence, sizeof(silence), &written, pdMS_TO_TICKS(100));
+    }
+
     // Create stream buffer in PSRAM to save internal RAM.
     size_t frame_bytes = SAMPLES_PER_FRAME * 2 * sizeof(int16_t);
     size_t buffer_size = frame_bytes * FRAMES_OF_BUFFER;
@@ -101,8 +111,9 @@ bool audio_init() {
     if (!s_audio_stream) {
         ESP_LOGW(TAG, "Failed to create audio stream buffer; audio will block");
     } else {
-        // Create audio task that pulls frames from stream buffer and writes to I2S
-        xTaskCreate(audio_writer_task, "audio_writer", 4096, NULL, tskIDLE_PRIORITY+1, NULL);
+        // Create audio task that pulls frames from stream buffer and writes to I2S.
+        // Higher priority and pinned to Core 1 (separate from emulator) ensures smooth playback.
+        xTaskCreatePinnedToCore(audio_writer_task, "audio_writer", 4096, NULL, 10, NULL, 1);
     }
 
     ESP_LOGI(TAG, "Audio initialized (Modern I2S, sample_rate=%d)", SAMPLE_RATE);
@@ -150,7 +161,8 @@ void audio_play_frame(SpectrumBase* spectrum) {
 void audio_play_tone(int freq_hz, int duration_ms) {
     if (freq_hz <= 0 || duration_ms <= 0 || !tx_handle) return;
     const int samp = SAMPLE_RATE;
-    int total_samples = (duration_ms * samp) / 1000;
+    const int total_target = (duration_ms * samp) / 1000;
+    int remaining = total_target;
     const int CHUNK = 256;
     int16_t stereo[CHUNK * 2];
 
@@ -160,25 +172,45 @@ void audio_play_tone(int freq_hz, int duration_ms) {
 
     int vol = s_muted ? 0 : s_volume;
 
-    while (total_samples > 0) {
-        int n = total_samples > CHUNK ? CHUNK : total_samples;
+    // Linear fade at start/end avoids step-discontinuity clicks when the DAC
+    // transitions between silence and the square wave.
+    int fade_samples = (samp * 8) / 1000; // 8 ms
+    if (fade_samples * 2 > total_target) fade_samples = total_target / 2;
+    const int peak_amp = 8000; // halved from 16000 to match beeper headroom
+    int sample_idx = 0;
+
+    while (remaining > 0) {
+        int n = remaining > CHUNK ? CHUNK : remaining;
         for (int i = 0; i < n; ++i) {
             if (period_cnt >= toggle_period) {
                 state = 1 - state;
                 period_cnt = 0;
             }
             period_cnt++;
-            int32_t s = (state ? 16000 : -16000);
+
+            int amp = peak_amp;
+            if (fade_samples > 0) {
+                int from_end = total_target - 1 - sample_idx;
+                if (sample_idx < fade_samples) {
+                    amp = (peak_amp * sample_idx) / fade_samples;
+                } else if (from_end < fade_samples) {
+                    if (from_end < 0) from_end = 0;
+                    amp = (peak_amp * from_end) / fade_samples;
+                }
+            }
+
+            int32_t s = state ? amp : -amp;
             s = s * vol / 100;
             int16_t s16 = (int16_t)s;
             stereo[i * 2 + 0] = s16;
             stereo[i * 2 + 1] = s16;
+            sample_idx++;
         }
 
         size_t bytes = n * 2 * sizeof(int16_t);
         size_t written = 0;
         i2s_channel_write(tx_handle, stereo, bytes, &written, portMAX_DELAY);
-        total_samples -= n;
+        remaining -= n;
     }
 }
 

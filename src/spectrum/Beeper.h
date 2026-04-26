@@ -26,4 +26,8 @@ private:
     uint8_t m_initialLevel;
     uint8_t m_speakerLevel;
     bool m_externalEar;
+
+    // DC blocker state
+    float m_lastX;
+    float m_lastY;
 };

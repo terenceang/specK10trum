@@ -11,6 +11,8 @@ Beeper::Beeper()
     , m_initialLevel(0)
     , m_speakerLevel(0)
     , m_externalEar(true)
+    , m_lastX(0)
+    , m_lastY(0)
 {
 }
 
@@ -20,6 +22,8 @@ void Beeper::reset() {
     m_initialLevel = 0;
     m_speakerLevel = 0;
     m_externalEar = true;
+    m_lastX = 0;
+    m_lastY = 0;
 }
 
 void Beeper::recordEvent(uint32_t tstates, uint8_t level) {
@@ -77,9 +81,15 @@ void Beeper::renderFrame(int16_t* audio_buf, int num_samples) {
             else v = raw[idx];
             acc += (int64_t)v * taps[t];
         }
-        acc /= taps_sum;
-        if (acc > INT16_MAX) acc = INT16_MAX;
-        if (acc < INT16_MIN) acc = INT16_MIN;
-        audio_buf[i] = (int16_t)acc;
+        
+        // Final sample with DC blocker
+        float x = (float)acc / taps_sum;
+        float y = x - m_lastX + 0.999f * m_lastY;
+        m_lastX = x;
+        m_lastY = y;
+
+        if (y > 32767.0f) y = 32767.0f;
+        if (y < -32768.0f) y = -32768.0f;
+        audio_buf[i] = (int16_t)y;
     }
 }
