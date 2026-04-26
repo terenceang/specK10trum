@@ -14,7 +14,9 @@
       "WebFetch(domain:skoolkid.github.io)",
       "WebFetch(domain:a03e9d35-13f4-4c9c-ac0e-ab0c60daae20.claudeusercontent.com)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(xargs wc *)",
+      "Bash(/c/Users/teren/.platformio/penv/Scripts/pio.exe run *)"
     ]
   }
 }

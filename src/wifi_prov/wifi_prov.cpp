@@ -301,56 +301,6 @@ bool wifi_prov_start()
     return true;
 }
 
-bool wifi_prov_start_force()
-{
-    if (!s_wifi_connected_sem) {
-        s_wifi_connected_sem = xSemaphoreCreateBinary();
-    }
-
-    if (!s_watcher_started) {
-        xTaskCreate(nvs_watcher_task, "prov_watcher", 3072, NULL, 3, NULL);
-        s_watcher_started = true;
-    }
-
-    if (s_provisioning_started) {
-        ESP_LOGI(TAG, "Provisioning already running");
-        return true;
-    }
-
-    if (ensure_wifi_initialized() != ESP_OK) {
-        ESP_LOGE(TAG, "Wi-Fi subsystem init failed; cannot start provisioning");
-        return false;
-    }
-
-    esp_err_t err = esp_event_handler_instance_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID,
-                                                        prov_event_cb, NULL, &s_prov_handler);
-    if (err != ESP_OK) ESP_LOGW(TAG, "WIFI_PROV_EVENT register failed: %d", err);
-
-    wifi_prov_mgr_config_t cfg = {};
-    cfg.scheme = wifi_prov_scheme_ble;
-    cfg.scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BT;
-
-    err = wifi_prov_mgr_init(cfg);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "wifi_prov_mgr_init failed: %d", err);
-        return false;
-    }
-
-    const char* service_name = "PROV_speck10";
-    const char* pop = "12345678";
-
-    ESP_LOGI(TAG, "Force-starting BLE provisioning service");
-    err = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, pop, service_name, NULL);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "wifi_prov_mgr_start_provisioning failed: %d", err);
-        wifi_prov_mgr_deinit();
-        return false;
-    }
-
-    s_provisioning_started = true;
-    return true;
-}
-
 static esp_netif_t* s_ap_netif = NULL;
 
 void wifi_prov_stop()

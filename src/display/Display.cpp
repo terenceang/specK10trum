@@ -25,10 +25,7 @@ static const gpio_num_t LCD_PIN_CS = GPIO_NUM_14;
 static const gpio_num_t LCD_PIN_DC = GPIO_NUM_13;
 static const gpio_num_t LCD_PIN_ENABLE = GPIO_NUM_40;
 
-// ILI9341 MADCTL values for rotation
-static const uint8_t MADCTL_PORTRAIT = 0x48;
 static const uint8_t MADCTL_LANDSCAPE = 0x28;
-static const uint8_t MADCTL_PORTRAIT_FLIP = 0x88;
 static const uint8_t MADCTL_LANDSCAPE_FLIP = 0xE8;
 static uint8_t s_lcdOrientation = MADCTL_LANDSCAPE;
 
@@ -42,7 +39,6 @@ static char s_overlayText[64] = {0};
 static uint16_t s_overlayColor = 0xFFFF;
 static SemaphoreHandle_t s_overlay_mutex = NULL;
 static int s_overlay_clear_frames = 0;
-static bool s_overlay_dirty = false;
 
 // Ping-pong strip buffers allocated in internal RAM (IRAM)
 static const int NUM_STRIPS = 5;
@@ -261,11 +257,6 @@ static void update_display_dimensions() {
     }
 }
 
-void display_setOrientation(uint8_t madctl) {
-    s_lcdOrientation = madctl;
-    update_display_dimensions();
-}
-
 void display_clear() {
     size_t bufferSize = s_lcdDisplayWidth * s_lcdDisplayHeight * sizeof(uint16_t);
     for (int i = 0; i < 2; i++) {
@@ -355,9 +346,6 @@ void display_present() {
     // Only log and perform the more expensive clear when the overlay state is dirty
     // or we explicitly need to clear frames; otherwise draw overlay quietly.
     if (s_overlay_clear_frames > 0) {
-        if (s_overlay_dirty) {
-            ESP_LOGI(TAG, "Clearing overlay area: frames_left=%d", s_overlay_clear_frames);
-        }
         for (int y = overlay_y; y < s_lcdDisplayHeight; y++) {
             for (int x = 0; x < s_lcdDisplayWidth; x++) {
                 buf[y * s_lcdDisplayWidth + x] = 0x0000;
@@ -366,13 +354,8 @@ void display_present() {
         s_overlay_clear_frames--;
     }
     if (s_overlayText[0]) {
-        if (s_overlay_dirty) {
-            ESP_LOGI(TAG, "Drawing overlay: '%s' color=0x%04X", s_overlayText, __builtin_bswap16(s_overlayColor));
-        }
         drawText(buf, 2, overlay_y, s_overlayText, s_overlayColor);
     }
-    // Reset dirty flag once we've applied the change to the framebuffer
-    s_overlay_dirty = false;
 
     lcd_push_frame_async_pingpong(buf);
 
@@ -545,8 +528,6 @@ void display_boot_test() {
     expander_set_backlight(true);
 }
 
-void display_test_pattern() { display_boot_test(); }
-
 void display_setOverlayText(const char* text, uint16_t color) {
     if (s_overlay_mutex) xSemaphoreTake(s_overlay_mutex, portMAX_DELAY);
 
@@ -572,15 +553,10 @@ void display_setOverlayText(const char* text, uint16_t color) {
     if (text) {
         strncpy(s_overlayText, text, sizeof(s_overlayText) - 1);
         s_overlayText[sizeof(s_overlayText) - 1] = '\0';
-        // Ensure next frame presents the updated text (clear leftover once)
         s_overlay_clear_frames = 1;
-        s_overlay_dirty = true;
     } else {
         s_overlayText[0] = '\0';
-        // Clear overlay area on both framebuffers (two frames)
         s_overlay_clear_frames = 2;
-        // Also proactively clear the overlay area in both framebuffers so
-        // the old text can't persist if the other buffer isn't re-rendered
         int overlay_y = s_lcdDisplayHeight - 10;
         for (int b = 0; b < 2; b++) {
             if (s_frameBuffers[b]) {
@@ -591,9 +567,8 @@ void display_setOverlayText(const char* text, uint16_t color) {
                 }
             }
         }
-        s_overlay_dirty = true;
     }
     s_overlayColor = new_swapped_color;
-    ESP_LOGI(TAG, "Overlay set: '%s' color=0x%04X", s_overlayText, color);
+    ESP_LOGD(TAG, "Overlay set: '%s' color=0x%04X", s_overlayText, color);
     if (s_overlay_mutex) xSemaphoreGive(s_overlay_mutex);
 }

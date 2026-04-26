@@ -173,6 +173,13 @@ void webserver_apply_pending(SpectrumBase* spectrum)
 
     if (s_pending_load) {
         s_pending_load = false;
+        
+        // Clear any stuck boot/status overlays as we're about to run content
+        display_clearOverlay();
+        // Wipe both framebuffers to ensure splash/boot artifacts are gone
+        ESP_LOGI(TAG, "Clearing display for new content");
+        display_clear();
+
         const char* ext = strrchr(s_pending_load_path, '.');
         if (ext && (strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 || strcasecmp(ext, ".tsx") == 0)) {
             ESP_LOGI(TAG, "Loading tape: %s", s_pending_load_path);
@@ -199,6 +206,8 @@ void webserver_apply_pending(SpectrumBase* spectrum)
     if (s_pending_reset) {
         s_pending_reset = false;
         ESP_LOGI(TAG, "Applying reset");
+        display_clearOverlay();
+        display_clear();
         spectrum->reset();
     }
 }

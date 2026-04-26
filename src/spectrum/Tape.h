@@ -47,12 +47,6 @@ public:
     // Service a LD-BYTES trap (only used in INSTANT mode or when appropriate)
     int serviceLoadTrap(SpectrumBase* spectrum);
 
-    // Notify that LOAD "" was typed
-    void notifyLoad();
-
-    // Attempt to autoload a tape from known SPIFFS paths
-    static bool autoload(Tape& tape);
-
     // Address of the 48K ROM LD-BYTES routine.
     static constexpr uint16_t LD_BYTES_ENTRY = 0x0556;
 
@@ -68,8 +62,7 @@ private:
     TapeMode m_mode;
     bool m_playing;
     bool m_paused;
-    bool m_load_typed;
-    
+
     // Output state
     bool m_ear;
     uint32_t m_tstate_counter;

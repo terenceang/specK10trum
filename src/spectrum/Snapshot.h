@@ -15,14 +15,6 @@ public:
      */
     static bool load(SpectrumBase* spectrum, const char* filepath);
 
-    /**
-     * @brief Check if /spiffs/autoexec.z80 exists and load it if it does.
-     * 
-     * @param spectrum The spectrum hardware instance.
-     * @return true if an autoexec was found and loaded successfully.
-     */
-    static bool loadAutoexec(SpectrumBase* spectrum);
-
 private:
     struct Z80SnapshotHeader {
         uint8_t hdr[30];

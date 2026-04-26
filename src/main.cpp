@@ -182,9 +182,6 @@ extern "C" void app_main(void) {
     }
     log_ts(TAG, "SPIFFS mounted");
 
-    // Record start time for minimum splash duration
-    int64_t splashStartTime = esp_timer_get_time();
-
     // Initialize display as soon as possible for early visual feedback
     if (!display_init()) {
         ESP_LOGE(TAG, "Display initialization FAILED");
@@ -239,29 +236,15 @@ extern "C" void app_main(void) {
     // Reset the system
     spectrum->reset();
 
-    // If an autoexec snapshot exists in SPIFFS, attempt to load it now
-    // bool snapshot_loaded = spectrum->loadAutoexec();
-    bool snapshot_loaded = false;
-
-    // Mount a virtual cassette if one is present on SPIFFS. LOAD "" from
-    // BASIC then hits the ROM trap and gets the blocks instantly.
-    // Tape::autoload(spectrum->tape());
-
-    // Run all tests while splash is showing unless we loaded a snapshot.
-    if (!snapshot_loaded) {
 #if RUN_ALL_TESTS
-        run_all_tests(spectrum, MODEL_NAME);
-        // Reset again after tests to ensure a clean state for the emulator
-        spectrum->reset();
+    // Run all tests while splash is showing.
+    run_all_tests(spectrum, MODEL_NAME);
+    // Reset again after tests to ensure a clean state for the emulator
+    spectrum->reset();
 #else
-        ESP_LOGI(TAG, "Tests are disabled at build time (RUN_ALL_TESTS==0); skipping test suite.");
+    ESP_LOGI(TAG, "Tests are disabled at build time (RUN_ALL_TESTS==0); skipping test suite.");
 #endif
-    } else {
-        ESP_LOGI(TAG, "Skipping test suite because snapshot was loaded.");
-    }
-    
-    // Note: splash is shown in background; do not block main startup here.
-    (void)splashStartTime;
+
     log_ts(TAG, "Continuing startup (splash in background)");
 
     // Start Wi‑Fi and webserver in background so emulator can start sooner

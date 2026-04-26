@@ -54,7 +54,6 @@ public:
     // RAM image bytes. `loadSnapshot` performs file reading and simple .z80 RLE
     // decompression and then calls `applySnapshotData`.
     virtual bool loadSnapshot(const char* filepath);
-    virtual bool loadAutoexec();
 
     // Apply a RAM image (raw or decompressed). Subclasses must implement this to
     // place the bytes into their memory layout (banks, pointers, etc.).

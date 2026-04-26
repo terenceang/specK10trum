@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 static const char* TAG = "Tape";
 
@@ -21,7 +20,6 @@ Tape::Tape()
     , m_mode(TapeMode::NORMAL)
     , m_playing(false)
     , m_paused(false)
-    , m_load_typed(false)
     , m_ear(false)
     , m_tstate_counter(0)
     , m_num_blocks(0)
@@ -152,13 +150,6 @@ void Tape::resetPlaybackState() {
     m_data_byte_idx = 0;
     m_data_bit_idx = 0;
     m_ear = false;
-}
-
-void Tape::notifyLoad() {
-    m_load_typed = true;
-    if (m_mode == TapeMode::NORMAL) {
-        play();
-    }
 }
 
 // Small helper: pop a 16-bit value from the Spectrum stack via the memory bus.
@@ -440,18 +431,4 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
              tapeFlag, DE, ok ? "OK" : "PARITY-ERR");
 
     return 11;
-}
-
-bool Tape::autoload(Tape& tape) {
-    static const char* candidates[] = {
-        "/spiffs/tape.tap",
-        "/spiffs/autoload.tap",
-    };
-    struct stat st;
-    for (const char* path : candidates) {
-        if (stat(path, &st) == 0) {
-            return tape.load(path);
-        }
-    }
-    return false;
 }

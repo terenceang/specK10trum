@@ -2,26 +2,11 @@
 #include "SpectrumBase.h"
 #include "Spectrum128K.h"
 #include <esp_log.h>
-#include <sys/stat.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
 static const char* TAG = "Snapshot";
-
-bool Snapshot::loadAutoexec(SpectrumBase* spectrum) {
-    struct stat st_snap;
-    if (stat("/spiffs/autoexec.z80", &st_snap) == 0) {
-        ESP_LOGI(TAG, "autoexec.z80 found in SPIFFS, attempting to load snapshot...");
-        if (load(spectrum, "/spiffs/autoexec.z80")) {
-            ESP_LOGI(TAG, "Snapshot applied successfully.");
-            return true;
-        } else {
-            ESP_LOGW(TAG, "Snapshot present but failed to load.");
-        }
-    }
-    return false;
-}
 
 bool Snapshot::load(SpectrumBase* spectrum, const char* filepath) {
     if (!spectrum) return false;

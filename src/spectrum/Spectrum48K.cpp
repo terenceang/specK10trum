@@ -91,12 +91,3 @@ bool Spectrum48K::applySnapshotData(const uint8_t* data, size_t len) {
     ESP_LOGD(TAG, "applySnapshotData: unsupported snapshot length %zu for 48K", len);
     return false;
 }
-
-bool Spectrum48K::isContendedAddress(uint16_t addr) const {
-    return (addr >= 0x4000 && addr < 0x8000);
-}
-
-int Spectrum48K::getContentionDelay(int tstates) const {
-    (void)tstates;
-    return 0;
-}

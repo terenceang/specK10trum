@@ -231,10 +231,6 @@ bool SpectrumBase::loadSnapshot(const char* filepath) {
     return Snapshot::load(this, filepath);
 }
 
-bool SpectrumBase::loadAutoexec() {
-    return Snapshot::loadAutoexec(this);
-}
-
 void SpectrumBase::setKeyboardRow(uint8_t row, uint8_t columns) {
     input_setKeyboardRow(row, columns);
 }
