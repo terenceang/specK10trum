@@ -592,6 +592,17 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
+# ADF Library Configuration
+#
+CONFIG_MEDIA_PROTOCOL_LIB_ENABLE=y
+CONFIG_MEDIA_LIB_CRYPT_ENABLE=y
+CONFIG_MEDIA_LIB_SOCKET_ENABLE=y
+CONFIG_MEDIA_LIB_TLS_ENABLE=y
+CONFIG_MEDIA_LIB_NETIF_ENABLE=y
+# CONFIG_MEDIA_LIB_MEM_AUTO_TRACE is not set
+# end of ADF Library Configuration
+
+#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEBUG=y
@@ -2540,6 +2551,20 @@ CONFIG_WIFI_PROV_BLE_SEC_CONN=y
 CONFIG_WIFI_PROV_STA_ALL_CHANNEL_SCAN=y
 # CONFIG_WIFI_PROV_STA_FAST_SCAN is not set
 # end of Wi-Fi Provisioning Manager
+
+#
+# jsmn
+#
+# CONFIG_JSMN_PARENT_LINKS is not set
+# CONFIG_JSMN_STRICT is not set
+# CONFIG_JSMN_STATIC is not set
+# end of jsmn
+
+#
+# NGHTTP configuration
+#
+CONFIG_ESP_NGHTTP2_INBOUND_BUFFER_LENGTH=4096
+# end of NGHTTP configuration
 # end of Component config
 
 # CONFIG_IDF_EXPERIMENTAL_FEATURES is not set

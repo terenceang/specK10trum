@@ -1,127 +1,89 @@
 #include "Audio.h"
-#include <driver/i2s_std.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <freertos/stream_buffer.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio_pipeline.h"
+#include "i2s_stream.h"
+#include "raw_stream.h"
+
 static const char* TAG = "Audio";
 static const int SAMPLE_RATE = 44100;
-// Samples per Spectrum frame: 44100 / 50 = 882.
-// Using 882 ensures we stay ahead of the audio clock.
 static const int SAMPLES_PER_FRAME = 882;
 
-static i2s_chan_handle_t tx_handle = NULL;
-static int s_volume = 30;
-static bool s_muted = false;
-static StreamBufferHandle_t s_audio_stream = NULL;
-static StaticStreamBuffer_t s_audio_stream_struct;
-static uint8_t* s_audio_stream_buffer = NULL;
-static const size_t FRAMES_OF_BUFFER = 8; // number of frames to hold in ring
+static audio_pipeline_handle_t s_pipeline = NULL;
+static audio_element_handle_t s_raw_write = NULL;
+static audio_element_handle_t s_i2s_writer = NULL;
 
-static void audio_writer_task(void* arg) {
-    (void)arg;
-    size_t bytes_per_frame = SAMPLES_PER_FRAME * 2 * sizeof(int16_t);
-    int16_t* buf = (int16_t*)malloc(bytes_per_frame);
-    if (!buf) vTaskDelete(NULL);
-    for (;;) {
-        size_t received = 0;
-        // Ensure we always read a full frame
-        while (received < bytes_per_frame) {
-            size_t r = xStreamBufferReceive(s_audio_stream, ((uint8_t*)buf) + received,
-                                            bytes_per_frame - received, portMAX_DELAY);
-            if (r == 0) continue;
-            received += r;
-        }
-        size_t written = 0;
-        esp_err_t werr = i2s_channel_write(tx_handle, buf, bytes_per_frame, &written, portMAX_DELAY);
-        if (werr != ESP_OK) {
-            ESP_LOGW(TAG, "i2s_channel_write failed in task: %d", werr);
-        }
-    }
-    free(buf);
-    vTaskDelete(NULL);
-}
+static int s_volume = 70; // Increased default volume
+static bool s_muted = false;
 
 bool audio_init() {
-    ESP_LOGI(TAG, "Initializing modern I2S audio...");
+    ESP_LOGI(TAG, "Initializing ESP-ADF audio pipeline...");
 
-    i2s_chan_config_t chan_cfg = {};
-    chan_cfg.id = I2S_NUM_0;
-    chan_cfg.role = I2S_ROLE_MASTER;
-    chan_cfg.dma_desc_num = 4;
-    chan_cfg.dma_frame_num = 256;
-    chan_cfg.auto_clear = true;
+    audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
+    s_pipeline = audio_pipeline_init(&pipeline_cfg);
+    if (!s_pipeline) {
+        ESP_LOGE(TAG, "Failed to initialize audio pipeline");
+        return false;
+    }
+
+    // raw_stream must be AUDIO_STREAM_WRITER to accept raw_stream_write from application
+    raw_stream_cfg_t raw_cfg = RAW_STREAM_CFG_DEFAULT();
+    raw_cfg.type = AUDIO_STREAM_WRITER; 
+    raw_cfg.out_rb_size = 16 * 1024;
+    s_raw_write = raw_stream_init(&raw_cfg);
+    if (!s_raw_write) {
+        ESP_LOGE(TAG, "Failed to initialize raw stream");
+        return false;
+    }
+
+    i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
+    i2s_cfg.type = AUDIO_STREAM_WRITER;
+    i2s_cfg.chan_cfg.id = I2S_NUM_0;
+    i2s_cfg.use_alc = true;
     
-    esp_err_t err = i2s_new_channel(&chan_cfg, &tx_handle, NULL);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create I2S channel: %d", err);
+    // Modern IDF I2S config (UniHiker K10 pins)
+    i2s_cfg.std_cfg.clk_cfg.sample_rate_hz = SAMPLE_RATE;
+    i2s_cfg.std_cfg.gpio_cfg.bclk = GPIO_NUM_0;
+    i2s_cfg.std_cfg.gpio_cfg.ws = GPIO_NUM_38;
+    i2s_cfg.std_cfg.gpio_cfg.dout = GPIO_NUM_45;
+    i2s_cfg.std_cfg.gpio_cfg.mclk = GPIO_NUM_3;
+
+    s_i2s_writer = i2s_stream_init(&i2s_cfg);
+    if (!s_i2s_writer) {
+        ESP_LOGE(TAG, "Failed to initialize I2S stream");
         return false;
     }
 
-    i2s_std_config_t std_cfg = {};
-    std_cfg.clk_cfg.sample_rate_hz = SAMPLE_RATE;
-    std_cfg.clk_cfg.clk_src = I2S_CLK_SRC_DEFAULT;
-    std_cfg.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
-    std_cfg.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
-    std_cfg.gpio_cfg.mclk = GPIO_NUM_3;
-    std_cfg.gpio_cfg.bclk = GPIO_NUM_0;
-    std_cfg.gpio_cfg.ws = GPIO_NUM_38;
-    std_cfg.gpio_cfg.dout = GPIO_NUM_45;
-    std_cfg.gpio_cfg.din = I2S_GPIO_UNUSED;
-    std_cfg.gpio_cfg.invert_flags.mclk_inv = false;
-    std_cfg.gpio_cfg.invert_flags.bclk_inv = false;
-    std_cfg.gpio_cfg.invert_flags.ws_inv = false;
+    audio_pipeline_register(s_pipeline, s_raw_write, "raw");
+    audio_pipeline_register(s_pipeline, s_i2s_writer, "i2s");
 
-    err = i2s_channel_init_std_mode(tx_handle, &std_cfg);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize I2S standard mode: %d", err);
+    const char *link_tag[2] = {"raw", "i2s"};
+    if (audio_pipeline_link(s_pipeline, &link_tag[0], 2) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to link audio pipeline");
         return false;
     }
 
-    err = i2s_channel_enable(tx_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to enable I2S channel: %d", err);
+    // Set audio info so ALC and I2S know what they are processing
+    audio_element_set_music_info(s_raw_write, SAMPLE_RATE, 2, 16);
+    audio_element_set_music_info(s_i2s_writer, SAMPLE_RATE, 2, 16);
+
+    if (audio_pipeline_run(s_pipeline) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to run audio pipeline");
         return false;
     }
 
-    // Prefill DMA with silence so the DAC doesn't clock out uninitialised
-    // descriptor contents before the first real write. Covers both the boot
-    // gap before the splash beep and the gap before the emulator task starts.
-    {
-        // BSS, not stack — keeps the main task off an overflow path.
-        static int16_t silence[512 * 2];
-        size_t written = 0;
-        i2s_channel_write(tx_handle, silence, sizeof(silence), &written, pdMS_TO_TICKS(100));
-    }
+    audio_set_volume(s_volume);
 
-    // Create stream buffer in PSRAM to save internal RAM.
-    size_t frame_bytes = SAMPLES_PER_FRAME * 2 * sizeof(int16_t);
-    size_t buffer_size = frame_bytes * FRAMES_OF_BUFFER;
-    s_audio_stream_buffer = (uint8_t*)heap_caps_malloc(buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_audio_stream_buffer) {
-        ESP_LOGW(TAG, "Failed to allocate audio buffer in PSRAM; falling back to internal RAM");
-        s_audio_stream = xStreamBufferCreate(buffer_size, frame_bytes);
-    } else {
-        s_audio_stream = xStreamBufferCreateStatic(buffer_size, frame_bytes, s_audio_stream_buffer, &s_audio_stream_struct);
-    }
-
-    if (!s_audio_stream) {
-        ESP_LOGW(TAG, "Failed to create audio stream buffer; audio will block");
-    } else {
-        // Create audio task that pulls frames from stream buffer and writes to I2S.
-        // Higher priority and pinned to Core 1 (separate from emulator) ensures smooth playback.
-        xTaskCreatePinnedToCore(audio_writer_task, "audio_writer", 4096, NULL, 10, NULL, 1);
-    }
-
-    ESP_LOGI(TAG, "Audio initialized (Modern I2S, sample_rate=%d)", SAMPLE_RATE);
+    ESP_LOGI(TAG, "ADF Audio pipeline initialized and running (Vol=%d)", s_volume);
     return true;
 }
 
 void audio_play_frame(SpectrumBase* spectrum) {
-    if (!spectrum || !tx_handle) return;
+    if (!spectrum || !s_raw_write) return;
 
     // Mono samples from beeper
     int16_t mono_buf[SAMPLES_PER_FRAME];
@@ -131,52 +93,33 @@ void audio_play_frame(SpectrumBase* spectrum) {
     // Render beeper into mono buffer
     spectrum->renderBeeperAudio(mono_buf, SAMPLES_PER_FRAME);
 
-    // Apply volume/mute and duplicate to stereo
-    int vol = s_muted ? 0 : s_volume;
+    // Duplicate mono to stereo (ADF ALC will handle volume)
     for (int i = 0; i < SAMPLES_PER_FRAME; ++i) {
-        int32_t s = (int32_t)mono_buf[i] * vol / 100;
-        int16_t s16 = (int16_t)s;
-        stereo_buf[i * 2 + 0] = s16;
-        stereo_buf[i * 2 + 1] = s16;
+        stereo_buf[i * 2 + 0] = mono_buf[i];
+        stereo_buf[i * 2 + 1] = mono_buf[i];
     }
 
-    size_t bytes_to_write = SAMPLES_PER_FRAME * 2 * sizeof(int16_t);
-
-    // If stream buffer exists, enqueue frame with blocking wait; this naturally 
-    // throttles the emulator to match real-time audio playback.
-    if (s_audio_stream) {
-        size_t sent = xStreamBufferSend(s_audio_stream, stereo_buf, bytes_to_write, portMAX_DELAY);
-        if (sent != bytes_to_write) {
-            ESP_LOGW(TAG, "Audio stream timeout (sent=%d expected=%d)", (int)sent, (int)bytes_to_write);
-        }
-    } else {
-        size_t written = 0;
-        esp_err_t err = i2s_channel_write(tx_handle, stereo_buf, bytes_to_write, &written, portMAX_DELAY);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "i2s_channel_write failed: %d", err);
-        }
+    int ret = raw_stream_write(s_raw_write, (char*)stereo_buf, sizeof(stereo_buf));
+    if (ret < 0) {
+        ESP_LOGW(TAG, "raw_stream_write error: %d", ret);
     }
 }
 
 void audio_play_tone(int freq_hz, int duration_ms) {
-    if (freq_hz <= 0 || duration_ms <= 0 || !tx_handle) return;
+    if (freq_hz <= 0 || duration_ms <= 0 || !s_raw_write) return;
     const int samp = SAMPLE_RATE;
     const int total_target = (duration_ms * samp) / 1000;
     int remaining = total_target;
     const int CHUNK = 256;
     int16_t stereo[CHUNK * 2];
 
-    int toggle_period = samp / (freq_hz * 2); // half-period in samples
+    int toggle_period = samp / (freq_hz * 2); 
     int state = 0;
     int period_cnt = 0;
 
-    int vol = s_muted ? 0 : s_volume;
-
-    // Linear fade at start/end avoids step-discontinuity clicks when the DAC
-    // transitions between silence and the square wave.
-    int fade_samples = (samp * 8) / 1000; // 8 ms
+    int fade_samples = (samp * 8) / 1000;
     if (fade_samples * 2 > total_target) fade_samples = total_target / 2;
-    const int peak_amp = 8000; // halved from 16000 to match beeper headroom
+    const int peak_amp = 8000; 
     int sample_idx = 0;
 
     while (remaining > 0) {
@@ -200,16 +143,13 @@ void audio_play_tone(int freq_hz, int duration_ms) {
             }
 
             int32_t s = state ? amp : -amp;
-            s = s * vol / 100;
             int16_t s16 = (int16_t)s;
             stereo[i * 2 + 0] = s16;
             stereo[i * 2 + 1] = s16;
             sample_idx++;
         }
 
-        size_t bytes = n * 2 * sizeof(int16_t);
-        size_t written = 0;
-        i2s_channel_write(tx_handle, stereo, bytes, &written, portMAX_DELAY);
+        raw_stream_write(s_raw_write, (char*)stereo, n * 2 * sizeof(int16_t));
         remaining -= n;
     }
 }
@@ -218,7 +158,18 @@ void audio_set_volume(int volume) {
     if (volume < 0) volume = 0;
     if (volume > 100) volume = 100;
     s_volume = volume;
-    ESP_LOGI(TAG, "Volume set to %d", s_volume);
+    
+    if (s_i2s_writer) {
+        int db_gain;
+        if (s_muted || s_volume == 0) {
+            db_gain = -64;
+        } else {
+            // Map 1-100 to -40 to 0 dB
+            db_gain = (s_volume * 40 / 100) - 40;
+        }
+        i2s_alc_volume_set(s_i2s_writer, db_gain);
+        ESP_LOGI(TAG, "Volume set to %d (%d dB)", s_volume, db_gain);
+    }
 }
 
 int audio_get_volume() {
@@ -227,7 +178,7 @@ int audio_get_volume() {
 
 void audio_set_mute(bool mute) {
     s_muted = mute;
-    ESP_LOGI(TAG, "Audio %s", s_muted ? "muted" : "unmuted");
+    audio_set_volume(s_volume);
 }
 
 bool audio_get_mute() {
