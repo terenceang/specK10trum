@@ -256,6 +256,7 @@ void Tape::buildBlockList() {
         }
     }
 }
+
 void Tape::advance(uint32_t tstates) {
     if (!m_playing || m_paused || !m_data) return;
 
@@ -281,7 +282,6 @@ void Tape::advance(uint32_t tstates) {
     }
 }
 
-
 void Tape::nextState() {
     if (m_current_block_idx >= m_num_blocks) {
         stop();
@@ -300,9 +300,13 @@ void Tape::nextState() {
                 m_pstate = PlayState::DATA;
                 m_data_byte_idx = 0;
                 m_data_bit_idx = 0;
-                uint8_t bit = (b.data[0] & 0x80) ? 1 : 0;
-                m_current_pulse_len = bit ? b.one_len : b.zero_len;
-                m_state_pulses_left = 2;
+                m_state_pulses_left = 2; // Start of first bit
+                if (b.length > 0) {
+                    uint8_t bit = (b.data[0] & 0x80) ? 1 : 0;
+                    m_current_pulse_len = bit ? b.one_len : b.zero_len;
+                } else {
+                    m_current_pulse_len = 0; // End of block
+                }
             }
             break;
 
@@ -322,10 +326,12 @@ void Tape::nextState() {
             m_pstate = PlayState::DATA;
             m_data_byte_idx = 0;
             m_data_bit_idx = 0;
-            {
+            m_state_pulses_left = 2;
+            if (b.length > 0) {
                 uint8_t bit = (b.data[0] & 0x80) ? 1 : 0;
                 m_current_pulse_len = bit ? b.one_len : b.zero_len;
-                m_state_pulses_left = 2;
+            } else {
+                m_current_pulse_len = 0;
             }
             break;
 
@@ -457,13 +463,14 @@ void Tape::instaload(SpectrumBase* spectrum) {
     bool hasCode = false;
     bool hasBasic = false;
 
-    for (int i = 0; i < (m_num_blocks - 1); i++) {  // Note: check up to second-to-last block
+    ESP_LOGI(TAG, "Starting instaload. Blocks: %d", m_num_blocks);
+
+    for (int i = 0; i < (m_num_blocks - 1); i++) {
         const TapeBlockInternal& b = m_blocks[i];
         
-        // Check for standard header blocks (length 19, flag byte 0x00)
+        // Standard Spectrum header is 19 bytes: [Flag 0x00] [Type 1] [Name 10] [Len 2] [Param1 2] [Param2 2] [Checksum 1]
         if (b.length == 19 && b.data && b.data[0] == 0x00) {
             uint8_t type = b.data[1];
-            uint8_t flag = b.data[2];  // The flag byte for the data block
             uint16_t len = b.data[12] | (b.data[13] << 8);
             uint16_t start = b.data[14] | (b.data[15] << 8);
             
@@ -471,21 +478,19 @@ void Tape::instaload(SpectrumBase* spectrum) {
             if (i + 1 < m_num_blocks) {
                 const TapeBlockInternal& db = m_blocks[i + 1];
                 
-                // Check if this is a valid data block
                 bool isValidDataBlock = false;
                 size_t dataOffset = 0;
                 size_t dataLength = 0;
                 
                 if (db.data && db.length >= 2) {
+                    // Data blocks for standard loaders always start with flag 0xFF (or matching header flag, but headers are 0x00)
                     if (db.type == 0x10 || db.type == 0x11) {
-                        // Standard/Turbo data block: first byte is flag
-                        if (db.data[0] == flag || db.data[0] == 0xFF) {  // Accept both exact flag and 0xFF
+                        if (db.data[0] == 0xFF || db.data[0] == 0x00) {
                             isValidDataBlock = true;
-                            dataOffset = 1;  // Skip flag byte
-                            dataLength = db.length - 2;  // Subtract flag and checksum
+                            dataOffset = 1; 
+                            dataLength = db.length - 2; // Subtract flag and checksum
                         }
                     } else if (db.type == 0x14) {
-                        // Pure Data block: no flag byte
                         isValidDataBlock = true;
                         dataOffset = 0;
                         dataLength = db.length;
@@ -493,14 +498,12 @@ void Tape::instaload(SpectrumBase* spectrum) {
                 }
                 
                 if (isValidDataBlock) {
-                    if (dataLength > len) {
-                        dataLength = len;  // Limit to header-specified length
-                    }
+                    if (dataLength > len) dataLength = len;
 
                     uint16_t loadAddr = start;
-                    if (type == 0) {
-                        loadAddr = 23755; // BASIC programs load to PROG area
-                    }
+                    if (type == 0) loadAddr = 23755;
+
+                    ESP_LOGI(TAG, "Loading block type %d to 0x%04X, len %zu", type, loadAddr, dataLength);
 
                     for (uint16_t j = 0; j < dataLength; j++) {
                         spectrum->write((uint16_t)(loadAddr + j), db.data[dataOffset + j]);
@@ -508,9 +511,9 @@ void Tape::instaload(SpectrumBase* spectrum) {
 
                     if (type == 0) {
                         hasBasic = true;
-                        totalProgLen = dataLength;
+                        totalProgLen = (uint16_t)dataLength;
                     } else if (type == 3) { // CODE
-                        // Avoid jumping to the loading screen (usually at 16384)
+                        // Avoid jumping to the loading screen (usually at 0x4000/16384)
                         if (start != 16384) {
                             lastCodeStart = start;
                             hasCode = true;
@@ -523,7 +526,7 @@ void Tape::instaload(SpectrumBase* spectrum) {
     }
 
     if (hasBasic) {
-        // Update BASIC system variables
+        ESP_LOGI(TAG, "Setting up BASIC sysvars, program length: %d", totalProgLen);
         uint16_t vars = (uint16_t)(23755 + totalProgLen);
         uint16_t eLine = (uint16_t)(vars + 1);
 
@@ -540,16 +543,17 @@ void Tape::instaload(SpectrumBase* spectrum) {
     }
 
     if (hasCode) {
-        // Land in a clean Spectrum-like state. The webserver pre-runs the
-        // ROM init so IM 1 + IFF1 + sysvars are already correct, but the
-        // BASIC main loop has its own stack frames that the user code would
-        // otherwise pop into on any stray RET. A top-of-RAM stack matches
-        // what most LOAD ""CODE then RANDOMIZE USR x loaders set up.
-        cpu->sp = 0xFFFF;
+        ESP_LOGI(TAG, "Jumping to CODE at 0x%04X", lastCodeStart);
+        cpu->sp = 0xFFFE;
         cpu->iff1 = 1;
         cpu->iff2 = 1;
         cpu->im = 1;
         cpu->halted = 0;
         cpu->pc = lastCodeStart;
+    } else if (hasBasic) {
+        ESP_LOGI(TAG, "Jumping to BASIC at 23755");
+        cpu->pc = 23755;
+    } else {
+        ESP_LOGW(TAG, "Instaload found no recognizable BASIC or CODE blocks");
     }
 }

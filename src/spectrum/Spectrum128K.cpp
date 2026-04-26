@@ -54,15 +54,14 @@ void Spectrum128K::updatePaging() {
     uint8_t romBank = (m_port7FFD & 0x10) ? 1 : 0;
     updateMap(0, m_rom + (romBank * 0x4000), false);
     
-    // 0x4000-0x7FFF: RAM Bank 5
+    // 0x4000-0x7FFF: RAM Bank 5 (Fixed)
     updateMap(1, m_ramBanks[5], true);
-    // Video page pointer (used by renderer)
-    m_videoPagePtr = m_ramBanks[5];
     
-    // 0x8000-0xBFFF: RAM Bank 2 or Bank 0 (controlled by bit 3 of 0x7FFD)
-    // Note: Standard Spectrum 128 has Bank 2 fixed here, but we match the test's expectation.
-    uint8_t middleBank = (m_port7FFD & 0x08) ? 0 : 2;
-    updateMap(2, m_ramBanks[middleBank], true);
+    // Video page pointer (selected by bit 3 of 0x7FFD: 0=Bank 5, 1=Bank 7)
+    m_videoPagePtr = (m_port7FFD & 0x08) ? m_ramBanks[7] : m_ramBanks[5];
+    
+    // 0x8000-0xBFFF: RAM Bank 2 (Fixed in standard 128K)
+    updateMap(2, m_ramBanks[2], true);
     
     // 0xC000-0xFFFF: RAM Bank n (selected by bits 0-2 of 0x7FFD)
     uint8_t ramBank = m_port7FFD & 0x07;
