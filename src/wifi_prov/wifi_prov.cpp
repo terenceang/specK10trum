@@ -57,6 +57,9 @@ static void nvs_watcher_task(void* pv)
     }
 }
 
+static int s_reconnect_retries = 0;
+static const int MAX_RECONNECT_RETRIES = 3;
+
 static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* data)
 {
     (void)arg; (void)data;
@@ -69,11 +72,29 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
             break;
         case WIFI_EVENT_STA_CONNECTED:
             ESP_LOGI(TAG, "Wi-Fi connected to AP; waiting for IP...");
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            s_reconnect_retries = 0; // Reset retries on successful connection
             break;
         case WIFI_EVENT_STA_DISCONNECTED: {
             wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*)data;
-            ESP_LOGW(TAG, "Wi-Fi disconnected (reason: %d), reconnecting...", disconnected->reason);
-            esp_wifi_connect();
+            ESP_LOGW(TAG, "Wi-Fi disconnected (reason: %d)", disconnected->reason);
+            
+            s_last_ip_str[0] = '\0';
+            s_reconnect_retries++;
+
+            if (s_reconnect_retries > MAX_RECONNECT_RETRIES) {
+                ESP_LOGE(TAG, "Max retries reached. Falling back to AP mode.");
+                display_setOverlayText("Wi-Fi Failed - Starting AP", 0xF800);
+                wifi_prov_start_ap_fallback();
+            } else {
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Wi-Fi Drop (R:%d) Retry %d/%d", 
+                         disconnected->reason, s_reconnect_retries, MAX_RECONNECT_RETRIES);
+                display_setOverlayText(buf, 0xFFE0); // Amber warning
+                
+                // Always try to reconnect for ANY reason unless it was a deliberate stop
+                esp_wifi_connect();
+            }
             break;
         }
         default:
@@ -82,6 +103,10 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* evt = (ip_event_got_ip_t*)data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&evt->ip_info.ip));
+        
+        // Force power save OFF again at IP acquisition to ensure driver stability
+        esp_wifi_set_ps(WIFI_PS_NONE);
+
         snprintf(s_last_ip_str, sizeof(s_last_ip_str), "IP: " IPSTR, IP2STR(&evt->ip_info.ip));
         display_setOverlayText(s_last_ip_str, 0xFFFF);
 
@@ -326,6 +351,8 @@ bool wifi_prov_start_force()
     return true;
 }
 
+static esp_netif_t* s_ap_netif = NULL;
+
 void wifi_prov_stop()
 {
     if (!s_provisioning_started) {
@@ -336,6 +363,42 @@ void wifi_prov_stop()
     wifi_prov_mgr_deinit();
     s_provisioning_started = false;
     ESP_LOGI(TAG, "Wi-Fi provisioning stopped");
+}
+
+bool wifi_prov_start_ap_fallback()
+{
+    if (ensure_wifi_initialized() != ESP_OK) return false;
+
+    // If BLE provisioning is running, stop it to free up BT/Wi-Fi resources
+    if (s_provisioning_started) {
+        wifi_prov_stop();
+    }
+
+    ESP_LOGI(TAG, "Starting stable Fallback AP 'SpecK10trum-Connect'...");
+
+    // Stop Wi-Fi to switch modes cleanly
+    esp_wifi_stop();
+
+    if (!s_ap_netif) {
+        s_ap_netif = esp_netif_create_default_wifi_ap();
+    }
+
+    wifi_config_t ap_config = {};
+    strcpy((char*)ap_config.ap.ssid, "SpecK10trum-Connect");
+    ap_config.ap.channel = 1;
+    ap_config.ap.max_connection = 4;
+    ap_config.ap.authmode = WIFI_AUTH_OPEN;
+
+    // Use AP mode ONLY. APSTA causes frequent channel hops during STA scans
+    // which drops AP clients (the keyboard).
+    esp_wifi_set_mode(WIFI_MODE_AP);
+    esp_wifi_set_config(WIFI_IF_AP, &ap_config);
+    esp_wifi_start();
+
+    snprintf(s_last_ip_str, sizeof(s_last_ip_str), "AP: 192.168.4.1");
+    display_setOverlayText(s_last_ip_str, 0xFFFF);
+    
+    return true;
 }
 
 bool wifi_prov_wait_for_ip(uint32_t timeout_ms)

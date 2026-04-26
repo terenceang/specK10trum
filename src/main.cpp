@@ -16,6 +16,9 @@
 #include <esp_wifi.h>
 #include "webserver/Webserver.h"
 
+// Centralised test config (defines RUN_ALL_TESTS when not overridden)
+#include "test_config.h"
+
 // ============================================
 // SELECT YOUR MODEL HERE
 // ============================================
@@ -38,10 +41,23 @@
 #endif
 
 // Test runner declaration
+#if RUN_ALL_TESTS
 extern "C" void run_all_tests(IMemoryBus* spectrum, const char* modelName);
+#else
+static inline void run_all_tests(IMemoryBus* /*spectrum*/, const char* /*modelName*/) { /* no-op when tests disabled */ }
+#endif
 
 static const char* TAG = "Main";
 static SpectrumHardware* spectrum = nullptr;
+
+// Simple timestamp logger for boot profiling (milliseconds since start)
+static int64_t s_boot_start_us = 0;
+static inline void log_ts(const char* tag, const char* msg) {
+    int64_t now_us = esp_timer_get_time();
+    if (s_boot_start_us == 0) s_boot_start_us = now_us;
+    int64_t ms = (now_us - s_boot_start_us) / 1000;
+    ESP_LOGI(tag, "%6lld ms: %s", ms, msg);
+}
 
 static bool mountSPIFFS() {
     esp_vfs_spiffs_conf_t conf = {
@@ -101,19 +117,70 @@ static void emulator_task(void* pvParameters) {
     }
 }
 
+// Background task to show splash and run display boot sequence without blocking
+static void splash_task(void* pvParameters) {
+    (void)pvParameters;
+    log_ts(TAG, "Splash task started");
+    display_boot_test();
+    log_ts(TAG, "Splash task finished");
+    vTaskDelete(NULL);
+}
+
+// Background task to handle Wi-Fi connection attempts and start webserver
+static void wifi_and_webserver_task(void* pvParameters) {
+    (void)pvParameters;
+    log_ts(TAG, "Wi-Fi task started");
+
+    if (!wifi_prov_start()) {
+        ESP_LOGW(TAG, "wifi_prov_start() failed to initialize Wi‑Fi subsystem");
+    }
+
+    // Wait for IP with a reasonable timeout. If we have saved credentials, 
+    // the driver will auto-connect in the background.
+    display_setOverlayText("Connecting Wi-Fi...", 0xFFFF);
+    if (wifi_prov_wait_for_ip(15000)) {
+        ESP_LOGI(TAG, "Wi-Fi connected. Starting webserver.");
+        if (webserver_start(spectrum) != ESP_OK) {
+            ESP_LOGW(TAG, "Webserver failed to start");
+            display_setOverlayText("Webserver failed", 0xF800);
+        }
+    } else {
+        // If we didn't get an IP in 10s, it might be first boot or lost signal.
+        // Fallback to AP mode so the user can connect directly.
+        ESP_LOGW(TAG, "Wi-Fi connection timeout. Starting Fallback AP.");
+        display_setOverlayText("Wi-Fi Timeout - Starting AP...", 0xF800);
+        
+        if (wifi_prov_start_ap_fallback()) {
+            ESP_LOGI(TAG, "Fallback AP 'SpecK10trum-Connect' active at 192.168.4.1");
+        } else {
+            ESP_LOGE(TAG, "Failed to start fallback AP");
+        }
+        
+        // Start webserver on the AP interface
+        webserver_start(spectrum);
+    }
+
+    log_ts(TAG, "Wi-Fi task finished");
+    vTaskDelete(NULL);
+}
 
 
 extern "C" void app_main(void) {
     // Give the USB serial/JTAG console time to enumerate before printing startup logs.
     vTaskDelay(pdMS_TO_TICKS(2000));
 
+    // mark boot start for timestamps
+    s_boot_start_us = esp_timer_get_time();
+    log_ts(TAG, "app_main start");
+
     // Initialize expander first
     expander_init();
 
-    // Mount SPIFFS immediately so assets (splash, ROMs) are available
+    // Mount SPIFFS immediately so ROMs and other assets are available
     if (!mountSPIFFS()) {
         ESP_LOGE(TAG, "SPIFFS mount failed! System may not boot correctly.");
     }
+    log_ts(TAG, "SPIFFS mounted");
 
     // Record start time for minimum splash duration
     int64_t splashStartTime = esp_timer_get_time();
@@ -127,8 +194,8 @@ extern "C" void app_main(void) {
         if (!audio_init()) {
             ESP_LOGW(TAG, "Audio initialization failed; continuing without sound");
         }
-        // Do not start provisioning yet; try to connect to saved Wi‑Fi first.
-        display_boot_test();
+        // Run the boot splash asynchronously so we don't block the main startup path
+        xTaskCreatePinnedToCore(splash_task, "splash", 3072, NULL, 5, NULL, 1);
     }
 
     ESP_LOGI(TAG, "**************************************");
@@ -182,71 +249,28 @@ extern "C" void app_main(void) {
 
     // Run all tests while splash is showing unless we loaded a snapshot.
     if (!snapshot_loaded) {
+#if RUN_ALL_TESTS
         run_all_tests(spectrum, MODEL_NAME);
         // Reset again after tests to ensure a clean state for the emulator
         spectrum->reset();
+#else
+        ESP_LOGI(TAG, "Tests are disabled at build time (RUN_ALL_TESTS==0); skipping test suite.");
+#endif
     } else {
         ESP_LOGI(TAG, "Skipping test suite because snapshot was loaded.");
     }
     
-    // Ensure splash shows for at least 5 seconds
-    int64_t elapsedMs = (esp_timer_get_time() - splashStartTime) / 1000;
-    if (elapsedMs < 5000) {
-        vTaskDelay(pdMS_TO_TICKS(5000 - elapsedMs));
-    }
+    // Note: splash is shown in background; do not block main startup here.
+    (void)splashStartTime;
+    log_ts(TAG, "Continuing startup (splash in background)");
 
-    // Clear both frame buffers before starting emulator to prevent splash screen ghosting
-    display_clear();
-
-    // Show "Waiting for Wi-Fi" if not already connected
+    // Start Wi‑Fi and webserver in background so emulator can start sooner
     display_setOverlayText("Waiting for Wi-Fi...", 0xFFFF);
-    
-    // Try up to 4 attempts to obtain an IP from saved Wi-Fi credentials.
-    const int max_attempts = 4;
-    bool wifi_connected = false;
-    // Ensure Wi-Fi subsystem is initialized (this will start the driver when
-    // already provisioned, and will start the provisioning manager otherwise).
-    if (!wifi_prov_start()) {
-        ESP_LOGW(TAG, "wifi_prov_start() failed to initialize Wi‑Fi subsystem");
-    }
-    for (int attempt = 1; attempt <= max_attempts; ++attempt) {
-        char msg[64];
-        snprintf(msg, sizeof(msg), "Wi-Fi attempt %d/%d", attempt, max_attempts);
-        display_setOverlayText(msg, 0xFFE0);
-        if (wifi_prov_wait_for_ip(15000)) {
-            wifi_connected = true;
-            break;
-        }
-        ESP_LOGW(TAG, "Wi-Fi attempt %d/%d failed; retrying...", attempt, max_attempts);
-        // Trigger a reconnect attempt via the Wi-Fi driver
-        esp_err_t err = esp_wifi_disconnect();
-        if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
-            ESP_LOGW(TAG, "esp_wifi_disconnect: %s", esp_err_to_name(err));
-        } else if (err == ESP_ERR_WIFI_NOT_STARTED) {
-            ESP_LOGW(TAG, "esp_wifi_disconnect: %s (Wi‑Fi driver not started)", esp_err_to_name(err));
-        }
-        err = esp_wifi_connect();
-        if (err != ESP_OK) ESP_LOGW(TAG, "esp_wifi_connect: %d", err);
-        vTaskDelay(pdMS_TO_TICKS(2000));
-    }
+    xTaskCreatePinnedToCore(wifi_and_webserver_task, "wifi_ws", 8192, NULL, 5, NULL, 0);
 
-    if (!wifi_connected) {
-        ESP_LOGW(TAG, "Wi-Fi failed after %d attempts. Starting provisioning mode.", max_attempts);
-        display_setOverlayText("Wi-Fi Timeout - Entering Provisioning", 0xF800); // Red text
-        // Start provisioning without clearing existing credentials; a successful
-        // provisioning will overwrite saved credentials via wifi_prov_apply_credentials().
-        wifi_prov_start_force();
-    } else {
-        ESP_LOGI(TAG, "Wi-Fi ready, proceeding to emulator.");
-        // The overlay text is updated to the actual IP in wifi_prov.cpp
-        if (webserver_start(spectrum) != ESP_OK) {
-            ESP_LOGW(TAG, "Webserver failed to start");
-        }
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    
+    vTaskDelay(pdMS_TO_TICKS(100));
     ESP_LOGI(TAG, "✓ Initialization complete! Starting emulator task.");
+    log_ts(TAG, "Emulator starting");
     
     // Initialize input subsystem (spawns input task)
     input_init();

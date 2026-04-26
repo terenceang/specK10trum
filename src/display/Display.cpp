@@ -6,6 +6,7 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
 #include <string.h>
 #include <esp_timer.h>
 #include "instrumentation/Instrumentation.h"
@@ -39,6 +40,9 @@ static SpectrumBase* s_pendingSpectrum = NULL;
 
 static char s_overlayText[64] = {0};
 static uint16_t s_overlayColor = 0xFFFF;
+static SemaphoreHandle_t s_overlay_mutex = NULL;
+static int s_overlay_clear_frames = 0;
+static bool s_overlay_dirty = false;
 
 // Ping-pong strip buffers allocated in internal RAM (IRAM)
 static const int NUM_STRIPS = 5;
@@ -324,6 +328,8 @@ bool display_init() {
     s_trans_pool = (spi_transaction_t*)heap_caps_malloc(sizeof(spi_transaction_t) * MAX_TRANSACTIONS, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
     xTaskCreatePinnedToCore(video_task, "video", 3072, NULL, 6, &s_videoTaskHandle, 1);
+    // Create mutex for overlay updates
+    s_overlay_mutex = xSemaphoreCreateMutex();
     
     display_clear();
 
@@ -344,9 +350,29 @@ void display_present() {
     uint16_t* buf = s_frameBuffers[presentingIndex];
     
     // Draw overlay text if present
-    if (s_overlayText[0]) {
-        drawText(buf, 2, s_lcdDisplayHeight - 10, s_overlayText, s_overlayColor);
+    int overlay_y = s_lcdDisplayHeight - 10;
+    // If we need to clear leftover overlay from the other framebuffer, wipe the strip.
+    // Only log and perform the more expensive clear when the overlay state is dirty
+    // or we explicitly need to clear frames; otherwise draw overlay quietly.
+    if (s_overlay_clear_frames > 0) {
+        if (s_overlay_dirty) {
+            ESP_LOGI(TAG, "Clearing overlay area: frames_left=%d", s_overlay_clear_frames);
+        }
+        for (int y = overlay_y; y < s_lcdDisplayHeight; y++) {
+            for (int x = 0; x < s_lcdDisplayWidth; x++) {
+                buf[y * s_lcdDisplayWidth + x] = 0x0000;
+            }
+        }
+        s_overlay_clear_frames--;
     }
+    if (s_overlayText[0]) {
+        if (s_overlay_dirty) {
+            ESP_LOGI(TAG, "Drawing overlay: '%s' color=0x%04X", s_overlayText, __builtin_bswap16(s_overlayColor));
+        }
+        drawText(buf, 2, overlay_y, s_overlayText, s_overlayColor);
+    }
+    // Reset dirty flag once we've applied the change to the framebuffer
+    s_overlay_dirty = false;
 
     lcd_push_frame_async_pingpong(buf);
 
@@ -355,7 +381,7 @@ void display_present() {
     frame_count++;
     int64_t now = esp_timer_get_time();
     if (last_time_us == 0) last_time_us = now;
-    if (now - last_time_us >= 1000000) {
+    if (now - last_time_us >= 5000000) { // Log every 5 seconds
         int64_t cpu_us = 0, video_us = 0; uint32_t cpu_frames = 0, video_frames = 0;
         instr_snapshot_and_reset(&cpu_us, &cpu_frames, &video_us, &video_frames);
         ESP_LOGI(TAG, "FPS: %.2f | CPU: %.3fms | Video: %.3fms", (double)frame_count * 1000000.0 / (double)(now - last_time_us), 
@@ -522,11 +548,52 @@ void display_boot_test() {
 void display_test_pattern() { display_boot_test(); }
 
 void display_setOverlayText(const char* text, uint16_t color) {
+    if (s_overlay_mutex) xSemaphoreTake(s_overlay_mutex, portMAX_DELAY);
+
+    uint16_t new_swapped_color = __builtin_bswap16(color);
+
+    // Determine whether the requested overlay state actually changes anything.
+    bool will_change = false;
+    if (text) {
+        if (s_overlayText[0] == '\0' || strncmp(s_overlayText, text, sizeof(s_overlayText)) != 0 || s_overlayColor != new_swapped_color) {
+            will_change = true;
+        }
+    } else {
+        // Clearing overlay -> change only if it isn't already empty
+        if (s_overlayText[0] != '\0') will_change = true;
+    }
+
+    if (!will_change) {
+        // No-op when identical state requested
+        if (s_overlay_mutex) xSemaphoreGive(s_overlay_mutex);
+        return;
+    }
+
     if (text) {
         strncpy(s_overlayText, text, sizeof(s_overlayText) - 1);
         s_overlayText[sizeof(s_overlayText) - 1] = '\0';
+        // Ensure next frame presents the updated text (clear leftover once)
+        s_overlay_clear_frames = 1;
+        s_overlay_dirty = true;
     } else {
         s_overlayText[0] = '\0';
+        // Clear overlay area on both framebuffers (two frames)
+        s_overlay_clear_frames = 2;
+        // Also proactively clear the overlay area in both framebuffers so
+        // the old text can't persist if the other buffer isn't re-rendered
+        int overlay_y = s_lcdDisplayHeight - 10;
+        for (int b = 0; b < 2; b++) {
+            if (s_frameBuffers[b]) {
+                for (int y = overlay_y; y < s_lcdDisplayHeight; y++) {
+                    for (int x = 0; x < s_lcdDisplayWidth; x++) {
+                        s_frameBuffers[b][y * s_lcdDisplayWidth + x] = 0x0000;
+                    }
+                }
+            }
+        }
+        s_overlay_dirty = true;
     }
-    s_overlayColor = __builtin_bswap16(color);
+    s_overlayColor = new_swapped_color;
+    ESP_LOGI(TAG, "Overlay set: '%s' color=0x%04X", s_overlayText, color);
+    if (s_overlay_mutex) xSemaphoreGive(s_overlay_mutex);
 }

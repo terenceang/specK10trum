@@ -1,11 +1,13 @@
 #include "test_memory.h"
 #include "test_128k_banking.h"
 #include "z80_test.h"
+#include "test_config.h"
 #include <esp_log.h>
 #include <cstdio>
 #include <cstring>
 
-
+// Only compile the test runner when RUN_ALL_TESTS is enabled
+#if RUN_ALL_TESTS
 
 class TestRunner {
 public:
@@ -57,3 +59,7 @@ extern "C" {
         TestRunner::runAllTests(spectrum, modelName);
     }
 }
+
+#else
+// When tests are disabled, don't emit the test runner code.
+#endif
