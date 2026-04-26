@@ -354,7 +354,7 @@
 
             <div style="display:flex; gap:6px;">
               <button class="zx-player-btn" id="zx-btn-load-tape" style="flex:2">LOAD TAPE</button>
-              <button class="zx-player-btn" id="zx-btn-instant-load" style="flex:1">INSTANT LOAD</button>
+              <button class="zx-player-btn" id="zx-btn-instaload" style="flex:1">INSTALOAD</button>
             </div>
 
             <div id="zx-cassette-deck">
@@ -420,7 +420,7 @@
     return 'ws://' + location.host + '/ws';
   })();
 
-  // Tape mode state (instant|normal|player). Persist in localStorage.
+  // Tape mode state (instaload|normal|player). Persist in localStorage.
   let currentTapeMode = (function () { try { return localStorage.getItem('zx_tape_mode') || 'normal'; } catch (_) { return 'normal'; } })();
   // Last-loaded tape filename persisted across sessions
   let lastTape = (function () { try { return localStorage.getItem('zx_last_tape') || null; } catch (_) { return null; } })();
@@ -466,7 +466,7 @@
   const tapePlayer = document.getElementById('zx-player');
   const autoPlayToggle = document.getElementById('zx-auto-play-toggle');
   const btnLoadTape = document.getElementById('zx-btn-load-tape');
-  const btnInstantLoad = document.getElementById('zx-btn-instant-load');
+  const btnInstaload = document.getElementById('zx-btn-instaload');
 
   autoPlayToggle.addEventListener('change', (e) => {
     currentTapeMode = e.target.checked ? 'normal' : 'player';
@@ -487,11 +487,11 @@
     }
   });
 
-  btnInstantLoad.addEventListener('click', () => {
+  btnInstaload.addEventListener('click', () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ cmd: 'tape_instant_load' }));
+      ws.send(JSON.stringify({ cmd: 'tape_instaload' }));
     }
-    document.getElementById('zx-player-label').textContent = 'INSTANT LOADED';
+    document.getElementById('zx-player-label').textContent = 'INSTALOAD COMPLETE';
   });
 
   const btnPlayerClose = document.getElementById('zx-player-close');
@@ -503,7 +503,7 @@
 
   tapePlayer.addEventListener('click', (e) => {
     const btn = e.target.closest('.zx-player-btn');
-    if (!btn || btn.id === 'zx-btn-load-tape' || btn.id === 'zx-btn-instant-load') return;
+    if (!btn || btn.id === 'zx-btn-load-tape' || btn.id === 'zx-btn-instaload') return;
     const cmd = btn.dataset.tape;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ cmd }));

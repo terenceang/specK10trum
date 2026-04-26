@@ -240,8 +240,8 @@ void webserver_apply_pending(SpectrumBase* spectrum)
 
     if (s_pending_instant_load) {
         s_pending_instant_load = false;
-        ESP_LOGI(TAG, "Applying instant load");
-        spectrum->tape().instantLoad(spectrum);
+        ESP_LOGI(TAG, "Applying instaload");
+        spectrum->tape().instaload(spectrum);
     }
 }
 
@@ -280,7 +280,10 @@ static esp_err_t tape_handler(httpd_req_t *req)
     else if (strcmp(cmd, "ffwd") == 0) s_spectrum->tape().fastForward();
     else if (strcmp(cmd, "pause") == 0) s_spectrum->tape().pause();
     else if (strcmp(cmd, "eject") == 0) s_spectrum->tape().eject();
-    else if (strcmp(cmd, "instant_load") == 0) s_pending_instant_load = true;
+    else if (strcmp(cmd, "instant_load") == 0) {
+        s_pending_reset = true;
+        s_pending_instant_load = true;
+    }
 
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_sendstr(req, "OK");
@@ -334,8 +337,11 @@ static esp_err_t ws_handler(httpd_req_t *req)
             else if (strstr(json, "\"cmd\":\"tape_ffwd\"")) s_spectrum->tape().fastForward();
             else if (strstr(json, "\"cmd\":\"tape_pause\"")) s_spectrum->tape().pause();
             else if (strstr(json, "\"cmd\":\"tape_eject\"")) s_spectrum->tape().eject();
-            else if (strstr(json, "\"cmd\":\"tape_instant_load\"")) s_pending_instant_load = true;
-            else if (strstr(json, "\"cmd\":\"tape_mode_instant\"")) s_spectrum->tape().setMode(TapeMode::INSTANT);
+            else if (strstr(json, "\"cmd\":\"tape_instaload\"")) {
+                s_pending_reset = true;
+                s_pending_instant_load = true;
+            }
+            else if (strstr(json, "\"cmd\":\"tape_mode_instaload\"")) s_spectrum->tape().setMode(TapeMode::INSTANT);
             else if (strstr(json, "\"cmd\":\"tape_mode_normal\"")) s_spectrum->tape().setMode(TapeMode::NORMAL);
             else if (strstr(json, "\"cmd\":\"tape_mode_player\"")) s_spectrum->tape().setMode(TapeMode::PLAYER);
         } else if (ws_pkt.type == HTTPD_WS_TYPE_CLOSE) {

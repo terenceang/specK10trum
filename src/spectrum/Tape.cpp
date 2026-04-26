@@ -463,53 +463,124 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     return 11;
 }
 
-void Tape::instantLoad(SpectrumBase* spectrum) {
+void Tape::instaload(SpectrumBase* spectrum) {
     if (!m_enabled || m_num_blocks == 0) return;
 
-    ESP_LOGI(TAG, "Starting Instant Load memory injection...");
+    ESP_LOGI(TAG, "Starting Instaload memory injection...");
     Z80* cpu = spectrum->getCPU();
     uint16_t lastCodeStart = 0;
+    uint16_t totalProgLen = 0;
     bool hasCode = false;
+    bool hasBasic = false;
 
-    for (int i = 0; i < m_num_blocks; i++) {
+    for (int i = 0; i < (m_num_blocks - 1); i++) {  // Note: check up to second-to-last block
         const TapeBlockInternal& b = m_blocks[i];
-        // We look for standard header blocks (Type 0x10, first byte 0x00, length 19)
-        if (b.type == 0x10 && b.length == 19 && b.data[0] == 0x00) {
+        
+        // Check for standard header blocks (length 19, flag byte 0x00)
+        if (b.length == 19 && b.data && b.data[0] == 0x00) {
             uint8_t type = b.data[1];
+            uint8_t flag = b.data[2];  // The flag byte for the data block
             uint16_t len = b.data[12] | (b.data[13] << 8);
             uint16_t start = b.data[14] | (b.data[15] << 8);
             
-            if (type == 0) start = 23755; // BASIC programs always load to PROG area
-
-            ESP_LOGI(TAG, "Found header: Type=%d, Len=%d, Start=%d", type, len, start);
-
-            // The next block should be the data block (Type 0x10, first byte 0xFF)
+            // The next block should be the data block
             if (i + 1 < m_num_blocks) {
                 const TapeBlockInternal& db = m_blocks[i + 1];
-                if (db.type == 0x10 && db.data[0] == 0xFF) {
-                    // Inject data (skipping flag and checksum)
-                    uint16_t actualDataLen = (uint16_t)(db.length - 2);
-                    if (actualDataLen > len) actualDataLen = len; // Safety
-
-                    ESP_LOGI(TAG, "Injecting data block (%d bytes) to 0x%04X", actualDataLen, start);
-                    for (uint16_t j = 0; j < actualDataLen; j++) {
-                        spectrum->write((uint16_t)(start + j), db.data[1 + j]);
+                
+                // Check if this is a valid data block
+                bool isValidDataBlock = false;
+                size_t dataOffset = 0;
+                size_t dataLength = 0;
+                
+                if (db.data && db.length >= 2) {
+                    if (db.type == 0x10 || db.type == 0x11) {
+                        // Standard/Turbo data block: first byte is flag
+                        if (db.data[0] == flag || db.data[0] == 0xFF) {  // Accept both exact flag and 0xFF
+                            isValidDataBlock = true;
+                            dataOffset = 1;  // Skip flag byte
+                            dataLength = db.length - 2;  // Subtract flag and checksum
+                        }
+                    } else if (db.type == 0x14) {
+                        // Pure Data block: no flag byte
+                        isValidDataBlock = true;
+                        dataOffset = 0;
+                        dataLength = db.length;
                     }
-
-                    if (type == 3) { // CODE
-                        lastCodeStart = start;
-                        hasCode = true;
+                }
+                
+                if (isValidDataBlock) {
+                    if (dataLength > len) {
+                        dataLength = len;  // Limit to header-specified length
                     }
-                    i++; // Skip the data block in the next iteration
+                    
+                    uint16_t loadAddr = start;
+                    if (type == 0) {
+                        loadAddr = 23755; // BASIC programs load to PROG area
+                    }
+                    
+                    ESP_LOGI(TAG, "Injecting block %d: Type=%d, Len=%d, Addr=0x%04X, Flag=0x%02X", 
+                             i, type, dataLength, loadAddr, flag);
+                    
+                    for (uint16_t j = 0; j < dataLength; j++) {
+                        spectrum->write((uint16_t)(loadAddr + j), db.data[dataOffset + j]);
+                    }
+                    
+                    if (type == 0) {
+                        hasBasic = true;
+                        totalProgLen = dataLength;
+                    } else if (type == 3) { // CODE
+                        // Avoid jumping to the loading screen (usually at 16384)
+                        if (start != 16384) {
+                            lastCodeStart = start;
+                            hasCode = true;
+                        }
+                    }
+                    i++; // Skip the processed data block
+                } else {
+                    ESP_LOGW(TAG, "Instaload: Expected data block after header %d, but got type 0x%02X", 
+                             i, db.type);
                 }
             }
         }
     }
 
+    if (hasBasic) {
+        // Update BASIC system variables
+        uint16_t vars = (uint16_t)(23755 + totalProgLen);
+        uint16_t eLine = (uint16_t)(vars + 1);
+        
+        spectrum->write(23635, 23755 & 0xFF);
+        spectrum->write(23636, 23755 >> 8);
+        spectrum->write(23627, vars & 0xFF);
+        spectrum->write(23628, vars >> 8);
+        spectrum->write(23641, eLine & 0xFF);
+        spectrum->write(23642, eLine >> 8);
+        spectrum->write(23645, eLine & 0xFF);
+        spectrum->write(23646, eLine >> 8);
+        spectrum->write(23647, eLine & 0xFF);
+        spectrum->write(23648, eLine >> 8);
+        
+        ESP_LOGI(TAG, "BASIC variables updated. PROG=23755, VARS=%d", vars);
+    }
+
     if (hasCode) {
-        ESP_LOGI(TAG, "Instant load complete. Jumping to 0x%04X", lastCodeStart);
+        ESP_LOGI(TAG, "Instaload complete. Jumping to CODE at 0x%04X", lastCodeStart);
+        // Debug: Dump first 64 bytes at jump address
+        ESP_LOGI(TAG, "Memory at 0x%04X:", lastCodeStart);
+        char dumpbuf[3 * 16 + 1] = {0};
+        for (int row = 0; row < 4; ++row) {
+            for (int k = 0; k < 16; ++k) {
+                uint8_t v = spectrum->read((uint16_t)(lastCodeStart + row * 16 + k));
+                sprintf(dumpbuf + k * 3, "%02X ", v);
+            }
+            ESP_LOGI(TAG, "%04X: %s", lastCodeStart + row * 16, dumpbuf);
+            memset(dumpbuf, 0, sizeof(dumpbuf));
+        }
         cpu->pc = lastCodeStart;
+        ESP_LOGI(TAG, "PC set to 0x%04X, first opcode: 0x%02X", cpu->pc, spectrum->read(cpu->pc));
+    } else if (hasBasic) {
+        ESP_LOGI(TAG, "Instaload complete. BASIC loaded (type RUN to start).");
     } else {
-        ESP_LOGI(TAG, "Instant load complete. No CODE blocks found to auto-run.");
+        ESP_LOGI(TAG, "Instaload: No standard blocks found.");
     }
 }
