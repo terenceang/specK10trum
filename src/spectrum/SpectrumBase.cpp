@@ -37,6 +37,7 @@ SpectrumBase::SpectrumBase()
     , m_initialBorderColor(0)
     , m_renderBorderEventCount(0)
     , m_renderInitialBorderColor(0)
+    , m_borderMux(portMUX_INITIALIZER_UNLOCKED)
     , m_ulaClocks(0)
     , m_ulaScanline(0)
     , m_ulaCycle(0)
@@ -192,17 +193,8 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
         }
     }
     
-    // EAR input is bit 6. 
+    // EAR input is bit 6.
     bool current_ear = m_tape.getEar();
-    static bool last_logged_ear = false;
-    if (m_tape.isPlaying() && current_ear != last_logged_ear) {
-        static int toggle_count = 0;
-        toggle_count++;
-        if (toggle_count % 1000 == 0) {
-            ESP_LOGI(TAG, "EAR transition detected by CPU: %d (toggle %d)", current_ear, toggle_count);
-        }
-        last_logged_ear = current_ear;
-    }
 
     if (current_ear) {
         val |= 0x40;
@@ -287,11 +279,15 @@ void SpectrumBase::advanceULA(int tstates) {
     m_ulaClocks += (uint32_t)tstates;
     if (m_ulaClocks >= FRAME_T_STATES) {
         m_ulaClocks -= FRAME_T_STATES;
-        
-        // Copy current frame events to render buffer
+
+        // Publish this frame's border events for the renderer.
+        // Held just long enough to memcpy + assign three scalars; the
+        // renderer takes the same lock to snapshot to its local buffer.
+        portENTER_CRITICAL(&m_borderMux);
         memcpy(m_renderBorderEvents, m_borderEvents, m_borderEventCount * sizeof(BorderEvent));
         m_renderBorderEventCount = m_borderEventCount;
         m_renderInitialBorderColor = m_initialBorderColor;
+        portEXIT_CRITICAL(&m_borderMux);
 
         // Copy beeper events into render buffer
         m_beeper.copyForFrame();
@@ -407,6 +403,21 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     // instead of O(scanlines * events)). Per pixel-pair = 1 T-state of border,
     // matching real ULA timing (ULA paints 2 pixels per T-state).
     //
+    // Snapshot the published render buffer into a local copy under the
+    // border mutex so the writer (advanceULA, other core) cannot half-rewrite
+    // the array while we're walking it. Without this, a frame-boundary copy
+    // landing mid-render produces a mix of old + new timestamps and stripes
+    // appear and disappear at random scanlines.
+    static BorderEvent local_events[MAX_BORDER_EVENTS];
+    size_t local_count;
+    uint8_t local_init_color;
+    portENTER_CRITICAL(&m_borderMux);
+    local_count = m_renderBorderEventCount;
+    if (local_count > MAX_BORDER_EVENTS) local_count = MAX_BORDER_EVENTS;
+    if (local_count) memcpy(local_events, m_renderBorderEvents, local_count * sizeof(BorderEvent));
+    local_init_color = m_renderInitialBorderColor;
+    portEXIT_CRITICAL(&m_borderMux);
+
     // Pre-cache the palette colour for each border index so the inner loop
     // avoids a function call and a byte-swap per pixel pair.
     uint32_t border_pair[8];
@@ -415,7 +426,7 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         border_pair[i] = ((uint32_t)c << 16) | c;
     }
     size_t evt_idx = 0;
-    uint8_t cur_color = m_renderInitialBorderColor & 0x07;
+    uint8_t cur_color = local_init_color & 0x07;
     uint32_t cur_pair = border_pair[cur_color];
 
     const int total_pairs = bufWidth / 2;
@@ -423,9 +434,9 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     const int active_end_pair = (offset_x + source_width) / 2;
 
     auto consume_until = [&](uint32_t tstate_excl) {
-        while (evt_idx < m_renderBorderEventCount &&
-               m_renderBorderEvents[evt_idx].tstates < tstate_excl) {
-            cur_color = m_renderBorderEvents[evt_idx].color & 0x07;
+        while (evt_idx < local_count &&
+               local_events[evt_idx].tstates < tstate_excl) {
+            cur_color = local_events[evt_idx].color & 0x07;
             evt_idx++;
         }
         cur_pair = border_pair[cur_color];
@@ -451,8 +462,8 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
             // mid-line produces a vertical stripe at the right column.
             for (int xp = 0; xp < total_pairs; ++xp) {
                 uint32_t t = tstate_base + (uint32_t)xp;
-                if (evt_idx < m_renderBorderEventCount &&
-                    m_renderBorderEvents[evt_idx].tstates <= t) {
+                if (evt_idx < local_count &&
+                    local_events[evt_idx].tstates <= t) {
                     consume_until(t + 1);
                 }
                 lineStart32[xp] = cur_pair;
@@ -461,8 +472,8 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
             // Left border
             for (int xp = 0; xp < left_pairs; ++xp) {
                 uint32_t t = tstate_base + (uint32_t)xp;
-                if (evt_idx < m_renderBorderEventCount &&
-                    m_renderBorderEvents[evt_idx].tstates <= t) {
+                if (evt_idx < local_count &&
+                    local_events[evt_idx].tstates <= t) {
                     consume_until(t + 1);
                 }
                 lineStart32[xp] = cur_pair;
@@ -476,8 +487,8 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
             // Right border
             for (int xp = active_end_pair; xp < total_pairs; ++xp) {
                 uint32_t t = tstate_base + (uint32_t)xp;
-                if (evt_idx < m_renderBorderEventCount &&
-                    m_renderBorderEvents[evt_idx].tstates <= t) {
+                if (evt_idx < local_count &&
+                    local_events[evt_idx].tstates <= t) {
                     consume_until(t + 1);
                 }
                 lineStart32[xp] = cur_pair;

@@ -7,6 +7,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stddef.h>
+#include <freertos/FreeRTOS.h>
 #include "Beeper.h"
 #include "Tape.h"
 
@@ -129,10 +130,17 @@ protected:
     size_t m_borderEventCount;
     uint8_t m_initialBorderColor;
 
-    // Double buffering for renderer
+    // Double buffering for renderer.
+    // The writer (advanceULA on the emulator core) overwrites these at every
+    // frame boundary; the renderer (display task on the other core) reads
+    // them when triggered. The portMUX guards the publish/snapshot so the
+    // renderer never observes a half-written array — without it, a colour
+    // change near the end of frame N gets clobbered by frame N+1 mid-render
+    // and the loading stripe at that scanline disappears.
     BorderEvent m_renderBorderEvents[MAX_BORDER_EVENTS];
     size_t m_renderBorderEventCount;
     uint8_t m_renderInitialBorderColor;
+    portMUX_TYPE m_borderMux;
 
     uint32_t m_ulaClocks;
     uint16_t m_ulaScanline;

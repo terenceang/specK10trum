@@ -86,9 +86,6 @@ bool Tape::load(const char* filepath) {
 
     buildBlockList();
     resetPlaybackState();
-    
-    ESP_LOGI(TAG, "Tape loaded: %s (%zu bytes, %d blocks, TZX=%s)", 
-             filepath, m_size, m_num_blocks, m_is_tzx ? "yes" : "no");
     return true;
 }
 
@@ -110,7 +107,6 @@ void Tape::play() {
         if (m_pstate == PlayState::IDLE) {
             nextState();
         }
-        ESP_LOGI(TAG, "Tape PLAY");
     }
 }
 
@@ -118,12 +114,10 @@ void Tape::stop() {
     m_playing = false;
     m_paused = false;
     resetPlaybackState();
-    ESP_LOGI(TAG, "Tape STOP");
 }
 
 void Tape::rewind() {
     resetPlaybackState();
-    ESP_LOGI(TAG, "Tape REWIND");
 }
 
 void Tape::fastForward() {
@@ -132,18 +126,15 @@ void Tape::fastForward() {
         m_pstate = PlayState::IDLE;
         m_state_pulses_left = 0;
         m_tstate_counter = 0;
-        ESP_LOGI(TAG, "Tape FFWD to block %d", m_current_block_idx);
     }
 }
 
 void Tape::pause() {
     m_paused = !m_paused;
-    ESP_LOGI(TAG, "Tape %s", m_paused ? "PAUSED" : "RESUMED");
 }
 
 void Tape::eject() {
     unload();
-    ESP_LOGI(TAG, "Tape EJECTED");
 }
 
 void Tape::resetPlaybackState() {
@@ -292,7 +283,6 @@ void Tape::advance(uint32_t tstates) {
 
 void Tape::nextState() {
     if (m_current_block_idx >= m_num_blocks) {
-        ESP_LOGI(TAG, "Tape end reached");
         stop();
         return;
     }
@@ -301,12 +291,10 @@ void Tape::nextState() {
 
     switch (m_pstate) {
         case PlayState::IDLE:
-            ESP_LOGI(TAG, "Block %d start: type=0x%02X, len=%zu", m_current_block_idx, b.type, b.length);
             if (b.pilot_count > 0) {
                 m_pstate = PlayState::PILOT;
                 m_state_pulses_left = b.pilot_count;
                 m_current_pulse_len = b.pilot_len;
-                ESP_LOGD(TAG, "PILOT: %d pulses, %d T-states", m_state_pulses_left, m_current_pulse_len);
             } else {
                 m_pstate = PlayState::DATA;
                 m_data_byte_idx = 0;
@@ -314,7 +302,6 @@ void Tape::nextState() {
                 uint8_t bit = (b.data[0] & 0x80) ? 1 : 0;
                 m_current_pulse_len = bit ? b.one_len : b.zero_len;
                 m_state_pulses_left = 2;
-                ESP_LOGD(TAG, "DATA (no pilot): %zu bytes", b.length);
             }
             break;
 
@@ -322,14 +309,12 @@ void Tape::nextState() {
             m_pstate = PlayState::SYNC1;
             m_state_pulses_left = 1;
             m_current_pulse_len = b.sync1_len;
-            ESP_LOGD(TAG, "Block %d PILOT finished, starting SYNC1: %d T-states", m_current_block_idx, m_current_pulse_len);
             break;
 
         case PlayState::SYNC1:
             m_pstate = PlayState::SYNC2;
             m_state_pulses_left = 1;
             m_current_pulse_len = b.sync2_len;
-            ESP_LOGD(TAG, "Block %d SYNC2: %d T-states", m_current_block_idx, m_current_pulse_len);
             break;
 
         case PlayState::SYNC2:
@@ -340,7 +325,6 @@ void Tape::nextState() {
                 uint8_t bit = (b.data[0] & 0x80) ? 1 : 0;
                 m_current_pulse_len = bit ? b.one_len : b.zero_len;
                 m_state_pulses_left = 2;
-                ESP_LOGD(TAG, "Block %d DATA: %zu bytes", m_current_block_idx, b.length);
             }
             break;
 
@@ -365,7 +349,6 @@ void Tape::nextState() {
                 m_state_pulses_left = 1;
                 m_current_pulse_len = b.pause_tstates;
                 m_ear = false; // SILENCE
-                ESP_LOGI(TAG, "Block %d PAUSE: %d T-states", m_current_block_idx, m_current_pulse_len);
             }
         }
             break;
@@ -378,7 +361,6 @@ void Tape::nextState() {
             if (m_current_block_idx < m_num_blocks) {
                 nextState();
             } else {
-                ESP_LOGI(TAG, "Tape end reached");
                 stop();
             }
             break;
@@ -394,12 +376,10 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
         if (b.data != nullptr && b.length > 0 && (b.type == 0x10 || b.type == 0x11 || b.type == 0x14)) {
             break;
         }
-        ESP_LOGD(TAG, "Instant load: skipping non-data block %d (type=0x%02X)", m_current_block_idx, b.type);
         m_current_block_idx++;
     }
 
     if (m_num_blocks == 0 || m_current_block_idx >= m_num_blocks) {
-        ESP_LOGW(TAG, "Instant load: no more data blocks available");
         trapReturn(spectrum, cpu, false);
         return 11;
     }
@@ -418,9 +398,6 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     uint16_t dataAvailable = (blockLen >= 2) ? (blockLen - 2) : 0;
     uint8_t tapeFlag = (blockLen > 0) ? data[0] : 0xFF;
 
-    ESP_LOGI(TAG, "Instant load block %d: type=0x%02X, flag=0x%02X (exp=0x%02X), len=%u (exp=%u)", 
-             m_current_block_idx, block.type, tapeFlag, expectedFlag, dataAvailable, DE);
-
     // If it's a Pure Data block (0x14), it doesn't have a flag or checksum byte in the TZX spec,
     // but the Spectrum LD-BYTES routine ALWAYS expects a flag byte at the start of the "pulse" stream.
     // However, most TZX 'Pure Data' blocks used for standard loaders ARE prefixed with a flag.
@@ -430,7 +407,6 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     m_current_block_idx++;
 
     if (tapeFlag != expectedFlag) {
-        ESP_LOGW(TAG, "Instant load: flag mismatch (wanted 0x%02X, got 0x%02X)", expectedFlag, tapeFlag);
         trapReturn(spectrum, cpu, false);
         return 11;
     }
@@ -438,7 +414,6 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     // Note: Some loaders might ask for FEWER bytes than the block contains (e.g. reading header).
     // This is fine. If they ask for MORE, we fail.
     if (DE > dataAvailable) {
-        ESP_LOGW(TAG, "Instant load: block too short (asked %u, have %u)", DE, dataAvailable);
         trapReturn(spectrum, cpu, false);
         return 11;
     }
@@ -461,7 +436,6 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     if (DE == dataAvailable) {
         parity ^= checksumByte;
         ok = (parity == 0);
-        if (!ok) ESP_LOGW(TAG, "Instant load: parity error");
     }
 
     cpu->ix = (uint16_t)(IX + DE);
@@ -470,19 +444,12 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     cpu->a = checksumByte; // LD-BYTES returns last byte read (usually checksum) in A
 
     trapReturn(spectrum, cpu, ok);
-
-    ESP_LOGI(TAG, "INSTANT %s %s -> %s",
-             isLoad ? "LOAD" : "VERIFY",
-             (DE == dataAvailable) ? "Full" : "Partial",
-             ok ? "OK" : "PARITY-ERR");
-
     return 11;
 }
 
 void Tape::instaload(SpectrumBase* spectrum) {
     if (!m_enabled || m_num_blocks == 0) return;
 
-    ESP_LOGI(TAG, "Starting Instaload memory injection...");
     Z80* cpu = spectrum->getCPU();
     uint16_t lastCodeStart = 0;
     uint16_t totalProgLen = 0;
@@ -528,19 +495,16 @@ void Tape::instaload(SpectrumBase* spectrum) {
                     if (dataLength > len) {
                         dataLength = len;  // Limit to header-specified length
                     }
-                    
+
                     uint16_t loadAddr = start;
                     if (type == 0) {
                         loadAddr = 23755; // BASIC programs load to PROG area
                     }
-                    
-                    ESP_LOGI(TAG, "Injecting block %d: Type=%d, Len=%d, Addr=0x%04X, Flag=0x%02X", 
-                             i, type, dataLength, loadAddr, flag);
-                    
+
                     for (uint16_t j = 0; j < dataLength; j++) {
                         spectrum->write((uint16_t)(loadAddr + j), db.data[dataOffset + j]);
                     }
-                    
+
                     if (type == 0) {
                         hasBasic = true;
                         totalProgLen = dataLength;
@@ -552,9 +516,6 @@ void Tape::instaload(SpectrumBase* spectrum) {
                         }
                     }
                     i++; // Skip the processed data block
-                } else {
-                    ESP_LOGW(TAG, "Instaload: Expected data block after header %d, but got type 0x%02X", 
-                             i, db.type);
                 }
             }
         }
@@ -564,7 +525,7 @@ void Tape::instaload(SpectrumBase* spectrum) {
         // Update BASIC system variables
         uint16_t vars = (uint16_t)(23755 + totalProgLen);
         uint16_t eLine = (uint16_t)(vars + 1);
-        
+
         spectrum->write(23635, 23755 & 0xFF);
         spectrum->write(23636, 23755 >> 8);
         spectrum->write(23627, vars & 0xFF);
@@ -575,23 +536,9 @@ void Tape::instaload(SpectrumBase* spectrum) {
         spectrum->write(23646, eLine >> 8);
         spectrum->write(23647, eLine & 0xFF);
         spectrum->write(23648, eLine >> 8);
-        
-        ESP_LOGI(TAG, "BASIC variables updated. PROG=23755, VARS=%d", vars);
     }
 
     if (hasCode) {
-        ESP_LOGI(TAG, "Instaload complete. Jumping to CODE at 0x%04X", lastCodeStart);
-        // Debug: Dump first 64 bytes at jump address
-        ESP_LOGI(TAG, "Memory at 0x%04X:", lastCodeStart);
-        char dumpbuf[3 * 16 + 1] = {0};
-        for (int row = 0; row < 4; ++row) {
-            for (int k = 0; k < 16; ++k) {
-                uint8_t v = spectrum->read((uint16_t)(lastCodeStart + row * 16 + k));
-                sprintf(dumpbuf + k * 3, "%02X ", v);
-            }
-            ESP_LOGI(TAG, "%04X: %s", lastCodeStart + row * 16, dumpbuf);
-            memset(dumpbuf, 0, sizeof(dumpbuf));
-        }
         // Land in a clean Spectrum-like state. The webserver pre-runs the
         // ROM init so IM 1 + IFF1 + sysvars are already correct, but the
         // BASIC main loop has its own stack frames that the user code would
@@ -603,10 +550,5 @@ void Tape::instaload(SpectrumBase* spectrum) {
         cpu->im = 1;
         cpu->halted = 0;
         cpu->pc = lastCodeStart;
-        ESP_LOGI(TAG, "PC set to 0x%04X, first opcode: 0x%02X", cpu->pc, spectrum->read(cpu->pc));
-    } else if (hasBasic) {
-        ESP_LOGI(TAG, "Instaload complete. BASIC loaded (type RUN to start).");
-    } else {
-        ESP_LOGI(TAG, "Instaload: No standard blocks found.");
     }
 }
