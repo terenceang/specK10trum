@@ -194,8 +194,8 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
     // If no rows were selected (all address bits high), the port returns 0xFF
     if (!any_selected) val = 0xFF;
     
-    // EAR input is bit 6; approximate board coupling: EAR = externalEar OR speaker
-    if (m_beeper.getExternalEar() || m_beeper.currentSpeakerLevel()) {
+    // EAR input is bit 6; approximate board coupling: EAR = externalEar OR speaker OR tape EAR
+    if (m_beeper.getExternalEar() || m_beeper.currentSpeakerLevel() || m_tape.getEar()) {
         val |= 0x40;
     } else {
         val &= ~0x40;

@@ -120,7 +120,9 @@ static esp_err_t snapshots_list_handler(httpd_req_t *req)
     while ((ent = readdir(dir)) != NULL) {
         const char* ext = strrchr(ent->d_name, '.');
         if (!ext) continue;
-        if (strcasecmp(ext, ".z80") == 0 || strcasecmp(ext, ".sna") == 0) {
+        if (strcasecmp(ext, ".z80") == 0 || strcasecmp(ext, ".sna") == 0 ||
+            strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 ||
+            strcasecmp(ext, ".tsx") == 0) {
             char buf[512];
             int len = snprintf(buf, sizeof(buf), "%s\"%s\"", first ? "" : ",", ent->d_name);
             httpd_resp_send_chunk(req, buf, len);
@@ -133,7 +135,7 @@ static esp_err_t snapshots_list_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* API: Load a snapshot */
+/* API: Load a snapshot or tape */
 static esp_err_t snapshot_load_handler(httpd_req_t *req)
 {
     char buf[1024];
@@ -171,9 +173,17 @@ void webserver_apply_pending(SpectrumBase* spectrum)
 
     if (s_pending_load) {
         s_pending_load = false;
-        ESP_LOGI(TAG, "Applying snapshot: %s", s_pending_load_path);
-        if (!Snapshot::load(spectrum, s_pending_load_path)) {
-            ESP_LOGW(TAG, "Snapshot load failed: %s", s_pending_load_path);
+        const char* ext = strrchr(s_pending_load_path, '.');
+        if (ext && (strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 || strcasecmp(ext, ".tsx") == 0)) {
+            ESP_LOGI(TAG, "Loading tape: %s", s_pending_load_path);
+            if (!spectrum->tape().load(s_pending_load_path)) {
+                ESP_LOGW(TAG, "Tape load failed: %s", s_pending_load_path);
+            }
+        } else {
+            ESP_LOGI(TAG, "Applying snapshot: %s", s_pending_load_path);
+            if (!Snapshot::load(spectrum, s_pending_load_path)) {
+                ESP_LOGW(TAG, "Snapshot load failed: %s", s_pending_load_path);
+            }
         }
         // Loading a snapshot supersedes any queued reset.
         s_pending_reset = false;
@@ -185,6 +195,46 @@ void webserver_apply_pending(SpectrumBase* spectrum)
         ESP_LOGI(TAG, "Applying reset");
         spectrum->reset();
     }
+}
+
+/* API: Tape Control */
+static esp_err_t tape_handler(httpd_req_t *req)
+{
+    char buf[1024];
+    if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing query");
+        return ESP_OK;
+    }
+
+    char cmd[32];
+    if (httpd_query_key_value(buf, "cmd", cmd, sizeof(cmd)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing cmd");
+        return ESP_OK;
+    }
+
+    if (strcmp(cmd, "load") == 0) {
+        char filename[256];
+        if (httpd_query_key_value(buf, "file", filename, sizeof(filename)) == ESP_OK) {
+            char path[512];
+            snprintf(path, sizeof(path), "%s/%s", SPIFFS_ROOT, filename);
+            s_spectrum->tape().load(path);
+        }
+    } else if (strcmp(cmd, "mode") == 0) {
+        char mode[16];
+        if (httpd_query_key_value(buf, "mode", mode, sizeof(mode)) == ESP_OK) {
+            if (strcmp(mode, "instant") == 0) s_spectrum->tape().setMode(TapeMode::INSTANT);
+            else if (strcmp(mode, "normal") == 0) s_spectrum->tape().setMode(TapeMode::NORMAL);
+            else if (strcmp(mode, "player") == 0) s_spectrum->tape().setMode(TapeMode::PLAYER);
+        }
+    } else if (strcmp(cmd, "play") == 0) s_spectrum->tape().play();
+    else if (strcmp(cmd, "stop") == 0) s_spectrum->tape().stop();
+    else if (strcmp(cmd, "rewind") == 0) s_spectrum->tape().rewind();
+    else if (strcmp(cmd, "ffwd") == 0) s_spectrum->tape().fastForward();
+    else if (strcmp(cmd, "pause") == 0) s_spectrum->tape().pause();
+    else if (strcmp(cmd, "eject") == 0) s_spectrum->tape().eject();
+
+    httpd_resp_sendstr(req, "OK");
+    return ESP_OK;
 }
 
 static esp_err_t ws_handler(httpd_req_t *req)
@@ -206,11 +256,9 @@ static esp_err_t ws_handler(httpd_req_t *req)
     esp_err_t ret = httpd_ws_recv_frame(req, &ws_pkt, 0);
     if (ret != ESP_OK) return ret;
 
-    // CRITICAL: We MUST consume the entire payload to keep the WebSocket 
-    // stream synchronized.
     if (ws_pkt.len > 0) {
-        uint8_t buffer[64];
-        if (ws_pkt.len > sizeof(buffer)) {
+        uint8_t buffer[128];
+        if (ws_pkt.len > sizeof(buffer) - 1) {
             ESP_LOGW(TAG, "WS frame too large (%u); closing", (unsigned)ws_pkt.len);
             return ESP_FAIL; 
         }
@@ -219,7 +267,6 @@ static esp_err_t ws_handler(httpd_req_t *req)
         ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
         if (ret != ESP_OK) return ret;
 
-        // Process only if it's the expected 3-byte binary key event.
         if (ws_pkt.type == HTTPD_WS_TYPE_BINARY && ws_pkt.len == 3) {
             uint8_t row = buffer[0], bit = buffer[1], pressed = buffer[2];
             if (row < 8 && bit < 5) {
@@ -227,6 +274,19 @@ static esp_err_t ws_handler(httpd_req_t *req)
                 if (pressed) cur &= ~(1 << bit); else cur |= (1 << bit);
                 input_setKeyboardRow(row, cur);
             }
+        } else if (ws_pkt.type == HTTPD_WS_TYPE_TEXT) {
+            buffer[ws_pkt.len] = '\0';
+            const char* json = (const char*)buffer;
+            // Crude JSON parsing for tape commands
+            if (strstr(json, "\"cmd\":\"tape_play\"")) s_spectrum->tape().play();
+            else if (strstr(json, "\"cmd\":\"tape_stop\"")) s_spectrum->tape().stop();
+            else if (strstr(json, "\"cmd\":\"tape_rewind\"")) s_spectrum->tape().rewind();
+            else if (strstr(json, "\"cmd\":\"tape_ffwd\"")) s_spectrum->tape().fastForward();
+            else if (strstr(json, "\"cmd\":\"tape_pause\"")) s_spectrum->tape().pause();
+            else if (strstr(json, "\"cmd\":\"tape_eject\"")) s_spectrum->tape().eject();
+            else if (strstr(json, "\"cmd\":\"tape_mode_instant\"")) s_spectrum->tape().setMode(TapeMode::INSTANT);
+            else if (strstr(json, "\"cmd\":\"tape_mode_normal\"")) s_spectrum->tape().setMode(TapeMode::NORMAL);
+            else if (strstr(json, "\"cmd\":\"tape_mode_player\"")) s_spectrum->tape().setMode(TapeMode::PLAYER);
         } else if (ws_pkt.type == HTTPD_WS_TYPE_CLOSE) {
             ESP_LOGI(TAG, "Keyboard session closed (fd=%d)", fd);
         }
@@ -240,7 +300,7 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     httpd_config_t config  = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
     config.uri_match_fn     = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 16;
     config.stack_size       = 10240; // Increased stack
     config.recv_wait_timeout   = 60; // Increased timeout
     config.send_wait_timeout   = 30;
@@ -263,6 +323,9 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
 
     httpd_uri_t api_reset = { "/api/reset", HTTP_GET, reset_handler, NULL, false, false, NULL };
     httpd_register_uri_handler(s_server, &api_reset);
+
+    httpd_uri_t api_tape = { "/api/tape", HTTP_GET, tape_handler, NULL, false, false, NULL };
+    httpd_register_uri_handler(s_server, &api_tape);
 
     httpd_uri_t files = { "/*", HTTP_GET, file_get_handler, NULL, false, false, NULL };
     httpd_register_uri_handler(s_server, &files);

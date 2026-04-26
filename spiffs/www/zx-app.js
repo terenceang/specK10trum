@@ -74,6 +74,29 @@
     .zx-file-item:hover{background:#1a1a1c;color:var(--ink)}
     .zx-file-item::before{content:"📄";font-size:12px;opacity:0.5}
 
+    /* Tape Player UI */
+    .zx-player{position:absolute;top:60px;right:0;background:#141416;border:1px solid #444;
+      display:none;flex-direction:column;min-width:240px;z-index:150;
+      box-shadow:0 8px 24px rgba(0,0,0,0.6);border-radius:6px;padding:12px;gap:10px;}
+    .zx-player.open{display:flex;animation:zx-pop .12s ease-out}
+    .zx-player-deck{height:80px;background:#222;border-radius:4px;position:relative;overflow:hidden;
+      display:flex;justify-content:center;align-items:center;border:2px solid #111;}
+    .zx-player-cassette{width:160px;height:50px;background:#ddd;border-radius:4px;position:relative;
+      display:flex;justify-content:space-around;align-items:center;padding:0 20px;}
+    .zx-player-reel{width:36px;height:36px;border-radius:50%;background:#333;border:2px solid #111;
+      position:relative;display:flex;justify-content:center;align-items:center;}
+    .zx-player-reel::after{content:'';position:absolute;width:100%;height:4px;background:#aaa;}
+    .zx-player-reel::before{content:'';position:absolute;height:100%;width:4px;background:#aaa;}
+    .zx-player-reel.spin{animation:spin 2s linear infinite;}
+    .zx-player-reel.spin-fast{animation:spin 0.5s linear infinite;}
+    .zx-player-controls{display:flex;gap:6px;justify-content:space-between;}
+    .zx-player-btn{flex:1;padding:8px 0;background:#333;border:1px solid #111;color:#aaa;
+      font-size:10px;font-weight:bold;cursor:pointer;border-radius:3px;text-align:center;}
+    .zx-player-btn:hover{background:#444;color:#fff;}
+    .zx-player-btn:active{background:#222;}
+    .zx-player-label{font-size:10px;color:var(--dim);text-align:center;word-break:break-all;}
+
+    @keyframes spin{100%{transform:rotate(360deg);}}
     @keyframes zx-pop{from{transform:translateY(-4px);opacity:0}to{transform:translateY(0);opacity:1}}
     @keyframes zx-pop-sub{from{transform:translate(-50%,-48%) scale(0.98);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
 
@@ -286,8 +309,10 @@
 
           <div class="zx-menu" id="zx-menu">
             <div class="zx-menu-item" data-action="model">Model</div>
-            <div class="zx-menu-item" data-action="tape">Load Tape</div>
-            <div class="zx-menu-item" data-action="snapshot">Snapshot</div>
+            <div class="zx-menu-item" data-action="tape_instant">Tape Mode: Instant</div>
+            <div class="zx-menu-item" data-action="tape_normal">Tape Mode: Normal</div>
+            <div class="zx-menu-item" data-action="tape_player">Tape Mode: Player</div>
+            <div class="zx-menu-item" data-action="snapshot">Load File</div>
             <div class="zx-menu-item" data-action="settings">Settings</div>
             <div class="zx-menu-sep"></div>
             <div class="zx-menu-item danger" data-action="reset">Reset</div>
@@ -299,6 +324,24 @@
               <span class="zx-submenu-close" id="zx-submenu-close">&times;</span>
             </div>
             <div class="zx-submenu-list" id="zx-submenu-list"></div>
+          </div>
+
+          <div class="zx-player" id="zx-player">
+            <div class="zx-player-label" id="zx-player-label">NO TAPE LOADED</div>
+            <div class="zx-player-deck">
+              <div class="zx-player-cassette">
+                <div class="zx-player-reel" id="zx-reel-left"></div>
+                <div class="zx-player-reel" id="zx-reel-right"></div>
+              </div>
+            </div>
+            <div class="zx-player-controls">
+              <div class="zx-player-btn" data-tape="tape_play">PLAY</div>
+              <div class="zx-player-btn" data-tape="tape_stop">STOP</div>
+              <div class="zx-player-btn" data-tape="tape_rewind">REW</div>
+              <div class="zx-player-btn" data-tape="tape_ffwd">FFWD</div>
+              <div class="zx-player-btn" data-tape="tape_pause">PAUSE</div>
+              <div class="zx-player-btn" data-tape="tape_eject">EJECT</div>
+            </div>
           </div>
 
           <div class="zx-kb" id="zx-kb">
@@ -346,13 +389,50 @@
     const action = e.target.dataset.action;
     if (!action) return;
     if (action === 'snapshot') {
-      openSubmenu('SNAPSHOTS', '/api/snapshots');
+      openSubmenu('SNAPSHOTS/TAPES', '/api/snapshots');
     } else if (action === 'reset') {
       fetch('/api/reset').then(r => console.log('Reset:', r.status));
+    } else if (action.startsWith('tape_mode_')) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ cmd: action }));
+      }
+      if (action === 'tape_mode_player') {
+        document.getElementById('zx-player').classList.add('open');
+      } else {
+        document.getElementById('zx-player').classList.remove('open');
+      }
     } else {
       console.log('Menu action:', action);
     }
     menu.classList.remove('open');
+  });
+
+  // Tape Player Controls
+  const tapePlayer = document.getElementById('zx-player');
+  tapePlayer.addEventListener('click', (e) => {
+    const btn = e.target.closest('.zx-player-btn');
+    if (!btn) return;
+    const cmd = btn.dataset.tape;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ cmd }));
+    }
+    
+    // UI Animations
+    const leftReel = document.getElementById('zx-reel-left');
+    const rightReel = document.getElementById('zx-reel-right');
+    leftReel.className = 'zx-player-reel';
+    rightReel.className = 'zx-player-reel';
+    
+    if (cmd === 'tape_play') {
+      leftReel.classList.add('spin');
+      rightReel.classList.add('spin');
+    } else if (cmd === 'tape_rewind') {
+      leftReel.classList.add('spin-fast');
+    } else if (cmd === 'tape_ffwd') {
+      rightReel.classList.add('spin-fast');
+    } else if (cmd === 'tape_eject') {
+      document.getElementById('zx-player-label').textContent = 'NO TAPE LOADED';
+    }
   });
 
   subclose.addEventListener('click', () => submenu.classList.remove('open'));

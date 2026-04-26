@@ -34,12 +34,11 @@ Gallery
 ### Device Photos
 
 <p align="center">
-	<img src="assets/logo.png" alt="SpecK10trum logo" width="320" style="margin-right:8px;" />
-	<img src="assets/device-1.jpg" alt="SpecK10trum device photo 1" width="320" style="margin-right:8px;" />
-	<img src="assets/device-2.jpg" alt="SpecK10trum device photo 2" width="320" />
+	<img src="assets/SpecK10trum Logo keybd.svg" alt="SpecK10trum logo" width="320" style="margin-right:8px;" />
+	<img src="assets/baner.png" alt="SpecK10trum banner" width="320" style="margin-right:8px;" />
 </p>
 
-_Captions: left: project logo; center/right: device photos. To add your own photos, place images in the `assets/` folder and name them `device-1.jpg`, `device-2.jpg` (or update the paths in this file)._ 
+_Captions: left: project logo; right: project banner. Note: device-specific photos can be added to the `assets/` folder to populate this section._ 
 
 This project contains original code by Terence Ang and portions derived from ZOT (MIT). Unless otherwise noted in individual files, ZOT-derived code is distributed under the MIT license.
 
@@ -89,7 +88,15 @@ Audio
 Storage / I/O
 - SPIFFS partition for assets (`spiffs/`): `48k.rom`, `128k.rom`, optional splash BMP, `autoexec.z80`, `tape.tap`.
 - **Snapshot loader**: `.z80` (v1/v2/v3), including 128K page mapping, RLE decode, and 48K snapshots loaded into a 128K machine via a fallback path. AY register state restored on 128K snapshots.
-- **Virtual cassette**: TAP via ROM `LD-BYTES` trap at `$0556` — instant-load for standard ROM loaders. Autoloads `/spiffs/tape.tap` (or `autoload.tap`). See `docs/spectrum/cassette.md`.
+- **Virtual Cassette Player**: Full support for `.tap`, `.tzx`, and `.tsx` files with three loading modes:
+    - **Instant**: Injects blocks directly into memory via ROM `LD-BYTES` trap at `$0556`.
+    - **Normal**: Automatically starts playing authentic EAR pulses when the Spectrum enters the loading routine.
+    - **Authentic Player**: Provides a virtual cassette deck UI with full transport controls (Play, Stop, Rewind, FFWD, Pause, Eject) and animated reels. Requires manual operation: type `LOAD ""` then click Play.
+    - **Feedback**: Features authentic border stripes (Red/Cyan pilot, Yellow/Blue data) and loading sounds through the speakers.
+- **Connectivity & Provisioning**:
+    - **BLE Provisioning**: Easy Wi‑Fi setup using the "ESP Provisioning" app. Service name: `PROV_speck10` (POP: `12345678`).
+    - **Wi‑Fi Virtual Keyboard**: Low-latency WebSocket-based keyboard accessible via browser. Clear IP overlays appear on the Spectrum screen when connected.
+    - **Fallback SoftAP**: If configured Wi‑Fi is unavailable, the device creates an open hotspot named `SpecK10trum-Connect` (192.168.4.1) for direct access.
 - XL9535 I²C expander drives the backlight, user LED, and the two front-panel buttons (volume ±, long-press both = mute).
 
 Build / test
@@ -100,11 +107,9 @@ Roadmap / TODO
 --------------
 Priority order:
 
-1. TZX cassette format support (variable-rate pilot/sync + data blocks).
-2. SAVE support via `SA-BYTES` ($04C2) trap → write-back to a mounted TAP image.
-3. AY-3-8912 PSG tone synthesis (chip is register-mapped today; no audio output yet).
-4. On-screen file picker for ROMs / snapshots / tapes on SPIFFS.
-5. Wi‑Fi virtual keyboard + joystick (HTTP/websocket provisioning UI).
-6. Bluetooth provisioning (network/controls).
+1. SAVE support via `SA-BYTES` ($04C2) trap → write-back to a mounted TAP image.
+2. AY-3-8912 PSG tone synthesis (chip is register-mapped today; no audio output yet).
+3. On-screen file picker for ROMs / snapshots / tapes on SPIFFS.
+
 
 Issues and PRs welcome.

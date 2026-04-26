@@ -64,14 +64,24 @@ public:
     // CPU execution. Intercepts the ROM LD-BYTES trap for virtual-tape
     // instant-loading when a TAP is mounted and the 48K BASIC ROM is paged.
     int step() {
-        if (m_tape.isEnabled() && m_tape.isLoaded()
-            && m_cpu.pc == Tape::LD_BYTES_ENTRY
-            && isTapeRomActive()) {
-            int t = m_tape.serviceLoadTrap(this);
-            advanceULA(t);
-            return t;
+        if (m_tape.isEnabled() && m_tape.isLoaded()) {
+            if (m_tape.getMode() == TapeMode::INSTANT
+                && m_cpu.pc == Tape::LD_BYTES_ENTRY
+                && isTapeRomActive()) {
+                int t = m_tape.serviceLoadTrap(this);
+                m_tape.advance(t);
+                advanceULA(t);
+                return t;
+            }
+            if (m_tape.getMode() == TapeMode::NORMAL
+                && m_cpu.pc == Tape::LD_BYTES_ENTRY
+                && isTapeRomActive()
+                && !m_tape.isPlaying()) {
+                m_tape.play();
+            }
         }
         int t = z80_step(&m_cpu);
+        m_tape.advance(t);
         advanceULA(t);
         return t;
     }
