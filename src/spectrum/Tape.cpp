@@ -275,14 +275,6 @@ void Tape::advance(uint32_t tstates) {
         m_tstate_counter -= m_current_pulse_len;
         m_ear = !m_ear;
 
-        if (m_pstate == PlayState::DATA) {
-            static int data_pulse_count = 0;
-            data_pulse_count++;
-            if (data_pulse_count % 4000 == 0) {
-                ESP_LOGI(TAG, "DATA Phase: processed %d pulses, current EAR=%d", data_pulse_count, m_ear);
-            }
-        }
-
         if (m_state_pulses_left > 0) {
             m_state_pulses_left--;
         }
@@ -600,6 +592,16 @@ void Tape::instaload(SpectrumBase* spectrum) {
             ESP_LOGI(TAG, "%04X: %s", lastCodeStart + row * 16, dumpbuf);
             memset(dumpbuf, 0, sizeof(dumpbuf));
         }
+        // Land in a clean Spectrum-like state. The webserver pre-runs the
+        // ROM init so IM 1 + IFF1 + sysvars are already correct, but the
+        // BASIC main loop has its own stack frames that the user code would
+        // otherwise pop into on any stray RET. A top-of-RAM stack matches
+        // what most LOAD ""CODE then RANDOMIZE USR x loaders set up.
+        cpu->sp = 0xFFFF;
+        cpu->iff1 = 1;
+        cpu->iff2 = 1;
+        cpu->im = 1;
+        cpu->halted = 0;
         cpu->pc = lastCodeStart;
         ESP_LOGI(TAG, "PC set to 0x%04X, first opcode: 0x%02X", cpu->pc, spectrum->read(cpu->pc));
     } else if (hasBasic) {

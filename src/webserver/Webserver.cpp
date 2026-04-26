@@ -236,6 +236,29 @@ void webserver_apply_pending(SpectrumBase* spectrum)
         display_clearOverlay();
         display_clear();
         spectrum->reset();
+
+        // If an instaload was queued by the same UI action, run the BASIC
+        // ROM init now so the system variables, screen, IM 1 + EI, and stack
+        // are set up before we splice user code into memory and JP to it.
+        // Without this the user code lands on a zeroed sysvar area with
+        // interrupts disabled and a SP of 0xFFFF — most games hang or crash.
+        if (s_pending_instant_load) {
+            Z80* cpu = spectrum->getCPU();
+            const int max_tstates = 8000000; // ~2.3 s of emulated time, plenty
+            int spent = 0;
+            // 48K BASIC main loop entry. The ROM reaches this within
+            // ~250K T-states the first time and re-enters every keystroke.
+            // Stop on the first hit so we don't tie the emulator task up.
+            while (spent < max_tstates && cpu->pc != 0x12A9) {
+                spent += spectrum->step();
+            }
+            if (cpu->pc == 0x12A9) {
+                ESP_LOGI(TAG, "ROM init complete after %d T-states (PC=0x12A9)", spent);
+            } else {
+                ESP_LOGW(TAG, "ROM init did not reach BASIC main loop (PC=0x%04X after %d T-states)",
+                         cpu->pc, spent);
+            }
+        }
     }
 
     if (s_pending_instant_load) {

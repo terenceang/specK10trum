@@ -399,16 +399,36 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         return alloc;
     };
 
-    auto get_border_color_for_tstate = [&](uint32_t tstate) -> uint16_t {
-        uint8_t color = m_renderInitialBorderColor;
-        for (size_t i = 0; i < m_renderBorderEventCount; ++i) {
-            if (m_renderBorderEvents[i].tstates <= tstate) {
-                color = m_renderBorderEvents[i].color;
-            } else {
-                break;
-            }
+    // Streaming event walker. Events are timestamped with the T-state at
+    // which the CPU wrote port 0xFE; they appear in monotonically increasing
+    // order. We walk the buffer top-to-bottom, left-to-right, and the T-state
+    // we care about at each pixel-pair is also monotonically increasing — so
+    // a single pointer through the event list is enough (O(events + pixels)
+    // instead of O(scanlines * events)). Per pixel-pair = 1 T-state of border,
+    // matching real ULA timing (ULA paints 2 pixels per T-state).
+    //
+    // Pre-cache the palette colour for each border index so the inner loop
+    // avoids a function call and a byte-swap per pixel pair.
+    uint32_t border_pair[8];
+    for (int i = 0; i < 8; ++i) {
+        uint16_t c = spectrum_palette(i, false);
+        border_pair[i] = ((uint32_t)c << 16) | c;
+    }
+    size_t evt_idx = 0;
+    uint8_t cur_color = m_renderInitialBorderColor & 0x07;
+    uint32_t cur_pair = border_pair[cur_color];
+
+    const int total_pairs = bufWidth / 2;
+    const int left_pairs = offset_x / 2;
+    const int active_end_pair = (offset_x + source_width) / 2;
+
+    auto consume_until = [&](uint32_t tstate_excl) {
+        while (evt_idx < m_renderBorderEventCount &&
+               m_renderBorderEvents[evt_idx].tstates < tstate_excl) {
+            cur_color = m_renderBorderEvents[evt_idx].color & 0x07;
+            evt_idx++;
         }
-        return spectrum_palette(color & 0x07, false);
+        cur_pair = border_pair[cur_color];
     };
 
     // Render border areas
@@ -417,25 +437,51 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         if (spectrum_y < 0) spectrum_y = 0;
         if (spectrum_y >= FRAME_LINES) spectrum_y = FRAME_LINES - 1;
 
-        uint32_t tstate_base = spectrum_y * T_STATES_PER_LINE;
+        uint32_t tstate_base = (uint32_t)spectrum_y * T_STATES_PER_LINE;
         uint32_t* lineStart32 = (uint32_t*)&buffer[y * bufWidth];
         bool is_active_y = (y >= offset_y && y < offset_y + source_height);
-        
-        if (!is_active_y) {
-            // Full line is border. Sample in the middle of the visible part (T=80)
-            uint16_t color = get_border_color_for_tstate(tstate_base + 80);
-            uint32_t border32 = (color << 16) | color;
-            for (int i = 0; i < bufWidth / 2; ++i) lineStart32[i] = border32;
-        } else {
-            // Left border: drawn roughly at T=0 to T=23
-            uint16_t color_left = get_border_color_for_tstate(tstate_base + 10);
-            uint32_t border_left32 = (color_left << 16) | color_left;
-            for (int i = 0; i < offset_x / 2; ++i) lineStart32[i] = border_left32;
 
-            // Right border: drawn roughly at T=152 to T=175
-            uint16_t color_right = get_border_color_for_tstate(tstate_base + 160);
-            uint32_t border_right32 = (color_right << 16) | color_right;
-            for (int i = (offset_x + source_width) / 2; i < bufWidth / 2; ++i) lineStart32[i] = border_right32;
+        // Catch the walker up to the start of this scanline (covers the
+        // gap between this and the previous scanline's visible window —
+        // HBLANK + horizontal sync).
+        consume_until(tstate_base);
+
+        if (!is_active_y) {
+            // Whole row is border. Walk pair-by-pair so any colour change
+            // mid-line produces a vertical stripe at the right column.
+            for (int xp = 0; xp < total_pairs; ++xp) {
+                uint32_t t = tstate_base + (uint32_t)xp;
+                if (evt_idx < m_renderBorderEventCount &&
+                    m_renderBorderEvents[evt_idx].tstates <= t) {
+                    consume_until(t + 1);
+                }
+                lineStart32[xp] = cur_pair;
+            }
+        } else {
+            // Left border
+            for (int xp = 0; xp < left_pairs; ++xp) {
+                uint32_t t = tstate_base + (uint32_t)xp;
+                if (evt_idx < m_renderBorderEventCount &&
+                    m_renderBorderEvents[evt_idx].tstates <= t) {
+                    consume_until(t + 1);
+                }
+                lineStart32[xp] = cur_pair;
+            }
+
+            // Skip past any events that occurred while the ULA was painting
+            // the active 256-pixel area. They don't draw a border stripe but
+            // do update cur_color for the right border.
+            consume_until(tstate_base + (uint32_t)active_end_pair);
+
+            // Right border
+            for (int xp = active_end_pair; xp < total_pairs; ++xp) {
+                uint32_t t = tstate_base + (uint32_t)xp;
+                if (evt_idx < m_renderBorderEventCount &&
+                    m_renderBorderEvents[evt_idx].tstates <= t) {
+                    consume_until(t + 1);
+                }
+                lineStart32[xp] = cur_pair;
+            }
         }
     }
 
