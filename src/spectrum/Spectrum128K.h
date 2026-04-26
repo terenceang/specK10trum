@@ -1,5 +1,6 @@
 #pragma once
 #include "SpectrumBase.h"
+#include "PSG.h"
 
 class Spectrum128K : public SpectrumBase {
 public:
@@ -21,6 +22,7 @@ public:
     // AY-3-8912 sound chip access
     uint8_t readAY(uint8_t reg);
     void writeAY(uint8_t reg, uint8_t value);
+    void renderPSGAudio(int16_t* buffer, int num_samples) override;
 
     // Only the 48K BASIC ROM (bit 4 of 0x7FFD) contains LD-BYTES at 0x0556.
     bool isTapeRomActive() const override { return (m_port7FFD & 0x10) != 0; }
@@ -31,8 +33,8 @@ private:
     uint8_t m_port7FFD;       // paging register
     bool m_pagingLocked;
     
-    // AY-3-8912 sound chip registers
-    uint8_t m_ayRegisters[16];
+    // AY-3-8912 sound chip emulation
+    PSG m_psg;
     uint8_t m_aySelectedReg;
     
     void updatePaging();

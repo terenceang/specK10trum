@@ -20,7 +20,7 @@ Spectrum128K::Spectrum128K()
     }
     
     if (m_rom) memset(m_rom, 0xFF, ROM_SIZE);
-    memset(m_ayRegisters, 0, sizeof(m_ayRegisters));
+    m_psg.reset();
     
     updatePaging();
     
@@ -39,7 +39,7 @@ void Spectrum128K::reset() {
     m_port7FFD = 0;
     m_pagingLocked = false;
     m_aySelectedReg = 0;
-    memset(m_ayRegisters, 0, sizeof(m_ayRegisters));
+    m_psg.reset();
     
     for (int i = 0; i < 8; i++) {
         if (m_ramBanks[i]) memset(m_ramBanks[i], 0, BANK_SIZE);
@@ -80,11 +80,11 @@ void Spectrum128K::writePort(uint16_t port, uint8_t value) {
         writePortFE(value);
         return;
     }
-    else if ((port & 0xC002) == 0x8000) { // Port 0xBFFD
+    else if ((port & 0xC002) == 0xC000) { // Port 0xFFFD - Register Select
         m_aySelectedReg = value & 0x0F;
     }
-    else if ((port & 0xC002) == 0xC000) { // Port 0xFFFD
-        writeAY(m_aySelectedReg, value);
+    else if ((port & 0xC002) == 0x8000) { // Port 0xBFFD - Register Data
+        m_psg.writeRegister(m_aySelectedReg, value);
     }
 }
 
@@ -142,11 +142,14 @@ bool Spectrum128K::applySnapshotData(const uint8_t* data, size_t len) {
 }
 
 uint8_t Spectrum128K::readAY(uint8_t reg) {
-    return (reg < 16) ? m_ayRegisters[reg] : 0xFF;
+    return m_psg.readRegister(reg);
 }
 
 void Spectrum128K::writeAY(uint8_t reg, uint8_t value) {
-    if (reg < 16) {
-        m_ayRegisters[reg] = value;
-    }
+    m_psg.writeRegister(reg, value);
+}
+
+void Spectrum128K::renderPSGAudio(int16_t* buffer, int num_samples) {
+    // Spectrum 128K AY clock is 1.7734 MHz
+    m_psg.render(buffer, num_samples, 1773400.0, 44100.0);
 }

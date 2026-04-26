@@ -82,18 +82,26 @@ bool audio_init() {
 void audio_play_frame(SpectrumBase* spectrum) {
     if (!spectrum || !s_raw_write) return;
 
-    // Mono samples from beeper
-    int16_t mono_buf[SAMPLES_PER_FRAME];
+    // Buffers for beeper and PSG
+    int16_t beeper_buf[SAMPLES_PER_FRAME];
+    int16_t psg_buf[SAMPLES_PER_FRAME];
     // Stereo interleaved buffer (L,R)
     int16_t stereo_buf[SAMPLES_PER_FRAME * 2];
 
-    // Render beeper into mono buffer
-    spectrum->renderBeeperAudio(mono_buf, SAMPLES_PER_FRAME);
+    // Render both audio sources
+    spectrum->renderBeeperAudio(beeper_buf, SAMPLES_PER_FRAME);
+    spectrum->renderPSGAudio(psg_buf, SAMPLES_PER_FRAME);
 
-    // Duplicate mono to stereo (ADF ALC will handle volume)
+    // Mix and duplicate mono to stereo
     for (int i = 0; i < SAMPLES_PER_FRAME; ++i) {
-        stereo_buf[i * 2 + 0] = mono_buf[i];
-        stereo_buf[i * 2 + 1] = mono_buf[i];
+        // Simple additive mixing with saturation
+        int32_t mixed = (int32_t)beeper_buf[i] + (int32_t)psg_buf[i];
+        if (mixed > 32767) mixed = 32767;
+        if (mixed < -32768) mixed = -32768;
+        
+        int16_t s16 = (int16_t)mixed;
+        stereo_buf[i * 2 + 0] = s16;
+        stereo_buf[i * 2 + 1] = s16;
     }
 
     int ret = raw_stream_write(s_raw_write, (char*)stereo_buf, sizeof(stereo_buf));

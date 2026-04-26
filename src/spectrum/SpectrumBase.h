@@ -7,6 +7,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 #include <freertos/FreeRTOS.h>
 #include "Beeper.h"
 #include "Tape.h"
@@ -99,6 +100,10 @@ public:
     void renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight);
     // Render beeper audio into a PCM buffer (mono int16 samples)
     void renderBeeperAudio(int16_t* buffer, int num_samples) { m_beeper.renderFrame(buffer, num_samples); }
+    // Render PSG audio into a PCM buffer (mono int16 samples)
+    virtual void renderPSGAudio(int16_t* buffer, int num_samples) { 
+        memset(buffer, 0, num_samples * sizeof(int16_t)); 
+    }
 protected:
     friend class Snapshot;
     void advanceULA(int tstates);

@@ -163,6 +163,25 @@ static inline void trapReturn(SpectrumBase* s, Z80* cpu, bool carry) {
     cpu->pc = popPC(s, cpu);
 }
 
+void Tape::addBlock(uint8_t type, const uint8_t* data, uint32_t length, uint32_t pause_ms,
+                    uint16_t pilot_len, uint16_t pilot_count, 
+                    uint16_t sync1_len, uint16_t sync2_len,
+                    uint16_t zero_len, uint16_t one_len, uint8_t used_bits) {
+    if (m_num_blocks >= MAX_TAPE_BLOCKS) return;
+    TapeBlockInternal& b = m_blocks[m_num_blocks++];
+    b.type = type;
+    b.data = data;
+    b.length = length;
+    b.pause_tstates = pause_ms * 3500;
+    b.pilot_len = pilot_len;
+    b.pilot_count = pilot_count;
+    b.sync1_len = sync1_len;
+    b.sync2_len = sync2_len;
+    b.zero_len = zero_len;
+    b.one_len = one_len;
+    b.used_bits = used_bits;
+}
+
 void Tape::buildBlockList() {
     m_num_blocks = 0;
     if (!m_data) return;
@@ -172,61 +191,44 @@ void Tape::buildBlockList() {
         size_t p = 10;
         while (p < m_size && m_num_blocks < MAX_TAPE_BLOCKS) {
             uint8_t type = m_data[p++];
-            TapeBlockInternal& b = m_blocks[m_num_blocks];
-            b.type = type;
             
             switch (type) {
                 case 0x10: { // Standard Speed Data
-                    b.pause_tstates = (uint32_t)((m_data[p] | (m_data[p + 1] << 8))) * 3500;
+                    uint32_t pause_ms = m_data[p] | (m_data[p + 1] << 8);
                     uint16_t len = m_data[p + 2] | (m_data[p + 3] << 8);
-                    b.data = &m_data[p + 4];
-                    b.length = len;
-                    b.pilot_len = 2168;
-                    b.pilot_count = (b.data[0] < 128) ? 8063 : 3223;
-                    b.sync1_len = 667;
-                    b.sync2_len = 735;
-                    b.zero_len = 855;
-                    b.one_len = 1710;
-                    b.used_bits = 8;
+                    const uint8_t* data = &m_data[p + 4];
+                    addBlock(type, data, len, pause_ms, 2168, (data[0] < 128) ? 8063 : 3223, 667, 735, 855, 1710, 8);
                     p += 4 + len;
-                    m_num_blocks++;
                     break;
                 }
                 case 0x11: { // Turbo Speed Data
-                    b.pilot_len = m_data[p] | (m_data[p + 1] << 8);
-                    b.sync1_len = m_data[p + 2] | (m_data[p + 3] << 8);
-                    b.sync2_len = m_data[p + 4] | (m_data[p + 5] << 8);
-                    b.zero_len = m_data[p + 6] | (m_data[p + 7] << 8);
-                    b.one_len = m_data[p + 8] | (m_data[p + 9] << 8);
-                    b.pilot_count = m_data[p + 10] | (m_data[p + 11] << 8);
-                    b.used_bits = m_data[p + 12];
-                    b.pause_tstates = (uint32_t)(m_data[p + 13] | (m_data[p + 14] << 8)) * 3500;
+                    uint16_t pilot_len = m_data[p] | (m_data[p + 1] << 8);
+                    uint16_t sync1 = m_data[p + 2] | (m_data[p + 3] << 8);
+                    uint16_t sync2 = m_data[p + 4] | (m_data[p + 5] << 8);
+                    uint16_t zero = m_data[p + 6] | (m_data[p + 7] << 8);
+                    uint16_t one = m_data[p + 8] | (m_data[p + 9] << 8);
+                    uint16_t pilot_count = m_data[p + 10] | (m_data[p + 11] << 8);
+                    uint8_t used_bits = m_data[p + 12];
+                    uint32_t pause_ms = m_data[p + 13] | (m_data[p + 14] << 8);
                     uint32_t len = m_data[p + 15] | (m_data[p + 16] << 8) | (m_data[p + 17] << 16);
-                    b.data = &m_data[p + 18];
-                    b.length = len;
+                    addBlock(type, &m_data[p + 18], len, pause_ms, pilot_len, pilot_count, sync1, sync2, zero, one, used_bits);
                     p += 18 + len;
-                    m_num_blocks++;
                     break;
                 }
                 case 0x14: { // Pure Data
-                    b.zero_len = m_data[p] | (m_data[p + 1] << 8);
-                    b.one_len = m_data[p + 2] | (m_data[p + 3] << 8);
-                    b.used_bits = m_data[p + 4];
-                    b.pause_tstates = (uint32_t)(m_data[p + 5] | (m_data[p + 6] << 8)) * 3500;
+                    uint16_t zero = m_data[p] | (m_data[p + 1] << 8);
+                    uint16_t one = m_data[p + 2] | (m_data[p + 3] << 8);
+                    uint8_t used_bits = m_data[p + 4];
+                    uint32_t pause_ms = m_data[p + 5] | (m_data[p + 6] << 8);
                     uint32_t len = m_data[p + 7] | (m_data[p + 8] << 8) | (m_data[p + 9] << 16);
-                    b.data = &m_data[p + 10];
-                    b.length = len;
-                    b.pilot_count = 0; // No pilot
+                    addBlock(type, &m_data[p + 10], len, pause_ms, 0, 0, 0, 0, zero, one, used_bits);
                     p += 10 + len;
-                    m_num_blocks++;
                     break;
                 }
                 case 0x20: { // Pause
-                    b.pause_tstates = (uint32_t)(m_data[p] | (m_data[p + 1] << 8)) * 3500;
-                    b.data = nullptr;
-                    b.length = 0;
+                    uint32_t pause_ms = m_data[p] | (m_data[p + 1] << 8);
+                    addBlock(type, nullptr, 0, pause_ms);
                     p += 2;
-                    m_num_blocks++;
                     break;
                 }
                 default:
@@ -239,20 +241,9 @@ void Tape::buildBlockList() {
         while (p + 2 <= m_size && m_num_blocks < MAX_TAPE_BLOCKS) {
             uint16_t len = m_data[p] | (m_data[p + 1] << 8);
             if (p + 2 + len > m_size) break;
-            TapeBlockInternal& b = m_blocks[m_num_blocks];
-            b.type = 0x10;
-            b.data = &m_data[p + 2];
-            b.length = len;
-            b.pause_tstates = 1000 * 3500;
-            b.pilot_len = 2168;
-            b.pilot_count = (b.data[0] < 128) ? 8063 : 3223;
-            b.sync1_len = 667;
-            b.sync2_len = 735;
-            b.zero_len = 855;
-            b.one_len = 1710;
-            b.used_bits = 8;
+            const uint8_t* data = &m_data[p + 2];
+            addBlock(0x10, data, len, 1000, 2168, (data[0] < 128) ? 8063 : 3223, 667, 735, 855, 1710, 8);
             p += 2 + len;
-            m_num_blocks++;
         }
     }
 }
@@ -374,26 +365,31 @@ void Tape::nextState() {
     }
 }
 
-int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
-    Z80* cpu = spectrum->getCPU();
-
-    // Skip any non-data blocks (like pauses or metadata) until we find a data-carrying block
+int Tape::seekToNextDataBlock() {
     while (m_current_block_idx < m_num_blocks) {
         const TapeBlockInternal& b = m_blocks[m_current_block_idx];
         if (b.data != nullptr && b.length > 0 && (b.type == 0x10 || b.type == 0x11 || b.type == 0x14)) {
-            break;
+            return m_current_block_idx;
         }
         m_current_block_idx++;
     }
+    return -1;
+}
 
-    if (m_num_blocks == 0 || m_current_block_idx >= m_num_blocks) {
+int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
+    Z80* cpu = spectrum->getCPU();
+
+    if (seekToNextDataBlock() < 0) {
         trapReturn(spectrum, cpu, false);
         return 11;
     }
 
     const TapeBlockInternal& block = m_blocks[m_current_block_idx];
     const uint8_t* data = block.data;
-    const uint16_t blockLen = (uint16_t)block.length;
+    const uint32_t blockLen = block.length;
+    
+    // Consume this block.
+    m_current_block_idx++;
 
     const uint8_t  expectedFlag = cpu->a;
     const uint16_t DE = (uint16_t)(((uint16_t)cpu->d << 8) | cpu->e);
@@ -401,25 +397,14 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     const bool     isLoad = (cpu->f & Z80_CF) != 0;
 
     // Standard Spectrum data blocks have: [Flag] [Data...] [Checksum]
-    // blockLen includes Flag and Checksum.
-    uint16_t dataAvailable = (blockLen >= 2) ? (blockLen - 2) : 0;
+    uint32_t dataAvailable = (blockLen >= 2) ? (blockLen - 2) : 0;
     uint8_t tapeFlag = (blockLen > 0) ? data[0] : 0xFF;
-
-    // If it's a Pure Data block (0x14), it doesn't have a flag or checksum byte in the TZX spec,
-    // but the Spectrum LD-BYTES routine ALWAYS expects a flag byte at the start of the "pulse" stream.
-    // However, most TZX 'Pure Data' blocks used for standard loaders ARE prefixed with a flag.
-    // We'll trust the first byte of the block is the flag if it's not a standard block too.
-
-    // Consume this block.
-    m_current_block_idx++;
 
     if (tapeFlag != expectedFlag) {
         trapReturn(spectrum, cpu, false);
         return 11;
     }
 
-    // Note: Some loaders might ask for FEWER bytes than the block contains (e.g. reading header).
-    // This is fine. If they ask for MORE, we fail.
     if (DE > dataAvailable) {
         trapReturn(spectrum, cpu, false);
         return 11;
@@ -432,13 +417,7 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
         if (isLoad) spectrum->write((uint16_t)(IX + i), b);
     }
     
-    // The LD-BYTES routine expects the parity of ALL bytes including the final checksum byte 
-    // to be zero. The checksum byte is the last byte of the block.
     const uint8_t checksumByte = data[blockLen - 1];
-    
-    // If we read exactly the data length, the next byte to 'XOR' for parity check is the checksum byte.
-    // If the loader read a partial block, we can't easily verify parity against the block's checksum 
-    // without reading the rest of the block's data. For now, if partial, we'll just succeed if flag matched.
     bool ok = true;
     if (DE == dataAvailable) {
         parity ^= checksumByte;
@@ -448,7 +427,7 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
     cpu->ix = (uint16_t)(IX + DE);
     cpu->d = 0;
     cpu->e = 0;
-    cpu->a = checksumByte; // LD-BYTES returns last byte read (usually checksum) in A
+    cpu->a = checksumByte;
 
     trapReturn(spectrum, cpu, ok);
     return 11;
@@ -460,100 +439,72 @@ void Tape::instaload(SpectrumBase* spectrum) {
     Z80* cpu = spectrum->getCPU();
     uint16_t lastCodeStart = 0;
     uint16_t totalProgLen = 0;
-    bool hasCode = false;
-    bool hasBasic = false;
+    bool hasCode = false, hasBasic = false;
 
     ESP_LOGI(TAG, "Starting instaload. Blocks: %d", m_num_blocks);
 
     for (int i = 0; i < (m_num_blocks - 1); i++) {
         const TapeBlockInternal& b = m_blocks[i];
         
-        // Standard Spectrum header is 19 bytes: [Flag 0x00] [Type 1] [Name 10] [Len 2] [Param1 2] [Param2 2] [Checksum 1]
+        // Standard Spectrum header is 19 bytes
         if (b.length == 19 && b.data && b.data[0] == 0x00) {
             uint8_t type = b.data[1];
             uint16_t len = b.data[12] | (b.data[13] << 8);
             uint16_t start = b.data[14] | (b.data[15] << 8);
             
-            // The next block should be the data block
-            if (i + 1 < m_num_blocks) {
-                const TapeBlockInternal& db = m_blocks[i + 1];
-                
-                bool isValidDataBlock = false;
-                size_t dataOffset = 0;
-                size_t dataLength = 0;
-                
-                if (db.data && db.length >= 2) {
-                    // Data blocks for standard loaders always start with flag 0xFF (or matching header flag, but headers are 0x00)
-                    if (db.type == 0x10 || db.type == 0x11) {
-                        if (db.data[0] == 0xFF || db.data[0] == 0x00) {
-                            isValidDataBlock = true;
-                            dataOffset = 1; 
-                            dataLength = db.length - 2; // Subtract flag and checksum
-                        }
-                    } else if (db.type == 0x14) {
+            const TapeBlockInternal& db = m_blocks[i + 1];
+            bool isValidDataBlock = false;
+            size_t dataOffset = 0, dataLength = 0;
+            
+            if (db.data && db.length >= 2) {
+                if (db.type == 0x10 || db.type == 0x11) {
+                    if (db.data[0] == 0xFF || db.data[0] == 0x00) {
                         isValidDataBlock = true;
-                        dataOffset = 0;
-                        dataLength = db.length;
+                        dataOffset = 1; 
+                        dataLength = db.length - 2;
                     }
+                } else if (db.type == 0x14) {
+                    isValidDataBlock = true;
+                    dataOffset = 0;
+                    dataLength = db.length;
                 }
-                
-                if (isValidDataBlock) {
-                    if (dataLength > len) dataLength = len;
+            }
+            
+            if (isValidDataBlock) {
+                if (dataLength > len) dataLength = len;
+                uint16_t loadAddr = (type == 0) ? 23755 : start;
 
-                    uint16_t loadAddr = start;
-                    if (type == 0) loadAddr = 23755;
-
-                    ESP_LOGI(TAG, "Loading block type %d to 0x%04X, len %zu", type, loadAddr, dataLength);
-
-                    for (uint16_t j = 0; j < dataLength; j++) {
-                        spectrum->write((uint16_t)(loadAddr + j), db.data[dataOffset + j]);
-                    }
-
-                    if (type == 0) {
-                        hasBasic = true;
-                        totalProgLen = (uint16_t)dataLength;
-                    } else if (type == 3) { // CODE
-                        // Avoid jumping to the loading screen (usually at 0x4000/16384)
-                        if (start != 16384) {
-                            lastCodeStart = start;
-                            hasCode = true;
-                        }
-                    }
-                    i++; // Skip the processed data block
+                ESP_LOGI(TAG, "Loading block type %d to 0x%04X, len %zu", type, loadAddr, dataLength);
+                for (uint16_t j = 0; j < dataLength; j++) {
+                    spectrum->write((uint16_t)(loadAddr + j), db.data[dataOffset + j]);
                 }
+
+                if (type == 0) {
+                    hasBasic = true;
+                    totalProgLen = (uint16_t)dataLength;
+                } else if (type == 3 && start != 16384) {
+                    lastCodeStart = start;
+                    hasCode = true;
+                }
+                i++; // Skip data block
             }
         }
     }
 
     if (hasBasic) {
-        ESP_LOGI(TAG, "Setting up BASIC sysvars, program length: %d", totalProgLen);
         uint16_t vars = (uint16_t)(23755 + totalProgLen);
         uint16_t eLine = (uint16_t)(vars + 1);
-
-        spectrum->write(23635, 23755 & 0xFF);
-        spectrum->write(23636, 23755 >> 8);
-        spectrum->write(23627, vars & 0xFF);
-        spectrum->write(23628, vars >> 8);
-        spectrum->write(23641, eLine & 0xFF);
-        spectrum->write(23642, eLine >> 8);
-        spectrum->write(23645, eLine & 0xFF);
-        spectrum->write(23646, eLine >> 8);
-        spectrum->write(23647, eLine & 0xFF);
-        spectrum->write(23648, eLine >> 8);
+        spectrum->write(23635, 23755 & 0xFF); spectrum->write(23636, 23755 >> 8);
+        spectrum->write(23627, vars & 0xFF);  spectrum->write(23628, vars >> 8);
+        spectrum->write(23641, eLine & 0xFF); spectrum->write(23642, eLine >> 8);
+        spectrum->write(23645, eLine & 0xFF); spectrum->write(23646, eLine >> 8);
+        spectrum->write(23647, eLine & 0xFF); spectrum->write(23648, eLine >> 8);
     }
 
     if (hasCode) {
-        ESP_LOGI(TAG, "Jumping to CODE at 0x%04X", lastCodeStart);
-        cpu->sp = 0xFFFE;
-        cpu->iff1 = 1;
-        cpu->iff2 = 1;
-        cpu->im = 1;
-        cpu->halted = 0;
+        cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0;
         cpu->pc = lastCodeStart;
     } else if (hasBasic) {
-        ESP_LOGI(TAG, "Jumping to BASIC at 23755");
         cpu->pc = 23755;
-    } else {
-        ESP_LOGW(TAG, "Instaload found no recognizable BASIC or CODE blocks");
     }
 }

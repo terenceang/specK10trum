@@ -72,25 +72,31 @@ private:
 
     // Block parsing
     struct TapeBlockInternal {
-        uint8_t type;          // 0x10: Standard, 0x11: Turbo, 0x14: Pure Data, 0x20: Pause, etc.
         const uint8_t* data;
-        size_t length;         // Data length in bytes
+        uint32_t length;        // Data length in bytes
         uint32_t pause_tstates; // Pause after block in T-states
-        
-        // Timing params (T-states)
-        uint32_t pilot_len;
-        uint32_t pilot_count;
-        uint32_t sync1_len;
-        uint32_t sync2_len;
-        uint32_t zero_len;
-        uint32_t one_len;
-        uint8_t  used_bits;    // Bits used in the last byte
+        uint16_t pilot_len;
+        uint16_t pilot_count;
+        uint16_t sync1_len;
+        uint16_t sync2_len;
+        uint16_t zero_len;
+        uint16_t one_len;
+        uint8_t  type;          // 0x10: Standard, 0x11: Turbo, 0x14: Pure Data, 0x20: Pause, etc.
+        uint8_t  used_bits;     // Bits used in the last byte
     };
 
-    static constexpr int MAX_TAPE_BLOCKS = 256;
+    static constexpr int MAX_TAPE_BLOCKS = 1024;
     TapeBlockInternal m_blocks[MAX_TAPE_BLOCKS];
     int m_num_blocks;
     int m_current_block_idx;
+
+    // Helper for adding blocks
+    void addBlock(uint8_t type, const uint8_t* data, uint32_t length, uint32_t pause_ms,
+                  uint16_t pilot_len = 0, uint16_t pilot_count = 0, 
+                  uint16_t sync1_len = 0, uint16_t sync2_len = 0,
+                  uint16_t zero_len = 0, uint16_t one_len = 0, uint8_t used_bits = 8);
+    
+    int seekToNextDataBlock();
 
     // Pulse generator state machine
     enum class PlayState {
