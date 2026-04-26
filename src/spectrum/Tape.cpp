@@ -26,7 +26,7 @@ Tape::Tape()
     , m_current_block_idx(0)
     , m_pstate(PlayState::IDLE)
     , m_state_pulses_left(0)
-    , m_current_pulse_len(0)
+    , m_current_pulse_len(1)
     , m_data_byte_idx(0)
     , m_data_bit_idx(0)
     , m_is_tzx(false)
@@ -151,6 +151,7 @@ void Tape::resetPlaybackState() {
     m_pstate = PlayState::IDLE;
     m_state_pulses_left = 0;
     m_tstate_counter = 0;
+    m_current_pulse_len = 1; // Ensure advance() doesn't return immediately
     m_data_byte_idx = 0;
     m_data_bit_idx = 0;
     m_ear = false;
@@ -263,27 +264,43 @@ void Tape::buildBlockList() {
         }
     }
 }
-
 void Tape::advance(uint32_t tstates) {
-    if (!m_playing || m_paused) return;
+    if (!m_playing || m_paused || !m_data) return;
+
+    if (m_current_pulse_len == 0) return;
 
     m_tstate_counter += tstates;
+
     while (m_playing && m_tstate_counter >= m_current_pulse_len) {
         m_tstate_counter -= m_current_pulse_len;
         m_ear = !m_ear;
-        
+
+        if (m_pstate == PlayState::DATA) {
+            static int data_pulse_count = 0;
+            data_pulse_count++;
+            if (data_pulse_count % 4000 == 0) {
+                ESP_LOGI(TAG, "DATA Phase: processed %d pulses, current EAR=%d", data_pulse_count, m_ear);
+            }
+        }
+
         if (m_state_pulses_left > 0) {
             m_state_pulses_left--;
         }
-        
+
         if (m_state_pulses_left == 0) {
             nextState();
+            if (m_current_pulse_len == 0) {
+                if (m_playing) stop();
+                return;
+            }
         }
     }
 }
 
+
 void Tape::nextState() {
     if (m_current_block_idx >= m_num_blocks) {
+        ESP_LOGI(TAG, "Tape end reached");
         stop();
         return;
     }
@@ -292,18 +309,20 @@ void Tape::nextState() {
 
     switch (m_pstate) {
         case PlayState::IDLE:
+            ESP_LOGI(TAG, "Block %d start: type=0x%02X, len=%zu", m_current_block_idx, b.type, b.length);
             if (b.pilot_count > 0) {
                 m_pstate = PlayState::PILOT;
                 m_state_pulses_left = b.pilot_count;
                 m_current_pulse_len = b.pilot_len;
+                ESP_LOGD(TAG, "PILOT: %d pulses, %d T-states", m_state_pulses_left, m_current_pulse_len);
             } else {
                 m_pstate = PlayState::DATA;
                 m_data_byte_idx = 0;
                 m_data_bit_idx = 0;
-                // For Pure Data, there's no sync pulses
                 uint8_t bit = (b.data[0] & 0x80) ? 1 : 0;
                 m_current_pulse_len = bit ? b.one_len : b.zero_len;
                 m_state_pulses_left = 2;
+                ESP_LOGD(TAG, "DATA (no pilot): %zu bytes", b.length);
             }
             break;
 
@@ -311,12 +330,14 @@ void Tape::nextState() {
             m_pstate = PlayState::SYNC1;
             m_state_pulses_left = 1;
             m_current_pulse_len = b.sync1_len;
+            ESP_LOGD(TAG, "Block %d PILOT finished, starting SYNC1: %d T-states", m_current_block_idx, m_current_pulse_len);
             break;
 
         case PlayState::SYNC1:
             m_pstate = PlayState::SYNC2;
             m_state_pulses_left = 1;
             m_current_pulse_len = b.sync2_len;
+            ESP_LOGD(TAG, "Block %d SYNC2: %d T-states", m_current_block_idx, m_current_pulse_len);
             break;
 
         case PlayState::SYNC2:
@@ -327,6 +348,7 @@ void Tape::nextState() {
                 uint8_t bit = (b.data[0] & 0x80) ? 1 : 0;
                 m_current_pulse_len = bit ? b.one_len : b.zero_len;
                 m_state_pulses_left = 2;
+                ESP_LOGD(TAG, "Block %d DATA: %zu bytes", m_current_block_idx, b.length);
             }
             break;
 
@@ -351,6 +373,7 @@ void Tape::nextState() {
                 m_state_pulses_left = 1;
                 m_current_pulse_len = b.pause_tstates;
                 m_ear = false; // SILENCE
+                ESP_LOGI(TAG, "Block %d PAUSE: %d T-states", m_current_block_idx, m_current_pulse_len);
             }
         }
             break;
@@ -363,6 +386,7 @@ void Tape::nextState() {
             if (m_current_block_idx < m_num_blocks) {
                 nextState();
             } else {
+                ESP_LOGI(TAG, "Tape end reached");
                 stop();
             }
             break;

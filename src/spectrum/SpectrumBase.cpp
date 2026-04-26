@@ -42,6 +42,7 @@ SpectrumBase::SpectrumBase()
     , m_ulaCycle(0)
     , m_borderColor(0)
     , m_lastSpeakerBit(0)
+    , m_lastTapeEar(false)
 {
     for (int i = 0; i < 4; i++) {
         m_memReadMap[i] = nullptr;
@@ -180,27 +181,38 @@ void SpectrumBase::writePortFE(uint8_t value) {
 }
 
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
-    uint8_t val = 0xFF;
+    uint8_t val = 0xBF; // Bits 0-4 are columns (active low), Bit 6 (EAR) is 0 by default, others 1
+    
     // Standard Spectrum keyboard: Address bits A8-A15 select rows.
     // If a bit is 0, that row is selected. If multiple bits are 0, results are ANDed.
     uint8_t row_addr = (port >> 8);
-    bool any_selected = false;
     for (int i = 0; i < 8; i++) {
         if (!(row_addr & (1 << i))) {
             val &= input_getKeyboardRow(i);
-            any_selected = true;
         }
     }
     
-    // If no rows were selected (all address bits high), the port returns 0xFF
-    if (!any_selected) val = 0xFF;
-    
-    // EAR input is bit 6; approximate board coupling: EAR = externalEar OR speaker OR tape EAR
-    if (m_beeper.getExternalEar() || m_beeper.currentSpeakerLevel() || m_tape.getEar()) {
+    // EAR input is bit 6. 
+    bool current_ear = m_tape.getEar();
+    static bool last_logged_ear = false;
+    if (m_tape.isPlaying() && current_ear != last_logged_ear) {
+        static int toggle_count = 0;
+        toggle_count++;
+        if (toggle_count % 1000 == 0) {
+            ESP_LOGI(TAG, "EAR transition detected by CPU: %d (toggle %d)", current_ear, toggle_count);
+        }
+        last_logged_ear = current_ear;
+    }
+
+    if (current_ear) {
         val |= 0x40;
     } else {
         val &= ~0x40;
     }
+    
+    // Bits 5 and 7 are usually 1 or floating (we'll keep them 1)
+    val |= 0xA0; 
+    
     return val;
 }
 
@@ -239,6 +251,7 @@ void SpectrumBase::setKeyboardRow(uint8_t row, uint8_t columns) {
 void SpectrumBase::reset() {
     m_borderColor = 0;
     m_lastSpeakerBit = 0;
+    m_lastTapeEar = false;
     m_initialBorderColor = 0;
     m_borderEventCount = 0;
     m_renderInitialBorderColor = 0;
@@ -265,11 +278,10 @@ void SpectrumBase::reset() {
 
 void SpectrumBase::advanceULA(int tstates) {
     // Check if Tape EAR changed to record beeper events for loading sounds
-    static bool s_lastTapeEar = false;
     bool curTapeEar = m_tape.getEar();
-    if (curTapeEar != s_lastTapeEar) {
+    if (curTapeEar != m_lastTapeEar) {
         m_beeper.recordEvent(m_ulaClocks, m_lastSpeakerBit | (curTapeEar ? 1 : 0));
-        s_lastTapeEar = curTapeEar;
+        m_lastTapeEar = curTapeEar;
     }
 
     m_ulaClocks += (uint32_t)tstates;
@@ -401,10 +413,7 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
 
     // Render border areas
     for (int y = 0; y < bufHeight; ++y) {
-        // Correctly map the centered active display (192 lines) to Spectrum FIRST_ACTIVE_LINE (64)
         int spectrum_y = FIRST_ACTIVE_LINE + (y - offset_y);
-        
-        // Clamp to valid range (0-311)
         if (spectrum_y < 0) spectrum_y = 0;
         if (spectrum_y >= FRAME_LINES) spectrum_y = FRAME_LINES - 1;
 
@@ -413,25 +422,19 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         bool is_active_y = (y >= offset_y && y < offset_y + source_height);
         
         if (!is_active_y) {
-            // Full line is border. Sample at the middle of the line (T=112)
-            uint16_t border = get_border_color_for_tstate(tstate_base + 112);
-            uint32_t border32 = (border << 16) | border;
+            // Full line is border. Sample in the middle of the visible part (T=80)
+            uint16_t color = get_border_color_for_tstate(tstate_base + 80);
+            uint32_t border32 = (color << 16) | color;
             for (int i = 0; i < bufWidth / 2; ++i) lineStart32[i] = border32;
         } else {
-            // Left border: drawn at T=200...223 of PREVIOUS line
-            // For simplicity, we use the end of the previous line.
-            uint32_t tstate_left = (spectrum_y > 0) ? (spectrum_y - 1) * T_STATES_PER_LINE + 210 : 0;
-            uint16_t border_left = get_border_color_for_tstate(tstate_left);
-            uint32_t border_left32 = (border_left << 16) | border_left;
-            
-            // Right border: drawn at T=128...151 of CURRENT line.
-            uint32_t tstate_right = tstate_base + 140;
-            uint16_t border_right = get_border_color_for_tstate(tstate_right);
-            uint32_t border_right32 = (border_right << 16) | border_right;
-            
-            // Render left border
+            // Left border: drawn roughly at T=0 to T=23
+            uint16_t color_left = get_border_color_for_tstate(tstate_base + 10);
+            uint32_t border_left32 = (color_left << 16) | color_left;
             for (int i = 0; i < offset_x / 2; ++i) lineStart32[i] = border_left32;
-            // Render right border
+
+            // Right border: drawn roughly at T=152 to T=175
+            uint16_t color_right = get_border_color_for_tstate(tstate_base + 160);
+            uint32_t border_right32 = (color_right << 16) | color_right;
             for (int i = (offset_x + source_width) / 2; i < bufWidth / 2; ++i) lineStart32[i] = border_right32;
         }
     }

@@ -10,7 +10,7 @@ Beeper::Beeper()
     , m_renderEventCount(0)
     , m_initialLevel(0)
     , m_speakerLevel(0)
-    , m_externalEar(true)
+    , m_externalEar(false)
     , m_lastX(0)
     , m_lastY(0)
 {
@@ -21,7 +21,7 @@ void Beeper::reset() {
     m_renderEventCount = 0;
     m_initialLevel = 0;
     m_speakerLevel = 0;
-    m_externalEar = true;
+    m_externalEar = false;
     m_lastX = 0;
     m_lastY = 0;
 }
@@ -63,7 +63,7 @@ void Beeper::renderFrame(int16_t* audio_buf, int num_samples) {
             level = m_renderEvents[evt].level;
             evt++;
         }
-        raw[i] = level ? 12000 : -12000;
+        raw[i] = level ? AMPLITUDE : -AMPLITUDE;
     }
 
     // Apply a small symmetric FIR low-pass to reduce aliasing while preserving character.

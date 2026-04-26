@@ -274,7 +274,10 @@ static esp_err_t tape_handler(httpd_req_t *req)
             else if (strcmp(mode, "normal") == 0) s_spectrum->tape().setMode(TapeMode::NORMAL);
             else if (strcmp(mode, "player") == 0) s_spectrum->tape().setMode(TapeMode::PLAYER);
         }
-    } else if (strcmp(cmd, "play") == 0) s_spectrum->tape().play();
+    } else if (strcmp(cmd, "play") == 0) {
+        s_spectrum->tape().setMode(TapeMode::NORMAL);
+        s_spectrum->tape().play();
+    }
     else if (strcmp(cmd, "stop") == 0) s_spectrum->tape().stop();
     else if (strcmp(cmd, "rewind") == 0) s_spectrum->tape().rewind();
     else if (strcmp(cmd, "ffwd") == 0) s_spectrum->tape().fastForward();
@@ -311,25 +314,30 @@ static esp_err_t ws_handler(httpd_req_t *req)
 
     if (ws_pkt.len > 0) {
         uint8_t buffer[128];
-        if (ws_pkt.len > sizeof(buffer) - 1) {
-            ESP_LOGW(TAG, "WS frame too large (%u); closing", (unsigned)ws_pkt.len);
+        size_t frame_len = ws_pkt.len;
+        if (frame_len > sizeof(buffer) - 1) {
+            ESP_LOGW(TAG, "WS frame too large (%zu); closing", frame_len);
             return ESP_FAIL; 
         }
 
         ws_pkt.payload = buffer;
-        ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
+        ret = httpd_ws_recv_frame(req, &ws_pkt, frame_len);
         if (ret != ESP_OK) return ret;
 
-        if (ws_pkt.type == HTTPD_WS_TYPE_BINARY && ws_pkt.len == 3) {
+        ESP_LOGI(TAG, "WS Received: type=%d, len=%zu", ws_pkt.type, frame_len);
+
+        if (ws_pkt.type == HTTPD_WS_TYPE_BINARY && frame_len == 3) {
             uint8_t row = buffer[0], bit = buffer[1], pressed = buffer[2];
+            ESP_LOGI(TAG, "Keyboard binary: row=%d, bit=%d, pressed=%d", row, bit, pressed);
             if (row < 8 && bit < 5) {
                 uint8_t cur = input_getKeyboardRow(row);
                 if (pressed) cur &= ~(1 << bit); else cur |= (1 << bit);
                 input_setKeyboardRow(row, cur);
             }
         } else if (ws_pkt.type == HTTPD_WS_TYPE_TEXT) {
-            buffer[ws_pkt.len] = '\0';
+            buffer[frame_len] = '\0';
             const char* json = (const char*)buffer;
+            ESP_LOGI(TAG, "WS Text: %s", json);
             // Crude JSON parsing for tape commands
             if (strstr(json, "\"cmd\":\"tape_play\"")) s_spectrum->tape().play();
             else if (strstr(json, "\"cmd\":\"tape_stop\"")) s_spectrum->tape().stop();

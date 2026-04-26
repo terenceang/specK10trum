@@ -14,6 +14,9 @@ public:
     void setExternalEar(bool high) { m_externalEar = high; }
     bool getExternalEar() const { return m_externalEar; }
     uint8_t currentSpeakerLevel() const { return m_speakerLevel; }
+    
+    static constexpr int16_t AMPLITUDE = 3276; // ~10% of 32767
+
 private:
     struct BeeperEvent { uint32_t tstates; uint8_t level; };
     static constexpr size_t MAX_BEEPER_EVENTS = 2048;

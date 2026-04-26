@@ -124,7 +124,7 @@ protected:
         uint32_t tstates;
         uint8_t color;
     };
-    static constexpr size_t MAX_BORDER_EVENTS = 256;
+    static constexpr size_t MAX_BORDER_EVENTS = 1024;
     BorderEvent m_borderEvents[MAX_BORDER_EVENTS];
     size_t m_borderEventCount;
     uint8_t m_initialBorderColor;
@@ -140,6 +140,7 @@ protected:
 
     uint8_t m_borderColor;
     uint8_t m_lastSpeakerBit; // Bit 4 of last port 0xFE write
+    bool m_lastTapeEar;
 
     // Beeper helper
     Beeper m_beeper;
