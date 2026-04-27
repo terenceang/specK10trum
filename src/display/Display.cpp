@@ -14,7 +14,7 @@
 #include "expander/Expander.h"
 #include "audio/Audio.h"
 
-#define SHOW_FPS_DEBUG 1
+#define SHOW_FPS_DEBUG 0
 
 static const char* TAG = "Display";
 

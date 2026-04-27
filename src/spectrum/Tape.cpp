@@ -2,9 +2,10 @@
 #include "Tape.h"
 #include "SpectrumBase.h"
 
-#include <esp_log.h>
+// #include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <esp_psram.h>
+#include <esp_timer.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,10 +38,6 @@ Tape::~Tape() { unload(); }
 
 void Tape::setMode(TapeMode mode) {
     if (mode == m_mode) return;
-    const char* name = (mode == TapeMode::INSTANT) ? "INSTANT"
-                     : (mode == TapeMode::NORMAL)  ? "NORMAL"
-                     : "PLAYER";
-    ESP_LOGI(TAG, "setMode -> %s", name);
     m_mode = mode;
 }
 
@@ -49,7 +46,6 @@ bool Tape::load(const char* filepath) {
 
     FILE* f = fopen(filepath, "rb");
     if (!f) {
-        ESP_LOGE(TAG, "Failed to open tape: %s", filepath);
         return false;
     }
     fseek(f, 0, SEEK_END);
@@ -57,7 +53,6 @@ bool Tape::load(const char* filepath) {
     fseek(f, 0, SEEK_SET);
 
     if (sz <= 0 || (size_t)sz > TAPE_MAX_BYTES) {
-        ESP_LOGE(TAG, "Invalid tape size: %ld", sz);
         fclose(f);
         return false;
     }
@@ -71,7 +66,6 @@ bool Tape::load(const char* filepath) {
         m_data = (uint8_t*)malloc((size_t)sz);
     }
     if (!m_data) {
-        ESP_LOGE(TAG, "Failed to allocate tape buffer (%ld bytes)", sz);
         fclose(f);
         return false;
     }
@@ -79,7 +73,6 @@ bool Tape::load(const char* filepath) {
     size_t rd = fread(m_data, 1, (size_t)sz, f);
     fclose(f);
     if (rd != (size_t)sz) {
-        ESP_LOGE(TAG, "Short read on tape: %zu / %ld", rd, sz);
         free(m_data);
         m_data = nullptr;
         return false;
@@ -239,7 +232,6 @@ void Tape::buildBlockList() {
                     break;
                 }
                 default:
-                    ESP_LOGW(TAG, "Unsupported TZX block 0x%02X at %zu", type, p - 1);
                     return;
             }
         }
@@ -257,30 +249,37 @@ void Tape::buildBlockList() {
 
 void Tape::advance(uint32_t tstates, std::function<void(uint32_t offset_tstates, bool ear)> onToggle) {
     if (!m_playing || m_paused || !m_data) return;
-    
+
     // Sanity check to prevent infinite loop or stall
     if (m_current_pulse_len < 1) m_current_pulse_len = 1;
 
-    uint32_t processed_tstates = 0;
-    m_tstate_counter += tstates;
-
-    while (m_playing && m_tstate_counter >= m_current_pulse_len) {
-        uint32_t pulse_len = m_current_pulse_len;
-        m_tstate_counter -= pulse_len;
-        processed_tstates += pulse_len;
-        
-        m_ear = !m_ear;
-        if (onToggle) {
-            onToggle(processed_tstates, m_ear);
-        }
-
-        if (m_state_pulses_left > 0) m_state_pulses_left--;
-        if (m_state_pulses_left == 0) {
-            nextState();
-            if (m_current_pulse_len < 1) {
-                if (m_playing) stop();
-                return;
+    uint32_t batch_consumed = 0;
+    
+    while (m_playing && tstates > 0) {
+        uint32_t remaining_in_pulse = m_current_pulse_len - m_tstate_counter;
+        if (tstates >= remaining_in_pulse) {
+            // Pulse finishes during this batch
+            tstates -= remaining_in_pulse;
+            batch_consumed += remaining_in_pulse;
+            m_tstate_counter = 0; // Pulse is done
+            
+            m_ear = !m_ear;
+            if (onToggle) {
+                onToggle(batch_consumed, m_ear);
             }
+            
+            if (m_state_pulses_left > 0) m_state_pulses_left--;
+            if (m_state_pulses_left == 0) {
+                nextState();
+                if (m_current_pulse_len < 1) {
+                    if (m_playing) stop();
+                    return;
+                }
+            }
+        } else {
+            // Pulse doesn't finish during this batch
+            m_tstate_counter += tstates;
+            tstates = 0;
         }
     }
 }

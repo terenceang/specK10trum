@@ -11,6 +11,7 @@ extern "C" {
 #include <freertos/FreeRTOS.h>
 #include "Beeper.h"
 #include "Tape.h"
+#include "esp_log.h"
 
 class SpectrumBase : public IMemoryBus {
 public:
@@ -76,12 +77,29 @@ public:
                 advanceULA(t);
                 return t;
             }
+            // Only trigger auto-play when Z80 is in the port FE polling loop (PC=0x0574)
             if (m_tape.getMode() == TapeMode::NORMAL
-                && m_cpu.pc == Tape::LD_BYTES_ENTRY
+                && m_cpu.pc == 0x0574
                 && isTapeRomActive()
                 && !m_tape.isPlaying()) {
-                logTapeTrap("NORMAL auto-play @ 0x0556");
+                logTapeTrap("NORMAL auto-play @ 0x0574 (poll loop)");
                 m_tape.play();
+                m_postTrapSteps = 0;
+                m_postTrapWatch = true;
+            }
+            // Sample PC ~ every 2 ms after the trap so we can see what the
+            // Z80 is actually doing during the dead window before LD-EDGE-1
+            // starts polling port FE.
+            if (m_postTrapWatch) {
+                m_postTrapSteps++;
+                // Commented out to reduce log spam during tape load timing
+                // if ((m_postTrapSteps & 0x7FF) == 0) {
+                //     ESP_LOGI("SpectrumBase", "post-trap step %u PC=0x%04X SP=0x%04X iff=%d halted=%d",
+                //              (unsigned)m_postTrapSteps,
+                //              (unsigned)m_cpu.pc, (unsigned)m_cpu.sp,
+                //              (int)m_cpu.iff1, (int)m_cpu.halted);
+                // }
+                if (m_postTrapSteps > 100000) m_postTrapWatch = false;
             }
         }
         int t = z80_step(&m_cpu);
@@ -170,6 +188,8 @@ protected:
     // Virtual cassette. Services ROM LD-BYTES traps when enabled.
     Tape m_tape;
     uint32_t m_pendingTapeTstates;
+    bool m_postTrapWatch = false;
+    uint32_t m_postTrapSteps = 0;
 
     // Helper for allocation
     uint8_t* allocateMemory(size_t size, const char* name);

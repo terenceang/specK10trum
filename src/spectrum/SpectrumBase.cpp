@@ -185,7 +185,7 @@ void SpectrumBase::writePortFE(uint8_t value) {
 
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
     uint8_t val = 0xBF; // Bits 0-4 are columns (active low), Bit 6 (EAR) is 0 by default, others 1
-    
+
     // Ensure tape is advanced to current CPU time before sampling EAR
     flushTape();
 
