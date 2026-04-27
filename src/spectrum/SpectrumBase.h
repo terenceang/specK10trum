@@ -69,6 +69,7 @@ public:
             if (m_tape.getMode() == TapeMode::INSTANT
                 && m_cpu.pc == Tape::LD_BYTES_ENTRY
                 && isTapeRomActive()) {
+                flushTape();
                 int t = m_tape.serviceLoadTrap(this);
                 m_tape.advance(t);
                 advanceULA(t);
@@ -82,13 +83,15 @@ public:
             }
         }
         int t = z80_step(&m_cpu);
-        m_tape.advance(t);
+        m_pendingTapeTstates += (uint32_t)t;
         advanceULA(t);
         return t;
     }
     Z80* getCPU() { return &m_cpu; }
 
     Tape& tape() { return m_tape; }
+
+    void flushTape();
 
     // True when the 48K BASIC ROM (which contains LD-BYTES at 0x0556) is the
     // currently paged ROM. Default: always (48K model). Overridden by 128K.
@@ -160,6 +163,7 @@ protected:
 
     // Virtual cassette. Services ROM LD-BYTES traps when enabled.
     Tape m_tape;
+    uint32_t m_pendingTapeTstates;
 
     // Helper for allocation
     uint8_t* allocateMemory(size_t size, const char* name);

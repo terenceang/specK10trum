@@ -44,6 +44,7 @@ SpectrumBase::SpectrumBase()
     , m_borderColor(0)
     , m_lastSpeakerBit(0)
     , m_lastTapeEar(false)
+    , m_pendingTapeTstates(0)
 {
     for (int i = 0; i < 4; i++) {
         m_memReadMap[i] = nullptr;
@@ -184,6 +185,9 @@ void SpectrumBase::writePortFE(uint8_t value) {
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
     uint8_t val = 0xBF; // Bits 0-4 are columns (active low), Bit 6 (EAR) is 0 by default, others 1
     
+    // Ensure tape is advanced to current CPU time before sampling EAR
+    flushTape();
+
     // Standard Spectrum keyboard: Address bits A8-A15 select rows.
     // If a bit is 0, that row is selected. If multiple bits are 0, results are ANDed.
     uint8_t row_addr = (port >> 8);
@@ -244,6 +248,7 @@ void SpectrumBase::reset() {
     m_borderColor = 0;
     m_lastSpeakerBit = 0;
     m_lastTapeEar = false;
+    m_pendingTapeTstates = 0;
     m_initialBorderColor = 0;
     m_borderEventCount = 0;
     m_renderInitialBorderColor = 0;
@@ -268,16 +273,28 @@ void SpectrumBase::reset() {
     m_beeper.reset();
 }
 
-void SpectrumBase::advanceULA(int tstates) {
-    // Check if Tape EAR changed to record beeper events for loading sounds
-    bool curTapeEar = m_tape.getEar();
-    if (curTapeEar != m_lastTapeEar) {
-        m_beeper.recordEvent(m_ulaClocks, m_lastSpeakerBit | (curTapeEar ? 1 : 0));
-        m_lastTapeEar = curTapeEar;
-    }
+void SpectrumBase::flushTape() {
+    if (m_pendingTapeTstates == 0) return;
 
+    uint32_t tstates = m_pendingTapeTstates;
+    m_pendingTapeTstates = 0;
+
+    // Advance the tape and record all EAR toggles for the beeper to hear them
+    uint32_t start_ula_clocks = m_ulaClocks - tstates;
+    m_tape.advance(tstates, [&](uint32_t offset, bool ear) {
+        m_beeper.recordEvent(start_ula_clocks + offset, m_lastSpeakerBit | (ear ? 1 : 0));
+        m_lastTapeEar = ear;
+    });
+}
+
+void SpectrumBase::advanceULA(int tstates) {
     m_ulaClocks += (uint32_t)tstates;
+    
+    // Check for frame boundary
     if (m_ulaClocks >= FRAME_T_STATES) {
+        // Ensure tape is advanced to the exact frame boundary for sound/sync
+        flushTape();
+
         m_ulaClocks -= FRAME_T_STATES;
 
         // Publish this frame's border events for the renderer.

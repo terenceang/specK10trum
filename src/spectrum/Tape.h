@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include <functional>
 
 class SpectrumBase;
 
@@ -40,8 +41,10 @@ public:
     int totalBlocks() const { return m_num_blocks; }
 
     // Generates/Advances the EAR signal
-    // Called per T-state or batch of T-states
-    void advance(uint32_t tstates);
+    // Called per T-state or batch of T-states.
+    // Callback is invoked for each EAR transition (m_ear toggle).
+    // offset_tstates is the relative T-state within the advanced batch where toggle occurred.
+    void advance(uint32_t tstates, std::function<void(uint32_t offset_tstates, bool ear)> onToggle = nullptr);
     bool getEar() const { return m_ear; }
 
     // Service a LD-BYTES trap (only used in INSTANT mode or when appropriate)

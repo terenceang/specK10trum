@@ -65,11 +65,25 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
     (void)arg; (void)data;
     if (base == WIFI_EVENT) {
         switch (id) {
-        case WIFI_EVENT_STA_START:
+        case WIFI_EVENT_STA_START: {
+            wifi_config_t conf;
+            esp_err_t conf_err = esp_wifi_get_config(WIFI_IF_STA, &conf);
+            if (conf_err == ESP_OK && strlen((const char*)conf.sta.ssid) == 0) {
+                ESP_LOGW(TAG, "STA_START: SSID is empty after flash erase. Starting BLE provisioning or fallback AP.");
+                display_setOverlayText("No Wi-Fi creds. Start BLE prov.", 0xF800);
+                // Attempt to start BLE provisioning if not already started
+                if (!s_provisioning_started) {
+                    wifi_prov_start();
+                } else {
+                    wifi_prov_start_ap_fallback();
+                }
+                break;
+            }
             ESP_LOGI(TAG, "Wi-Fi station started; connecting...");
             s_sta_started = true;
             esp_wifi_connect();
             break;
+        }
         case WIFI_EVENT_STA_CONNECTED:
             ESP_LOGI(TAG, "Wi-Fi connected to AP; waiting for IP...");
             esp_wifi_set_ps(WIFI_PS_NONE);

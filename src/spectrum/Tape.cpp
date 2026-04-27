@@ -246,19 +246,29 @@ void Tape::buildBlockList() {
     }
 }
 
-void Tape::advance(uint32_t tstates) {
+void Tape::advance(uint32_t tstates, std::function<void(uint32_t offset_tstates, bool ear)> onToggle) {
     if (!m_playing || m_paused || !m_data) return;
-    if (m_current_pulse_len == 0) return;
+    
+    // Sanity check to prevent infinite loop or stall
+    if (m_current_pulse_len < 1) m_current_pulse_len = 1;
 
+    uint32_t processed_tstates = 0;
     m_tstate_counter += tstates;
+
     while (m_playing && m_tstate_counter >= m_current_pulse_len) {
-        m_tstate_counter -= m_current_pulse_len;
+        uint32_t pulse_len = m_current_pulse_len;
+        m_tstate_counter -= pulse_len;
+        processed_tstates += pulse_len;
+        
         m_ear = !m_ear;
+        if (onToggle) {
+            onToggle(processed_tstates, m_ear);
+        }
 
         if (m_state_pulses_left > 0) m_state_pulses_left--;
         if (m_state_pulses_left == 0) {
             nextState();
-            if (m_current_pulse_len == 0) {
+            if (m_current_pulse_len < 1) {
                 if (m_playing) stop();
                 return;
             }
