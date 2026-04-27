@@ -57,11 +57,11 @@ public:
     static constexpr uint16_t LD_BYTES_ENTRY = 0x0556;
 
     // Standard Spectrum Tape timings (T-states)
-    static constexpr uint16_t T_PILOT = 2168;
-    static constexpr uint16_t T_SYNC1 = 667;
-    static constexpr uint16_t T_SYNC2 = 735;
-    static constexpr uint16_t T_ZERO  = 855;
-    static constexpr uint16_t T_ONE   = 1710;
+    static constexpr uint16_t T_PILOT    = 2168;
+    static constexpr uint16_t T_SYNC1    = 667;
+    static constexpr uint16_t T_SYNC2    = 735;
+    static constexpr uint16_t T_ZERO     = 855;   // Single pulse for bit 0
+    static constexpr uint16_t T_ONE      = 1710;  // Single pulse for bit 1
     static constexpr uint16_t C_PILOT_HDR = 8063;
     static constexpr uint16_t C_PILOT_DAT = 3223;
 

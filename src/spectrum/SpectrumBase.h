@@ -187,7 +187,7 @@ protected:
 
     // Virtual cassette. Services ROM LD-BYTES traps when enabled.
     Tape m_tape;
-    uint32_t m_pendingTapeTstates;
+    int32_t m_pendingTapeTstates;
     bool m_postTrapWatch = false;
     uint32_t m_postTrapSteps = 0;
 

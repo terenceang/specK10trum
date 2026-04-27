@@ -186,11 +186,21 @@ void SpectrumBase::writePortFE(uint8_t value) {
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
     uint8_t val = 0xBF; // Bits 0-4 are columns (active low), Bit 6 (EAR) is 0 by default, others 1
 
-    // Ensure tape is advanced to current CPU time before sampling EAR
+    // Ensure tape is advanced to current CPU time before sampling EAR.
+    // First, flush any accumulated T-states from previous instructions.
     flushTape();
 
+    // Then, proactively advance by 11 T-states (the duration of the IN A, (n) instruction).
+    // This allows sampling EAR at the exact machine cycle it is actually read.
+    m_tape.advance(11, [&](uint32_t offset, bool ear) {
+        m_beeper.recordEvent(m_ulaClocks + offset, m_lastSpeakerBit | (ear ? 1 : 0));
+        m_lastTapeEar = ear;
+    });
+    
+    // Compensate for the 11 states we just processed so they aren't counted twice.
+    m_pendingTapeTstates -= 11;
+
     // Standard Spectrum keyboard: Address bits A8-A15 select rows.
-    // If a bit is 0, that row is selected. If multiple bits are 0, results are ANDed.
     uint8_t row_addr = (port >> 8);
     for (int i = 0; i < 8; i++) {
         if (!(row_addr & (1 << i))) {
@@ -200,12 +210,8 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
     
     // EAR input is bit 6.
     bool current_ear = m_tape.getEar();
-
-    if (current_ear) {
-        val |= 0x40;
-    } else {
-        val &= ~0x40;
-    }
+    if (current_ear) val |= 0x40;
+    else             val &= ~0x40;
     
     // Bits 5 and 7 are usually 1 or floating (we'll keep them 1)
     val |= 0xA0; 
@@ -284,9 +290,9 @@ void SpectrumBase::logTapeTrap(const char* msg) {
 }
 
 void SpectrumBase::flushTape() {
-    if (m_pendingTapeTstates == 0) return;
+    if (m_pendingTapeTstates <= 0) return;
 
-    uint32_t tstates = m_pendingTapeTstates;
+    uint32_t tstates = (uint32_t)m_pendingTapeTstates;
     m_pendingTapeTstates = 0;
 
     // Advance the tape and record all EAR toggles for the beeper to hear them
@@ -308,8 +314,6 @@ void SpectrumBase::advanceULA(int tstates) {
         m_ulaClocks -= FRAME_T_STATES;
 
         // Publish this frame's border events for the renderer.
-        // Held just long enough to memcpy + assign three scalars; the
-        // renderer takes the same lock to snapshot to its local buffer.
         portENTER_CRITICAL(&m_borderMux);
         memcpy(m_renderBorderEvents, m_borderEvents, m_borderEventCount * sizeof(BorderEvent));
         m_renderBorderEventCount = m_borderEventCount;
@@ -324,7 +328,6 @@ void SpectrumBase::advanceULA(int tstates) {
         m_borderEventCount = 0;
 
         // Trigger the 50Hz maskable interrupt
-        // Standard data byte for Spectrum interrupts is 0xFF (RST 38h opcode)
         z80_interrupt(&m_cpu, 0xFF);
     }
 
@@ -384,10 +387,6 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     const int offset_x = (bufWidth - source_width) / 2;
     const int offset_y = (bufHeight - source_height) / 2;
 
-    // Attribute LUT cache: 128 possible attribute combinations (attr & 0x7F).
-    // The cache is sized for the full domain so it never evicts; lookups are
-    // a single pointer load. Entries are filled lazily so we don't pay for
-    // 512 KB of allocations during the first frame.
     static uint16_t* attr_lut[128] = { 0 };
 
     auto get_lut = [&](int attr_index) -> uint16_t* {
@@ -409,11 +408,10 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
 
         for (int pix = 0; pix < 256; ++pix) {
             uint32_t* out32 = (uint32_t*)&alloc[pix * 8];
-            // 32-bit SWAR: Process 2 pixels at a time (4 iterations for 8 pixels)
             for (int i = 0; i < 4; i++) {
                 uint8_t two_bits = (pix >> (6 - i * 2)) & 0x03;
-                uint32_t mask = (two_bits & 0x02) ? 0x0000FFFF : 0; // bit 7/5/3/1 -> low bits (first pixel)
-                mask |= (two_bits & 0x01) ? 0xFFFF0000 : 0;        // bit 6/4/2/0 -> high bits (second pixel)
+                uint32_t mask = (two_bits & 0x02) ? 0x0000FFFF : 0; 
+                mask |= (two_bits & 0x01) ? 0xFFFF0000 : 0;        
                 out32[i] = paper32 ^ (mask & diff32);
             }
         }
@@ -422,19 +420,6 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         return alloc;
     };
 
-    // Streaming event walker. Events are timestamped with the T-state at
-    // which the CPU wrote port 0xFE; they appear in monotonically increasing
-    // order. We walk the buffer top-to-bottom, left-to-right, and the T-state
-    // we care about at each pixel-pair is also monotonically increasing — so
-    // a single pointer through the event list is enough (O(events + pixels)
-    // instead of O(scanlines * events)). Per pixel-pair = 1 T-state of border,
-    // matching real ULA timing (ULA paints 2 pixels per T-state).
-    //
-    // Snapshot the published render buffer into a local copy under the
-    // border mutex so the writer (advanceULA, other core) cannot half-rewrite
-    // the array while we're walking it. Without this, a frame-boundary copy
-    // landing mid-render produces a mix of old + new timestamps and stripes
-    // appear and disappear at random scanlines.
     static BorderEvent local_events[MAX_BORDER_EVENTS];
     size_t local_count;
     uint8_t local_init_color;
@@ -445,8 +430,6 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     local_init_color = m_renderInitialBorderColor;
     portEXIT_CRITICAL(&m_borderMux);
 
-    // Pre-cache the palette colour for each border index so the inner loop
-    // avoids a function call and a byte-swap per pixel pair.
     uint32_t border_pair[8];
     for (int i = 0; i < 8; ++i) {
         uint16_t c = spectrum_palette(i, false);
@@ -469,7 +452,6 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         cur_pair = border_pair[cur_color];
     };
 
-    // Render border areas
     for (int y = 0; y < bufHeight; ++y) {
         int spectrum_y = FIRST_ACTIVE_LINE + (y - offset_y);
         if (spectrum_y < 0) spectrum_y = 0;
@@ -479,14 +461,9 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
         uint32_t* lineStart32 = (uint32_t*)&buffer[y * bufWidth];
         bool is_active_y = (y >= offset_y && y < offset_y + source_height);
 
-        // Catch the walker up to the start of this scanline (covers the
-        // gap between this and the previous scanline's visible window —
-        // HBLANK + horizontal sync).
         consume_until(tstate_base);
 
         if (!is_active_y) {
-            // Whole row is border. Walk pair-by-pair so any colour change
-            // mid-line produces a vertical stripe at the right column.
             for (int xp = 0; xp < total_pairs; ++xp) {
                 uint32_t t = tstate_base + (uint32_t)xp;
                 if (evt_idx < local_count &&
@@ -496,7 +473,6 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
                 lineStart32[xp] = cur_pair;
             }
         } else {
-            // Left border
             for (int xp = 0; xp < left_pairs; ++xp) {
                 uint32_t t = tstate_base + (uint32_t)xp;
                 if (evt_idx < local_count &&
@@ -506,12 +482,8 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
                 lineStart32[xp] = cur_pair;
             }
 
-            // Skip past any events that occurred while the ULA was painting
-            // the active 256-pixel area. They don't draw a border stripe but
-            // do update cur_color for the right border.
             consume_until(tstate_base + (uint32_t)active_end_pair);
 
-            // Right border
             for (int xp = active_end_pair; xp < total_pairs; ++xp) {
                 uint32_t t = tstate_base + (uint32_t)xp;
                 if (evt_idx < local_count &&
@@ -543,13 +515,11 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
                 bool bright = (attr & 0x40) != 0;
                 uint16_t ink = spectrum_palette(attr & 0x07, bright);
                 uint16_t paper = spectrum_palette((attr >> 3) & 0x07, bright);
-                
                 uint32_t ink32 = (ink << 16) | ink;
                 uint32_t paper32 = (paper << 16) | paper;
                 uint32_t diff32 = ink32 ^ paper32;
                 uint32_t* linePtr32 = (uint32_t*)linePtr;
 
-                // 32-bit SWAR: Process 2 pixels at a time
                 for (int i = 0; i < 4; i++) {
                     uint8_t two_bits = (pixels >> (6 - i * 2)) & 0x03;
                     uint32_t mask = (two_bits & 0x02) ? 0x0000FFFF : 0;
@@ -560,8 +530,5 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
             linePtr += 8;
         }
     }
-    // Update last rendered border color
     m_lastRenderedBorderColor = m_borderColor;
 }
-
-// Beeper rendering moved to Beeper class

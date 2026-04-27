@@ -336,7 +336,7 @@ void Tape::nextState() {
         case PlayState::DATA:
             m_data_bit_idx++;
             if (!advanceBit()) {
-                m_pstate = PlayState::PAUSE; m_state_pulses_left = 1; m_current_pulse_len = b.pause_tstates; m_ear = false;
+                m_pstate = PlayState::PAUSE; m_state_pulses_left = 1; m_current_pulse_len = b.pause_tstates;
             }
             break;
         case PlayState::PAUSE:
