@@ -146,18 +146,9 @@ static void wifi_and_webserver_task(void* pvParameters) {
         }
     } else {
         // If we didn't get an IP in 10s, it might be first boot or lost signal.
-        // Fallback to AP mode so the user can connect directly.
-        ESP_LOGW(TAG, "Wi-Fi connection timeout. Starting Fallback AP.");
-        display_setOverlayText("Wi-Fi Timeout - Starting AP...", 0xF800);
-        
-        if (wifi_prov_start_ap_fallback()) {
-            ESP_LOGI(TAG, "Fallback AP 'SpecK10trum-Connect' active at 192.168.4.1");
-        } else {
-            ESP_LOGE(TAG, "Failed to start fallback AP");
-        }
-        
-        // Start webserver on the AP interface
-        webserver_start(spectrum);
+        ESP_LOGW(TAG, "Wi-Fi connection timeout. BLE provisioning will restart if needed.");
+        display_setOverlayText("Wi-Fi Timeout", 0xF800);
+        // No fallback AP. BLE provisioning will handle recovery.
     }
 
     log_ts(TAG, "Wi-Fi task finished");

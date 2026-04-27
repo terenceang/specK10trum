@@ -69,14 +69,11 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
             wifi_config_t conf;
             esp_err_t conf_err = esp_wifi_get_config(WIFI_IF_STA, &conf);
             if (conf_err == ESP_OK && strlen((const char*)conf.sta.ssid) == 0) {
-                ESP_LOGW(TAG, "STA_START: SSID is empty after flash erase. Starting BLE provisioning or fallback AP.");
-                display_setOverlayText("No Wi-Fi creds. Start BLE prov.", 0xF800);
-                // Attempt to start BLE provisioning if not already started
-                if (!s_provisioning_started) {
-                    wifi_prov_start();
-                } else {
-                    wifi_prov_start_ap_fallback();
-                }
+                    ESP_LOGW(TAG, "STA_START: SSID is empty after flash erase. Starting BLE provisioning.");
+                    display_setOverlayText("No Wi-Fi creds. Start BLE prov.", 0xF800);
+                    if (!s_provisioning_started) {
+                        wifi_prov_start();
+                    }
                 break;
             }
             ESP_LOGI(TAG, "Wi-Fi station started; connecting...");
@@ -97,9 +94,10 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
             s_reconnect_retries++;
 
             if (s_reconnect_retries > MAX_RECONNECT_RETRIES) {
-                ESP_LOGE(TAG, "Max retries reached. Falling back to AP mode.");
-                display_setOverlayText("Wi-Fi Failed - Starting AP", 0xF800);
-                wifi_prov_start_ap_fallback();
+                ESP_LOGE(TAG, "Max retries reached. Restarting BLE provisioning.");
+                display_setOverlayText("Wi-Fi Failed. Start BLE prov.", 0xF800);
+                wifi_prov_stop();
+                wifi_prov_start();
             } else {
                 char buf[64];
                 snprintf(buf, sizeof(buf), "Wi-Fi Drop (R:%d) Retry %d/%d", 
@@ -323,47 +321,12 @@ void wifi_prov_stop()
         ESP_LOGI(TAG, "Provisioning not running");
         return;
     }
-    wifi_prov_mgr_stop_provisioning();
-    wifi_prov_mgr_deinit();
+    (void)wifi_prov_mgr_stop_provisioning();
+    (void)wifi_prov_mgr_deinit();
     s_provisioning_started = false;
     ESP_LOGI(TAG, "Wi-Fi provisioning stopped");
 }
 
-bool wifi_prov_start_ap_fallback()
-{
-    if (ensure_wifi_initialized() != ESP_OK) return false;
-
-    // If BLE provisioning is running, stop it to free up BT/Wi-Fi resources
-    if (s_provisioning_started) {
-        wifi_prov_stop();
-    }
-
-    ESP_LOGI(TAG, "Starting stable Fallback AP 'SpecK10trum-Connect'...");
-
-    // Stop Wi-Fi to switch modes cleanly
-    esp_wifi_stop();
-
-    if (!s_ap_netif) {
-        s_ap_netif = esp_netif_create_default_wifi_ap();
-    }
-
-    wifi_config_t ap_config = {};
-    strcpy((char*)ap_config.ap.ssid, "SpecK10trum-Connect");
-    ap_config.ap.channel = 1;
-    ap_config.ap.max_connection = 4;
-    ap_config.ap.authmode = WIFI_AUTH_OPEN;
-
-    // Use AP mode ONLY. APSTA causes frequent channel hops during STA scans
-    // which drops AP clients (the keyboard).
-    esp_wifi_set_mode(WIFI_MODE_AP);
-    esp_wifi_set_config(WIFI_IF_AP, &ap_config);
-    esp_wifi_start();
-
-    snprintf(s_last_ip_str, sizeof(s_last_ip_str), "AP: 192.168.4.1");
-    display_setOverlayText(s_last_ip_str, 0xFFFF);
-    
-    return true;
-}
 
 bool wifi_prov_wait_for_ip(uint32_t timeout_ms)
 {
@@ -438,8 +401,8 @@ bool wifi_prov_apply_credentials(const char* ssid, const char* password)
 void wifi_prov_clear_and_stop(bool clear_saved_creds)
 {
     if (s_provisioning_started) {
-        wifi_prov_mgr_stop_provisioning();
-        wifi_prov_mgr_deinit();
+        (void)wifi_prov_mgr_stop_provisioning();
+        (void)wifi_prov_mgr_deinit();
         s_provisioning_started = false;
     }
 
@@ -448,7 +411,7 @@ void wifi_prov_clear_and_stop(bool clear_saved_creds)
         nvs_handle_t h;
         if (nvs_open("wifi_prov", NVS_READWRITE, &h) == ESP_OK) {
             nvs_erase_all(h);
-            nvs_commit(h);
+            (void)nvs_commit(h);
             nvs_close(h);
         }
         // Clear the manager's own record so next boot re-enters provisioning.
