@@ -69,6 +69,7 @@ public:
             if (m_tape.getMode() == TapeMode::INSTANT
                 && m_cpu.pc == Tape::LD_BYTES_ENTRY
                 && isTapeRomActive()) {
+                logTapeTrap("INSTANT trap fired @ 0x0556");
                 flushTape();
                 int t = m_tape.serviceLoadTrap(this);
                 m_tape.advance(t);
@@ -79,6 +80,7 @@ public:
                 && m_cpu.pc == Tape::LD_BYTES_ENTRY
                 && isTapeRomActive()
                 && !m_tape.isPlaying()) {
+                logTapeTrap("NORMAL auto-play @ 0x0556");
                 m_tape.play();
             }
         }
@@ -92,6 +94,10 @@ public:
     Tape& tape() { return m_tape; }
 
     void flushTape();
+
+    // Rate-limit so repeated calls (PC parked at 0x0556 between trap fires)
+    // don't flood the log. Logs at most once every ~250 ms per branch.
+    void logTapeTrap(const char* msg);
 
     // True when the 48K BASIC ROM (which contains LD-BYTES at 0x0556) is the
     // currently paged ROM. Default: always (48K model). Overridden by 128K.

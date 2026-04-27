@@ -35,6 +35,15 @@ Tape::Tape()
 
 Tape::~Tape() { unload(); }
 
+void Tape::setMode(TapeMode mode) {
+    if (mode == m_mode) return;
+    const char* name = (mode == TapeMode::INSTANT) ? "INSTANT"
+                     : (mode == TapeMode::NORMAL)  ? "NORMAL"
+                     : "PLAYER";
+    ESP_LOGI(TAG, "setMode -> %s", name);
+    m_mode = mode;
+}
+
 bool Tape::load(const char* filepath) {
     unload();
 

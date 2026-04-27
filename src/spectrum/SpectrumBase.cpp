@@ -5,6 +5,7 @@
 #include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <esp_psram.h>
+#include <esp_timer.h>
 #include <string.h>
 #include <cstdio>
 
@@ -271,6 +272,15 @@ void SpectrumBase::reset() {
     }
     // Reset beeper
     m_beeper.reset();
+}
+
+void SpectrumBase::logTapeTrap(const char* msg) {
+    static int64_t s_last_us = 0;
+    int64_t now = esp_timer_get_time();
+    if (now - s_last_us < 250000) return;
+    s_last_us = now;
+    ESP_LOGI(TAG, "%s (mode=%d, playing=%d)",
+             msg, (int)m_tape.getMode(), (int)m_tape.isPlaying());
 }
 
 void SpectrumBase::flushTape() {

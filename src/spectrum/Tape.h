@@ -29,7 +29,7 @@ public:
     void eject();
 
     // Modes and state
-    void setMode(TapeMode mode) { m_mode = mode; }
+    void setMode(TapeMode mode);
     TapeMode getMode() const { return m_mode; }
     bool isEnabled() const { return m_enabled; }
     bool isLoaded() const { return m_data != nullptr; }
