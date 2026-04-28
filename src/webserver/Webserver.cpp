@@ -91,7 +91,16 @@ static esp_err_t file_get_handler(httpd_req_t *req)
 
 static esp_err_t files_list_handler(httpd_req_t *req)
 {
-    DIR* dir = opendir(SPIFFS_ROOT);
+    const char* uri = req->uri;
+    bool wantSnapshots = strstr(uri, "/api/snapshots") != NULL;
+    bool wantTapes = strstr(uri, "/api/tapes") != NULL;
+    if (!wantSnapshots && !wantTapes) { wantSnapshots = wantTapes = true; }
+
+    const char* dirPath;
+    if (wantTapes) dirPath = "/spiffs/tapes";
+    else if (wantSnapshots) dirPath = "/spiffs/snapshots";
+    else dirPath = SPIFFS_ROOT;
+    DIR* dir = opendir(dirPath);
     if (!dir) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Storage error");
         return ESP_OK;
@@ -101,10 +110,6 @@ static esp_err_t files_list_handler(httpd_req_t *req)
     httpd_resp_send_chunk(req, "[", 1);
     struct dirent* ent;
     bool first = true;
-    const char* uri = req->uri;
-    bool wantSnapshots = strstr(uri, "/api/snapshots") != NULL;
-    bool wantTapes = strstr(uri, "/api/tapes") != NULL;
-    if (!wantSnapshots && !wantTapes) { wantSnapshots = wantTapes = true; }
     while ((ent = readdir(dir)) != NULL) {
         const char* ext = strrchr(ent->d_name, '.');
         if (!ext) continue;
@@ -135,7 +140,16 @@ static esp_err_t file_load_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing file");
         return ESP_OK;
     }
-    snprintf(s_pending_load_path, sizeof(s_pending_load_path), "%s/%s", SPIFFS_ROOT, filename);
+    const char* ext = strrchr(filename, '.');
+    const char* filePath = SPIFFS_ROOT;
+    if (ext) {
+        if (strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 || strcasecmp(ext, ".tsx") == 0) {
+            filePath = "/spiffs/tapes";
+        } else if (strcasecmp(ext, ".z80") == 0 || strcasecmp(ext, ".sna") == 0) {
+            filePath = "/spiffs/snapshots";
+        }
+    }
+    snprintf(s_pending_load_path, sizeof(s_pending_load_path), "%s/%s", filePath, filename);
     s_pending_load = true;
     httpd_resp_sendstr(req, "OK");
     return ESP_OK;
