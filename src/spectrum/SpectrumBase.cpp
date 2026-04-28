@@ -39,6 +39,7 @@ SpectrumBase::SpectrumBase()
     , m_lastSpeakerBit(0)
     , m_lastTapeEar(false)
     , m_pendingTapeTstates(0)
+    , m_wasInLDBytes(false)
 {
     for (int i = 0; i < 4; i++) {
         m_memReadMap[i] = nullptr;
@@ -109,6 +110,7 @@ void SpectrumBase::reset() {
     m_beeper.reset();
     // Stop tape player
     m_tape.stop();
+    m_wasInLDBytes = false;
 }
 
 void SpectrumBase::dumpMemory(uint16_t start, uint16_t end) {
@@ -153,5 +155,15 @@ int SpectrumBase::step() {
     int tstates = z80_step(&m_cpu);
     m_pendingTapeTstates += tstates;
     advanceULA(tstates);
+
+    // Auto-stop tape when exiting LD-BYTES in NORMAL mode
+    if (m_tape.getMode() == TapeMode::NORMAL && m_tape.isPlaying()) {
+        bool inLDBytes = (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
+        if (m_wasInLDBytes && !inLDBytes) {
+            m_tape.stop();
+        }
+        m_wasInLDBytes = inLDBytes;
+    }
+
     return tstates;
 }

@@ -16,7 +16,9 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(xargs wc *)",
-      "Bash(/c/Users/teren/.platformio/penv/Scripts/pio.exe run *)"
+      "Bash(/c/Users/teren/.platformio/penv/Scripts/pio.exe run *)",
+      "Bash(python -m platformio --version)",
+      "Bash(python -m platformio run)"
     ]
   }
 }

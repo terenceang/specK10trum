@@ -144,6 +144,7 @@ protected:
     int32_t m_pendingTapeTstates;
     bool m_postTrapWatch = false;
     uint32_t m_postTrapSteps = 0;
+    bool m_wasInLDBytes = false;
 
     uint8_t* allocateMemory(size_t size, const char* name);
     void updateMap(int block, uint8_t* ptr, bool writable);
