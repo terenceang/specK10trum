@@ -58,7 +58,7 @@ static void nvs_watcher_task(void* pv)
 }
 
 static int s_reconnect_retries = 0;
-static const int MAX_RECONNECT_RETRIES = 3;
+static const int MAX_RECONNECT_RETRIES = 10;
 
 static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* data)
 {
@@ -66,6 +66,9 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
     if (base == WIFI_EVENT) {
         switch (id) {
         case WIFI_EVENT_STA_START: {
+            // Enable Long Range mode for better stability at distance
+            esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
+            
             wifi_config_t conf;
             esp_err_t conf_err = esp_wifi_get_config(WIFI_IF_STA, &conf);
             if (conf_err == ESP_OK && strlen((const char*)conf.sta.ssid) == 0) {

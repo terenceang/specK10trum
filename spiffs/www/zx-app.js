@@ -571,8 +571,15 @@
       const res = await fetch(`/api/load?file=${encodeURIComponent(file)}`);
       if (res.ok) {
         submenu.classList.remove('open');
+        // If it's a tape, persist it and update player label
+        const ext = file.split('.').pop().toLowerCase();
+        if (['tap','tzx','tsx'].includes(ext)) {
+            try { localStorage.setItem('zx_last_tape', file); lastTape = file; } catch(_) {}
+            const lbl = document.getElementById('zx-player-label');
+            if (lbl) lbl.textContent = file;
+        }
       } else {
-        alert('Failed to load snapshot');
+        alert('Failed to load file');
       }
     } catch (e) {
       alert('Error connecting to server');
@@ -638,27 +645,44 @@
   }
 
   // -------- WebSocket with exponential-backoff reconnect --------
-  let ws = null, txCount = 0, retry = 0, reconnectTimer = 0;
+  let ws = null, txCount = 0, retry = 0, reconnectTimer = 0, heartbeatTimer = 0;
 
   function setConn(on) {
     dot.classList.toggle('on', !!on);
     dot.title = on ? 'Connected' : 'Disconnected';
     btnConn.textContent = on ? 'OFF' : 'ON';
   }
+
+  function resetHeartbeat() {
+    clearTimeout(heartbeatTimer);
+    heartbeatTimer = setTimeout(() => {
+      console.warn('WebSocket heartbeat timeout');
+      if (ws) ws.close();
+    }, 10000); // 10s timeout
+  }
+
   function scheduleReconnect() {
     setConn(false);
+    clearTimeout(heartbeatTimer);
     if (reconnectTimer) return;
     const delay = Math.min(5000, 300 * Math.pow(1.6, retry++));
     reconnectTimer = setTimeout(() => { reconnectTimer = 0; connect(); }, delay);
   }
+
   function connect() {
     if (ws) { try { ws.close(); } catch (_) {} }
     try {
       ws = new WebSocket(host);
       ws.binaryType = 'arraybuffer';
-      ws.onopen  = () => { retry = 0; setConn(true);
+      ws.onopen  = () => { 
+        retry = 0; 
+        setConn(true);
+        resetHeartbeat();
         // Inform firmware of current tape mode on connect
         try { if (currentTapeMode && ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode })); } catch(_) {}
+      };
+      ws.onmessage = (e) => {
+        resetHeartbeat();
       };
       ws.onclose = scheduleReconnect;
       ws.onerror = () => { try { ws.close(); } catch (_) {} };
@@ -849,4 +873,10 @@
 
   // Initialize UI
   updateTapeUI();
+
+  // Auto-load last tape on refresh if present
+  if (lastTape) {
+    console.log('Auto-loading persisted tape:', lastTape);
+    fetch(`/api/load?file=${encodeURIComponent(lastTape)}`).catch(err => console.warn('Auto-load failed', err));
+  }
 })();

@@ -240,7 +240,7 @@ extern "C" void app_main(void) {
 
     // Start Wi‑Fi and webserver in background so emulator can start sooner
     display_setOverlayText("Waiting for Wi-Fi...", 0xFFFF);
-    xTaskCreatePinnedToCore(wifi_and_webserver_task, "wifi_ws", 8192, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(wifi_and_webserver_task, "wifi_ws", 8192, NULL, 6, NULL, 1);
 
     vTaskDelay(pdMS_TO_TICKS(100));
     ESP_LOGI(TAG, "✓ Initialization complete! Starting emulator task.");
