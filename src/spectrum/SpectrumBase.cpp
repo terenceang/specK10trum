@@ -287,6 +287,7 @@ void SpectrumBase::reset() {
     m_cpu.mem_write = z80_mem_write;
     m_cpu.io_read = z80_io_read;
     m_cpu.io_write = z80_io_write;
+    m_cpu.halted = 0; // Explicitly clear halted state
     
     // Restore cached page pointers from our memory maps
     for (int i = 0; i < 4; i++) {

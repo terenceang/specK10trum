@@ -38,6 +38,13 @@ Spectrum48K::~Spectrum48K() {
 void Spectrum48K::reset() {
     SpectrumBase::reset();
     memset(m_ram, 0, RAM_SIZE);
+    
+    // Re-initialize memory map
+    updateMap(0, m_rom, false);          // 0x0000 - 0x3FFF: ROM
+    updateMap(1, m_ram, true);           // 0x4000 - 0x7FFF: RAM bank 0
+    updateMap(2, m_ram + 0x4000, true);  // 0x8000 - 0xBFFF: RAM bank 1
+    updateMap(3, m_ram + 0x8000, true);  // 0xC000 - 0xFFFF: RAM bank 2
+    
     m_videoPagePtr = m_ram;
     ESP_LOGI(TAG, "Spectrum 48K reset");
 }
