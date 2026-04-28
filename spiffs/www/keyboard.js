@@ -85,8 +85,17 @@
     txCount++;
     if (!txDirty) { txDirty = true; requestAnimationFrame(flushTx); }
     pushBuf(label || `${r},${b}`, pressed);
+    // Logging for debugging
+    console.log('[ZX-KEYBOARD] sendKey:', { r, b, pressed, label, wsState: ws ? ws.readyState : 'no ws' });
     if (ws && ws.readyState === 1) {
-      try { ws.send(sendBuf); } catch (_) {}
+      try {
+        ws.send(sendBuf);
+        console.log('[ZX-KEYBOARD] ws.send success', sendBuf);
+      } catch (e) {
+        console.warn('[ZX-KEYBOARD] ws.send error', e);
+      }
+    } else {
+      console.warn('[ZX-KEYBOARD] ws not open, key not sent');
     }
   }
 

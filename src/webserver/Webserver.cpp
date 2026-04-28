@@ -294,7 +294,16 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     config.keep_alive_interval = 2;
     config.keep_alive_count = 3;
 
+
     if (httpd_start(&s_server, &config) != ESP_OK) return ESP_FAIL;
+
+    // Start keepalive ping task to keep WebSocket connections alive
+    static bool keepalive_started = false;
+    if (!keepalive_started) {
+        keepalive_started = true;
+        xTaskCreatePinnedToCore(ws_keepalive_task, "ws_keepalive", 2048, s_server, 5, NULL, 1);
+        ESP_LOGI(TAG, "WebSocket keepalive task started");
+    }
 
     static const httpd_uri_t uris[] = {
         { "/ws",            HTTP_GET, ws_handler,         NULL, true, false, NULL },

@@ -24,18 +24,20 @@
   // Insert into DOM
   document.body.appendChild(player);
 
-  // Find WebSocket or fallback to HTTP
-  let ws = window.ws;
-  if (!ws || ws.readyState !== 1) {
-    // Try to find a global ws or create a new one
-    try {
-      ws = new WebSocket('ws://' + location.host + '/ws');
-    } catch (e) { ws = null; }
+  // Use global ws object from ws.js
+  function getWs() {
+    return window.ws && window.ws.readyState === 1 ? window.ws : null;
   }
 
   function sendTapeCmd(cmd) {
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ cmd: 'tape_' + cmd }));
+    const ws = getWs();
+    if (ws) {
+      try {
+        ws.send(JSON.stringify({ cmd: 'tape_' + cmd }));
+      } catch (e) {
+        // fallback: HTTP GET
+        fetch('/api/tape?cmd=' + cmd).catch(()=>{});
+      }
     } else {
       // fallback: HTTP GET
       fetch('/api/tape?cmd=' + cmd).catch(()=>{});
@@ -47,5 +49,10 @@
       const cmd = btn.getAttribute('data-cmd');
       sendTapeCmd(cmd);
     });
+  });
+
+  // Listen for ws reconnects and update UI if needed
+  window.addEventListener('ws-reconnect', () => {
+    // Optionally update UI or re-enable controls
   });
 })();
