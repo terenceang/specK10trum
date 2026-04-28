@@ -24,6 +24,10 @@ void wifi_prov_stop();
 // Block until Wi-Fi is connected and an IP is obtained.
 bool wifi_prov_wait_for_ip(uint32_t timeout_ms);
 
+// Start BLE provisioning if not already provisioned or running.
+// Stops WiFi STA first and resets retry counter.
+bool wifi_prov_start_ble_fallback();
+
 #ifdef __cplusplus
 }
 #endif

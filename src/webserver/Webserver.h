@@ -13,6 +13,9 @@ void webserver_stop(void);
 bool webserver_is_running(void);
 esp_err_t webserver_ensure_started(SpectrumBase* spectrum);
 
+// Block until a WebSocket client connects, or timeout expires.
+bool webserver_wait_for_ws_client(uint32_t timeout_ms);
+
 // Apply any pending reset/snapshot-load requested via the HTTP API.
 // Must be called from the emulator task between frames so spectrum state
 // is mutated without racing the running CPU.

@@ -92,7 +92,8 @@ static bool mountSPIFFS() {
 static void emulator_task(void* pvParameters) {
     (void)pvParameters;
     ESP_LOGI(TAG, "Emulator task started on core %d", xPortGetCoreID());
-    
+    display_boot_log_hide();
+
     const int T_STATES_PER_FRAME = 69888; // 3.5 MHz / 50.08 Hz
     
     while (1) {
@@ -117,156 +118,139 @@ static void emulator_task(void* pvParameters) {
     }
 }
 
-// Background task to show splash and run display boot sequence without blocking
-static void splash_task(void* pvParameters) {
-    (void)pvParameters;
-    log_ts(TAG, "Splash task started");
-    display_boot_test();
-    log_ts(TAG, "Splash task finished");
-    vTaskDelete(NULL);
-}
-
-// Background task to handle Wi-Fi connection attempts and start webserver
-static void wifi_and_webserver_task(void* pvParameters) {
-    (void)pvParameters;
-    log_ts(TAG, "Wi-Fi task started");
-
-    if (!wifi_prov_start()) {
-        ESP_LOGW(TAG, "wifi_prov_start() failed to initialize Wi‑Fi subsystem");
-    }
-
-    // Wait for IP with a reasonable timeout. If we have saved credentials,
-    // the driver will auto-connect in the background.
-    display_setOverlayText("Connecting Wi-Fi...", 0xFFFF);
-    if (wifi_prov_wait_for_ip(15000)) {
-        ESP_LOGI(TAG, "Wi-Fi connected. Got IP, check health here.. start webserver if not running");
-        if (webserver_ensure_started(spectrum) == ESP_OK) {
-            if (webserver_is_running()) {
-                ESP_LOGI(TAG, "Webserver is healthy and running");
-                display_setOverlayText("Webserver ready", 0x07E0);
-            } else {
-                ESP_LOGW(TAG, "Webserver health check failed");
-                display_setOverlayText("Webserver check failed", 0xF800);
-            }
-        } else {
-            ESP_LOGW(TAG, "Webserver failed to start");
-            display_setOverlayText("Webserver failed", 0xF800);
-        }
-    } else {
-        ESP_LOGW(TAG, "Wi-Fi connection timeout. BLE provisioning will restart if needed.");
-        display_setOverlayText("Wi-Fi Timeout", 0xF800);
-    }
-
-    log_ts(TAG, "Wi-Fi task finished");
-    vTaskDelete(NULL);
-}
-
-
 extern "C" void app_main(void) {
-    // Give the USB serial/JTAG console time to enumerate before printing startup logs.
     vTaskDelay(pdMS_TO_TICKS(2000));
-
-    // mark boot start for timestamps
     s_boot_start_us = esp_timer_get_time();
     log_ts(TAG, "app_main start");
 
-    // Initialize expander first
+    // 1. IO Expander
     expander_init();
 
-    // Mount SPIFFS immediately so ROMs and other assets are available
-    if (!mountSPIFFS()) {
-        ESP_LOGE(TAG, "SPIFFS mount failed! System may not boot correctly.");
-    }
-    log_ts(TAG, "SPIFFS mounted");
-
-    // Initialize display as soon as possible for early visual feedback
+    // 2. Display
+    bool display_ready = false;
     if (!display_init()) {
-        ESP_LOGE(TAG, "Display initialization FAILED");
+        ESP_LOGE(TAG, "Display init FAILED");
     } else {
-        ESP_LOGI(TAG, "Display initialization STARTED");
-        // Initialize audio early so boot beep can play during display boot test
-        if (!audio_init()) {
-            ESP_LOGW(TAG, "Audio initialization failed; continuing without sound");
-        }
-        // Run the boot splash asynchronously so we don't block the main startup path
-        xTaskCreatePinnedToCore(splash_task, "splash", 3072, NULL, 5, NULL, 1);
+        display_ready = true;
+        display_boot_log_add("Boot: Display ready");
     }
 
-    ESP_LOGI(TAG, "**************************************");
-    ESP_LOGI(TAG, "       SPEC-K10-TRUM STARTING");
-    ESP_LOGI(TAG, "**************************************");
+    // 3. Splash Screen
+    if (display_ready) {
+        display_boot_test();
+    }
 
-    ESP_LOGI(TAG, "Model: %s", MODEL_NAME);
-
-    // Initialize PSRAM only when the SDK config enables it.
+    // 4. PSRAM
+    if (display_ready) display_boot_log_add("Boot: PSRAM init");
 #ifdef CONFIG_SPIRAM
     if (esp_psram_init() != ESP_OK) {
-        ESP_LOGE(TAG, "PSRAM initialization failed!");
+        ESP_LOGE(TAG, "PSRAM init failed!");
+        if (display_ready) display_boot_log_add("Boot: PSRAM failed!");
     } else {
-        size_t psramSize = esp_psram_get_size();
-        ESP_LOGI(TAG, "PSRAM initialized: %zu bytes", psramSize);
+        if (display_ready) display_boot_log_add("Boot: PSRAM ready");
     }
-#else
-    ESP_LOGW(TAG, "PSRAM support is disabled in sdkconfig. Skipping initialization.");
 #endif
 
-    // Check if ROM file exists before initializing hardware
+    // 5. SPIFFS
+    if (!mountSPIFFS()) {
+        ESP_LOGE(TAG, "SPIFFS mount failed!");
+    }
+    if (display_ready) display_boot_log_add("Boot: SPIFFS mounted");
+
+    // 6. Wi-Fi (blocking)
+    bool wifi_connected = false;
+    if (display_ready) display_boot_log_add("Wi-Fi: Initializing...");
+    if (!wifi_prov_start()) {
+        ESP_LOGW(TAG, "wifi_prov_start() failed");
+        if (display_ready) display_boot_log_add("Wi-Fi: Init failed!");
+    } else {
+        if (display_ready) display_boot_log_add("Wi-Fi: Connecting...");
+        if (wifi_prov_wait_for_ip(15000)) {
+            wifi_connected = true;
+            if (display_ready) display_boot_log_add("Wi-Fi: Connected!");
+        } else {
+            ESP_LOGW(TAG, "Wi-Fi timeout. Starting BLE fallback.");
+            if (display_ready) display_boot_log_add("Wi-Fi: Timeout! BLE fallback...");
+            wifi_prov_start_ble_fallback();
+        }
+    }
+
+    // 7. ROM check
+    if (display_ready) display_boot_log_add("Boot: ROM check");
     struct stat st;
     if (stat(ROM_FILE, &st) != 0) {
-        ESP_LOGE(TAG, "ROM file %s NOT FOUND in SPIFFS! Aborting.", ROM_FILE);
+        ESP_LOGE(TAG, "ROM %s not found! Aborting.", ROM_FILE);
+        if (display_ready) display_boot_log_add("Boot: ROM not found!");
         return;
     }
 
-    // Create the spectrum hardware
+    // 8. Spectrum CPU
+    if (display_ready) display_boot_log_add("Boot: CPU init");
     spectrum = new SpectrumHardware();
     if (!spectrum) {
         ESP_LOGE(TAG, "Failed to create Spectrum hardware!");
         return;
     }
-    
-    // Load ROM selected by model
+
+    // 9. Load ROM + Reset
+    if (display_ready) display_boot_log_add("Boot: ROM loading");
     if (!spectrum->loadROM(ROM_FILE)) {
-        ESP_LOGE(TAG, "ROM load failed from %s, aborting emulator startup.", ROM_FILE);
+        ESP_LOGE(TAG, "ROM load failed. Aborting.");
         return;
     }
-    
-    // Reset the system
     spectrum->reset();
+    if (display_ready) display_boot_log_add("Boot: CPU reset");
 
 #if RUN_ALL_TESTS
-    // Run all tests while splash is showing.
     run_all_tests(spectrum, MODEL_NAME);
-    // Reset again after tests to ensure a clean state for the emulator
     spectrum->reset();
-#else
-    ESP_LOGI(TAG, "Tests are disabled at build time (RUN_ALL_TESTS==0); skipping test suite.");
 #endif
 
-    log_ts(TAG, "Continuing startup (splash in background)");
+    // 10. Webserver (only if Wi-Fi up)
+    if (wifi_connected) {
+        if (display_ready) display_boot_log_add("Webserver: Starting...");
+        if (webserver_ensure_started(spectrum) == ESP_OK && webserver_is_running()) {
+            if (display_ready) display_boot_log_add("Webserver: Ready");
+            display_setOverlayText("Webserver ready", 0x07E0);
+        } else {
+            ESP_LOGW(TAG, "Webserver failed to start");
+            if (display_ready) display_boot_log_add("Webserver: Failed!");
+        }
+    }
 
-    // Start Wi‑Fi and webserver in background so emulator can start sooner
-    display_setOverlayText("Waiting for Wi-Fi...", 0xFFFF);
-    xTaskCreatePinnedToCore(wifi_and_webserver_task, "wifi_ws", 8192, NULL, 6, NULL, 1);
-
-    vTaskDelay(pdMS_TO_TICKS(100));
-    ESP_LOGI(TAG, "✓ Initialization complete! Starting emulator task.");
-    log_ts(TAG, "Emulator starting");
-    
-    // Initialize input subsystem (spawns input task)
+    // 11. Input
+    if (display_ready) display_boot_log_add("Boot: Input init");
     input_init();
 
-    // Create emulator task on core 0
-    xTaskCreatePinnedToCore(
-        emulator_task,
-        "emulator",
-        8192,
-        NULL,
-        5,
-        NULL,
-        0
-    );
-    
-    // Main task idles
+    // 12. Audio
+    if (display_ready) display_boot_log_add("Boot: Audio init");
+    if (!audio_init()) {
+        ESP_LOGW(TAG, "Audio init failed; continuing without sound");
+        if (display_ready) display_boot_log_add("Boot: Audio failed!");
+    } else {
+        if (display_ready) display_boot_log_add("Boot: Audio ready");
+    }
+
+    // 13. Wait for WebSocket keyboard client (only if webserver running)
+    if (wifi_connected && webserver_is_running()) {
+        if (display_ready) display_boot_log_add("Boot: Waiting for keyboard...");
+        if (webserver_wait_for_ws_client(30000)) {
+            if (display_ready) display_boot_log_add("Boot: Keyboard connected!");
+        } else {
+            ESP_LOGW(TAG, "No WebSocket keyboard connected within timeout; continuing.");
+            if (display_ready) display_boot_log_add("Boot: Keyboard timeout");
+        }
+    }
+
+    // 14. Beep
+    audio_play_tone(880, 120);
+
+    // 15. Start Emulator Task
+    if (display_ready) display_boot_log_add("Boot: Emulator ready");
+    xTaskCreatePinnedToCore(emulator_task, "emulator", 8192, NULL, 5, NULL, 0);
+
+    // 16. Idle
+    log_ts(TAG, "Boot complete. Entering idle loop.");
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }

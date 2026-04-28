@@ -25,6 +25,7 @@ static bool s_provisioning_started = false;
 static bool s_watcher_started = false;
 static bool s_wifi_init_done = false;
 static bool s_sta_started = false;
+static bool s_ble_fallback_mode = false;
 static esp_event_handler_instance_t s_prov_handler = nullptr;
 static esp_event_handler_instance_t s_wifi_handler = nullptr;
 static esp_event_handler_instance_t s_ip_handler = nullptr;
@@ -86,6 +87,7 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
 {
     (void)arg; (void)data;
     if (base == WIFI_EVENT) {
+        ESP_LOGI(TAG, "WiFi event: id=%ld", id);
         switch (id) {
         case WIFI_EVENT_STA_START: {
             esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
@@ -159,9 +161,11 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
         default:
             break;
         }
-    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t* evt = (ip_event_got_ip_t*)data;
-        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&evt->ip_info.ip));
+    } else if (base == IP_EVENT) {
+        ESP_LOGI(TAG, "IP event: id=%ld", id);
+        if (id == IP_EVENT_STA_GOT_IP) {
+            ip_event_got_ip_t* evt = (ip_event_got_ip_t*)data;
+            ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&evt->ip_info.ip));
 
         esp_wifi_set_ps(WIFI_PS_NONE);
 
@@ -171,7 +175,8 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
         }
         display_setOverlayText(s_last_ip_str, 0xFFFF);
 
-        if (s_wifi_connected_sem) xSemaphoreGive(s_wifi_connected_sem);
+            if (s_wifi_connected_sem) xSemaphoreGive(s_wifi_connected_sem);
+        }
     }
 }
 
@@ -213,6 +218,7 @@ static void prov_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
         wifi_prov_mgr_deinit();
         if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
             s_provisioning_started = false;
+            s_ble_fallback_mode = false;
             xSemaphoreGive(s_state_mutex);
         }
         break;
@@ -272,10 +278,18 @@ static esp_err_t ensure_wifi_initialized()
 
     err = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                               wifi_event_cb, NULL, &s_wifi_handler);
-    if (err != ESP_OK) ESP_LOGW(TAG, "WIFI_EVENT register failed: %s", esp_err_to_name(err));
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "WIFI_EVENT handler registered");
+    } else {
+        ESP_LOGW(TAG, "WIFI_EVENT register failed: %s", esp_err_to_name(err));
+    }
     err = esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                               wifi_event_cb, NULL, &s_ip_handler);
-    if (err != ESP_OK) ESP_LOGW(TAG, "IP_EVENT register failed: %s", esp_err_to_name(err));
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "IP_EVENT handler registered");
+    } else {
+        ESP_LOGW(TAG, "IP_EVENT register failed: %s", esp_err_to_name(err));
+    }
 
     if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         s_wifi_init_done = true;
@@ -340,19 +354,66 @@ bool wifi_prov_start()
     bool provisioned = false;
     wifi_prov_mgr_is_provisioned(&provisioned);
 
-    if (provisioned) {
-        wifi_config_t conf;
-        esp_wifi_get_config(WIFI_IF_STA, &conf);
-        if (strlen((const char*)conf.sta.ssid) == 0) {
-            ESP_LOGW(TAG, "Provisioning flag set but SSID is empty! Resetting...");
-            wifi_prov_mgr_reset_provisioning();
-            provisioned = false; 
-        } else {
-            ESP_LOGI(TAG, "Device already provisioned. SSID: '%s'", (char*)conf.sta.ssid);
-        }
+    // Check if there are actual saved credentials
+    wifi_config_t conf;
+    esp_wifi_get_config(WIFI_IF_STA, &conf);
+    bool has_credentials = (strlen((const char*)conf.sta.ssid) > 0);
+
+    if (provisioned && !has_credentials) {
+        ESP_LOGW(TAG, "Provisioning flag set but SSID is empty! Resetting...");
+        wifi_prov_mgr_reset_provisioning();
+        provisioned = false;
     }
 
-    if (provisioned) {
+    // If in BLE fallback mode (WiFi failed), skip WiFi and go directly to BLE
+    bool in_ble_fallback = false;
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        in_ble_fallback = s_ble_fallback_mode;
+        xSemaphoreGive(s_state_mutex);
+    }
+
+    if (!has_credentials || in_ble_fallback) {
+        ESP_LOGW(TAG, "No saved credentials. Starting BLE provisioning.");
+        wifi_prov_mgr_deinit();
+
+        const char* service_name = "PROV_speck10";
+        const char* pop = "12345678";
+
+        err = esp_event_handler_instance_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID,
+                                                  prov_event_cb, NULL, &s_prov_handler);
+        if (err != ESP_OK) ESP_LOGW(TAG, "WIFI_PROV_EVENT register failed: %d", err);
+
+        wifi_prov_mgr_config_t cfg = {};
+        cfg.scheme = wifi_prov_scheme_ble;
+        cfg.scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BT;
+
+        err = wifi_prov_mgr_init(cfg);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "wifi_prov_mgr_init failed: %d", err);
+            return false;
+        }
+
+        if (in_ble_fallback) {
+            ESP_LOGI(TAG, "Starting BLE provisioning (WiFi connection failed)");
+        } else {
+            ESP_LOGI(TAG, "Starting BLE provisioning (no saved credentials)");
+        }
+        err = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, pop, service_name, NULL);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "wifi_prov_mgr_start_provisioning failed: %d", err);
+            wifi_prov_mgr_deinit();
+            return false;
+        }
+
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            s_provisioning_started = true;
+            xSemaphoreGive(s_state_mutex);
+        }
+        return true;
+    }
+
+    if (provisioned && has_credentials) {
+        ESP_LOGI(TAG, "Device already provisioned. SSID: '%s'", (char*)conf.sta.ssid);
         ESP_LOGI(TAG, "Already provisioned; releasing manager and connecting to saved AP");
         wifi_prov_mgr_deinit();
 
@@ -364,7 +425,9 @@ bool wifi_prov_start()
 
         wifi_mode_t current_mode;
         if (esp_wifi_get_mode(&current_mode) == ESP_OK && current_mode == WIFI_MODE_STA) {
-            ESP_LOGI(TAG, "Wi-Fi already started in STA mode; initiating connection");
+            ESP_LOGI(TAG, "Wi-Fi already in STA mode; disconnecting and reconnecting");
+            esp_wifi_disconnect();
+            vTaskDelay(pdMS_TO_TICKS(100));
             if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 s_sta_started = true;
                 xSemaphoreGive(s_state_mutex);
@@ -387,22 +450,7 @@ bool wifi_prov_start()
         return true;
     }
 
-    const char* service_name = "PROV_speck10";
-    const char* pop = "12345678";
-
-    ESP_LOGI(TAG, "Device not provisioned; starting BLE provisioning service");
-    err = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, pop, service_name, NULL);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "wifi_prov_mgr_start_provisioning failed: %d", err);
-        wifi_prov_mgr_deinit();
-        return false;
-    }
-
-    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        s_provisioning_started = true;
-        xSemaphoreGive(s_state_mutex);
-    }
-    return true;
+    return false;
 }
 
 // Stop Wi-Fi provisioning and cleanup resources.
@@ -415,6 +463,7 @@ void wifi_prov_stop()
             return;
         }
         s_provisioning_started = false;
+        s_ble_fallback_mode = false;
         xSemaphoreGive(s_state_mutex);
     }
 
@@ -514,6 +563,22 @@ bool wifi_prov_apply_credentials(const char* ssid, const char* password)
     return true;
 }
 
+// Start BLE provisioning when WiFi fails (e.g., IP wait timeout).
+// Stops WiFi and resets retry counter to start fresh.
+bool wifi_prov_start_ble_fallback()
+{
+    ESP_LOGI(TAG, "WiFi failed; starting BLE provisioning fallback");
+
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_reconnect_retries = 0;
+        s_ble_fallback_mode = true;
+        xSemaphoreGive(s_state_mutex);
+    }
+
+    esp_wifi_stop();
+    return wifi_prov_start();
+}
+
 // Convenience function to clear saved credentials and stop provisioning.
 void wifi_prov_clear_and_stop(bool clear_saved_creds)
 {
@@ -581,6 +646,12 @@ bool wifi_prov_wait_for_ip(uint32_t timeout_ms)
 {
     (void)timeout_ms;
     return true; // Don't block if provisioning is disabled
+}
+
+bool wifi_prov_start_ble_fallback()
+{
+    ESP_LOGW(TAG, "BLE fallback not available (BLE disabled or headers missing)");
+    return false;
 }
 
 } // extern "C"

@@ -17,6 +17,8 @@ void display_trigger_frame(SpectrumBase* spectrum);
 bool display_showSplash(const char* filename);
 void display_boot_test();
 void display_setOverlayText(const char* text, uint16_t color);
+void display_boot_log_add(const char* message);
+void display_boot_log_hide();
 void display_pause_for_reset();
 void display_resume_after_reset();
 static inline void display_clearOverlay() { display_setOverlayText(NULL, 0); }

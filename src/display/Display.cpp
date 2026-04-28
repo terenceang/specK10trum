@@ -45,6 +45,7 @@ static uint16_t s_overlayColor = 0xFFFF;
 static SemaphoreHandle_t s_overlay_mutex = NULL;
 static int s_overlay_clear_frames = 0;
 
+
 // Ping-pong strip buffers allocated in internal RAM (IRAM)
 static const int NUM_STRIPS = 5;
 static uint16_t* s_stripBuffers[2] = { NULL, NULL };
@@ -538,8 +539,6 @@ bool display_showSplash(const char* filename) {
 
 void display_boot_test() {
     expander_set_led(true);
-    // Play a short beep when LED flashes
-    audio_play_tone(880, 120);
     vTaskDelay(pdMS_TO_TICKS(100));
     expander_set_led(false);
     
@@ -602,6 +601,15 @@ void display_setOverlayText(const char* text, uint16_t color) {
     s_overlayColor = new_swapped_color;
     ESP_LOGD(TAG, "Overlay set: '%s' color=0x%04X", s_overlayText, color);
     if (s_overlay_mutex) xSemaphoreGive(s_overlay_mutex);
+}
+
+void display_boot_log_add(const char* message) {
+    if (!message) return;
+    display_setOverlayText(message, 0xFFFF);
+}
+
+void display_boot_log_hide() {
+    display_clearOverlay();
 }
 
 void display_pause_for_reset() {

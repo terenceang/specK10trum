@@ -21,7 +21,10 @@
       "Bash(python -m platformio run)",
       "Bash(python3 -m platformio run --help)",
       "Bash(python3 -m platformio run)",
-      "Bash(python -m platformio run --target build)"
+      "Bash(python -m platformio run --target build)",
+      "Bash(idf.py build *)",
+      "Bash(python -m platformio run --target=build)",
+      "Bash(python -m pip list)"
     ]
   }
 }

@@ -1,0 +1,307 @@
+Plan: Linear Boot Sequence Refactor                                                                                                                                                     
+
+ Context
+
+ The current boot sequence spawns wifi_and_webserver_task as a concurrent FreeRTOS task immediately after hardware init, so Wi-Fi, webserver, and emulator start racing each other. The  
+ user wants a fully linear sequence (no concurrent work before the emulator task starts) that matches a specific 16-step order and adds a "wait for WebSocket keyboard" step before the  
+ beep.
+
+ Target Boot Sequence
+
+ 1.  expander_init()
+ 2.  display_init()
+ 3.  display_boot_test()          ← splash, no beep yet (audio not up)
+ 4.  esp_psram_init()
+ 5.  mountSPIFFS()
+ 6.  wifi_prov_start() + wifi_prov_wait_for_ip(15000) inline — BLE fallback on timeout
+ 7.  stat(ROM_FILE)               ← abort if missing
+ 8.  new SpectrumHardware()
+ 9.  spectrum->loadROM() + reset()
+ 10. webserver_ensure_started()   ← only if Wi-Fi connected
+ 11. input_init()
+ 12. audio_init()
+ 13. webserver_wait_for_ws_client(timeout_ms)  ← only if Wi-Fi connected
+ 14. audio_play_tone(880, 120)    ← beep
+ 15. xTaskCreatePinnedToCore(emulator_task, ...)
+ 16. idle loop
+
+ Files to Modify
+
+ ┌─────────────────────────────┬────────────────────────────────────────────────────────────────────────┐
+ │            File             │                                 Change                                 │
+ ├─────────────────────────────┼────────────────────────────────────────────────────────────────────────┤
+ │ src/main.cpp                │ Remove wifi_and_webserver_task; restructure app_main()                 │
+ ├─────────────────────────────┼────────────────────────────────────────────────────────────────────────┤
+ │ src/display/Display.cpp     │ Remove audio_play_tone(880, 120) from display_boot_test() (line 543)   │
+ ├─────────────────────────────┼────────────────────────────────────────────────────────────────────────┤
+ │ src/webserver/Webserver.h   │ Add bool webserver_wait_for_ws_client(uint32_t timeout_ms) declaration │
+ ├─────────────────────────────┼────────────────────────────────────────────────────────────────────────┤
+ │ src/webserver/Webserver.cpp │ Implement webserver_wait_for_ws_client                                 │
+ └─────────────────────────────┴────────────────────────────────────────────────────────────────────────┘
+
+ ---
+ Change Details
+
+ 1. src/display/Display.cpp — remove boot beep
+
+ In display_boot_test() (line 543), delete:
+ audio_play_tone(880, 120);
+ Audio is not initialized until step 12; the beep is deferred to step 14 in app_main.
+
+ ---
+ 2. src/webserver/Webserver.h — new API
+
+ Add one declaration inside the extern "C" block:
+ bool webserver_wait_for_ws_client(uint32_t timeout_ms);
+
+ ---
+ 3. src/webserver/Webserver.cpp — implement wait
+
+ Add after webserver_is_running():
+ bool webserver_wait_for_ws_client(uint32_t timeout_ms) {
+     if (!s_server) return false;
+     uint32_t elapsed = 0;
+     const uint32_t POLL_MS = 200;
+     while (elapsed < timeout_ms) {
+         size_t clients = 16;
+         int fds[16];
+         if (httpd_get_client_list(s_server, &clients, fds) == ESP_OK) {
+             for (size_t i = 0; i < clients; i++) {
+                 if (httpd_ws_get_fd_info(s_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
+                     return true;
+             }
+         }
+         vTaskDelay(pdMS_TO_TICKS(POLL_MS));
+         elapsed += POLL_MS;
+     }
+     return false;
+ }
+ Reuses the existing httpd_get_client_list + httpd_ws_get_fd_info pattern already present in ws_keepalive_task (line 303–310).
+
+ ---
+ 4. src/main.cpp — restructure app_main()
+
+ Remove the wifi_and_webserver_task static function entirely (lines 122–164).
+
+ Replace the body of app_main() with the linear sequence below. The wifi_connected bool threads through steps 6 → 10 → 13.
+
+ extern "C" void app_main(void) {
+     vTaskDelay(pdMS_TO_TICKS(2000));
+     s_boot_start_us = esp_timer_get_time();
+     log_ts(TAG, "app_main start");
+
+     // 1. IO Expander
+     expander_init();
+
+     // 2. Display
+     bool display_ready = false;
+     if (!display_init()) {
+         ESP_LOGE(TAG, "Display init FAILED");
+     } else {
+         display_ready = true;
+         display_boot_log_add("Boot: Display ready");
+     }
+
+     // 3. Splash Screen
+     if (display_ready) {
+         display_boot_test();
+     }
+
+     // 4. PSRAM
+     if (display_ready) display_boot_log_add("Boot: PSRAM init");
+ #ifdef CONFIG_SPIRAM
+     if (esp_psram_init() != ESP_OK) {
+         ESP_LOGE(TAG, "PSRAM init failed!");
+         if (display_ready) display_boot_log_add("Boot: PSRAM failed!");
+     } else {
+         if (display_ready) display_boot_log_add("Boot: PSRAM ready");
+     }
+ #endif
+
+     // 5. SPIFFS
+     if (!mountSPIFFS()) {
+         ESP_LOGE(TAG, "SPIFFS mount failed!");
+     }
+     if (display_ready) display_boot_log_add("Boot: SPIFFS mounted");
+
+     // 6. Wi-Fi (blocking)
+     bool wifi_connected = false;
+     if (display_ready) display_boot_log_add("Wi-Fi: Initializing...");
+     if (!wifi_prov_start()) {
+         ESP_LOGW(TAG, "wifi_prov_start() failed");
+         if (display_ready) display_boot_log_add("Wi-Fi: Init failed!");
+     } else {
+         if (display_ready) display_boot_log_add("Wi-Fi: Connecting...");
+         if (wifi_prov_wait_for_ip(15000)) {
+             wifi_connected = true;
+             if (display_ready) display_boot_log_add("Wi-Fi: Connected!");
+         } else {
+             ESP_LOGW(TAG, "Wi-Fi timeout. Starting BLE fallback.");
+             if (display_ready) display_boot_log_add("Wi-Fi: Timeout! BLE fallback...");
+             wifi_prov_start_ble_fallback();
+         }
+     }
+
+     // 7. ROM check
+     if (display_ready) display_boot_log_add("Boot: ROM check");
+     struct stat st;
+     if (stat(ROM_FILE, &st) != 0) {
+         ESP_LOGE(TAG, "ROM %s not found! Aborting.", ROM_FILE);
+         if (display_ready) display_boot_log_add("Boot: ROM not found!");
+         return;
+     }
+
+     // 8. Spectrum CPU
+     if (display_ready) display_boot_log_add("Boot: CPU init");
+     spectrum = new SpectrumHardware();
+     if (!spectrum) {
+         ESP_LOGE(TAG, "Failed to create Spectrum hardware!");
+         return;
+     }
+
+     // 9. Load ROM + Reset
+     if (display_ready) display_boot_log_add("Boot: ROM loading");
+     if (!spectrum->loadROM(ROM_FILE)) {
+         ESP_LOGE(TAG, "ROM load failed. Aborting.");
+         return;
+     }
+     spectrum->reset();
+     if (display_ready) display_boot_log_add("Boot: CPU reset");
+
+ #if RUN_ALL_TESTS
+     run_all_tests(spectrum, MODEL_NAME);
+     spectrum->reset();
+ #endif
+
+     // 10. Webserver (only if Wi-Fi up)
+     if (wifi_connected) {
+         if (display_ready) display_boot_log_add("Webserver: Starting...");
+         if (webserver_ensure_started(spectrum) == ESP_OK && webserver_is_running()) {
+             if (display_ready) display_boot_log_add("Webserver: Ready");
+             display_setOverlayText("Webserver ready", 0x07E0);
+         } else {
+             ESP_LOGW(TAG, "Webserver failed to start");
+             if (display_ready) display_boot_log_add("Webserver: Failed!");
+         }
+     }
+
+     // 11. Input
+     if (display_ready) display_boot_log_add("Boot: Input init");
+     input_init();
+
+     // 12. Audio
+     if (display_ready) display_boot_log_add("Boot: Audio init");
+     if (!audio_init()) {
+         ESP_LOGW(TAG, "Audio init failed; continuing without sound");
+         if (display_ready) display_boot_log_add("Boot: Audio failed!");
+     } else {
+         if (display_ready) display_boot_log_add("Boot: Audio ready");
+     }
+
+     // 13. Wait for WebSocket keyboard client (only if webserver running)
+     if (wifi_connected && webserver_is_running()) {
+         if (display_ready) display_boot_log_add("Boot: Waiting for keyboard...");
+         if (webserver_wait_for_ws_client(30000)) {
+             if (display_ready) display_boot_log_add("Boot: Keyboard connected!");
+         } else {
+             ESP_LOGW(TAG, "No WebSocket keyboard connected within timeout; continuing.");
+             if (display_ready) display_boot_log_add("Boot: Keyboard timeout");
+         }
+     }
+
+     // 14. Beep
+     audio_play_tone(880, 120);
+
+     // 15. Start Emulator Task
+     if (display_ready) display_boot_log_add("Boot: Emulator ready");
+     xTaskCreatePinnedToCore(emulator_task, "emulator", 8192, NULL, 5, NULL, 0);
+
+     // 16. Idle
+     log_ts(TAG, "Boot complete. Entering idle loop.");
+     while (1) {
+         vTaskDelay(pdMS_TO_TICKS(1000));
+     }
+ }
+
+ ---
+ Key Behavioural Changes
+
+ ┌───────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────┐
+ │                                    Before                                     │                                After                                │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ Wi-Fi runs as a concurrent FreeRTOS task on Core 1                            │ Wi-Fi runs inline in app_main before emulator starts                │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ Audio init happens right after splash (Phase 2)                               │ Audio init happens at step 12, after webserver + input              │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ Boot beep fires from display_boot_test() before audio is ready (silent no-op) │ Boot beep fires at step 14, after audio_init() — will actually play │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ SPIFFS mounted before display                                                 │ PSRAM first, then SPIFFS (matches requested order)                  │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ Webserver always attempted                                                    │ Webserver only started if Wi-Fi connected                           │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ No keyboard-ready gate before emulator                                        │ Blocks up to 30 s waiting for WebSocket client; times out cleanly   │
+ └───────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────┘
+
+ ---
+ Verification
+
+ 1. Build: idf.py build — no new warnings
+ 2. Flash + monitor: idf.py flash monitor — confirm log timestamps show steps in order
+ 3. Beep: should now audibly sound at step 14 (was silently skipped before)
+ 4. No Wi-Fi: BLE fallback still starts; webserver + keyboard wait are skipped; emulator launches
+ 5. WebSocket keyboard: connect a browser client after step 10; boot should unblock at step 13 and beep
+ 6. WebSocket keyboard timeout: don't connect any client; after 30 s step 13 logs "timeout" and emulator starts anyway
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+ Claude has written up a plan and is ready to execute. Would you like to proceed?
+
+ ❯ 1. Yes, auto-accept edits
+   2. Yes, manually approve edits
+   3. No, refine with Ultraplan on Claude Code on the web
+   4. Tell Claude what to change
+      shift+tab to approve with this feedback
+
+ ctrl-g to edit in Notepad · ~\.claude\plans\refactor-boot-to-this-distributed-seal.md
+
+     // 14. Beep
+     audio_play_tone(880, 120);
+
+     // 15. Start Emulator Task
+     if (display_ready) display_boot_log_add("Boot: Emulator ready");
+     xTaskCreatePinnedToCore(emulator_task, "emulator", 8192, NULL, 5, NULL, 0);
+
+     // 16. Idle
+     log_ts(TAG, "Boot complete. Entering idle loop.");
+     while (1) {
+         vTaskDelay(pdMS_TO_TICKS(1000));
+     }
+ }
+
+ ---
+ Key Behavioural Changes
+
+ ┌───────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────┐
+ │                                    Before                                     │                                After                                │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ Wi-Fi runs as a concurrent FreeRTOS task on Core 1                            │ Wi-Fi runs inline in app_main before emulator starts                │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ Audio init happens right after splash (Phase 2)                               │ Audio init happens at step 12, after webserver + input              │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ Boot beep fires from display_boot_test() before audio is ready (silent no-op) │ Boot beep fires at step 14, after audio_init() — will actually play │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ SPIFFS mounted before display                                                 │ PSRAM first, then SPIFFS (matches requested order)                  │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ Webserver always attempted                                                    │ Webserver only started if Wi-Fi connected                           │
+ ├───────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+ │ No keyboard-ready gate before emulator                                        │ Blocks up to 30 s waiting for WebSocket client; times out cleanly   │
+ └───────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────┘
+
+ ---
+ Verification
+
+ 1. Build: idf.py build — no new warnings
+ 2. Flash + monitor: idf.py flash monitor — confirm log timestamps show steps in order
+ 3. Beep: should now audibly sound at step 14 (was silently skipped before)
+ 4. No Wi-Fi: BLE fallback still starts; webserver + keyboard wait are skipped; emulator launches
+ 5. WebSocket keyboard: connect a browser client after step 10; boot should unblock at step 13 and beep
+ 6. WebSocket keyboard timeout: don't connect any client; after 30 s step 13 logs "timeout" and emulator starts anyway

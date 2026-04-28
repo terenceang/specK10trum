@@ -401,6 +401,26 @@ bool webserver_is_running(void)
     return s_server != NULL;
 }
 
+bool webserver_wait_for_ws_client(uint32_t timeout_ms)
+{
+    if (!s_server) return false;
+    uint32_t elapsed = 0;
+    const uint32_t POLL_MS = 200;
+    while (elapsed < timeout_ms) {
+        size_t clients = 16;
+        int fds[16];
+        if (httpd_get_client_list(s_server, &clients, fds) == ESP_OK) {
+            for (size_t i = 0; i < clients; i++) {
+                if (httpd_ws_get_fd_info(s_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
+                    return true;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(POLL_MS));
+        elapsed += POLL_MS;
+    }
+    return false;
+}
+
 esp_err_t webserver_ensure_started(SpectrumBase* spectrum)
 {
     if (webserver_is_running()) {
