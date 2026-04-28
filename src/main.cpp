@@ -139,8 +139,16 @@ static void wifi_and_webserver_task(void* pvParameters) {
     // the driver will auto-connect in the background.
     display_setOverlayText("Connecting Wi-Fi...", 0xFFFF);
     if (wifi_prov_wait_for_ip(15000)) {
-        ESP_LOGI(TAG, "Wi-Fi connected. Starting webserver.");
-        if (webserver_start(spectrum) != ESP_OK) {
+        ESP_LOGI(TAG, "Wi-Fi connected. Got IP, check health here.. start webserver if not running");
+        if (webserver_ensure_started(spectrum) == ESP_OK) {
+            if (webserver_is_running()) {
+                ESP_LOGI(TAG, "Webserver is healthy and running");
+                display_setOverlayText("Webserver ready", 0x07E0);
+            } else {
+                ESP_LOGW(TAG, "Webserver health check failed");
+                display_setOverlayText("Webserver check failed", 0xF800);
+            }
+        } else {
             ESP_LOGW(TAG, "Webserver failed to start");
             display_setOverlayText("Webserver failed", 0xF800);
         }

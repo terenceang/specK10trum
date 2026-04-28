@@ -20,7 +20,8 @@
       "Bash(python -m platformio --version)",
       "Bash(python -m platformio run)",
       "Bash(python3 -m platformio run --help)",
-      "Bash(python3 -m platformio run)"
+      "Bash(python3 -m platformio run)",
+      "Bash(python -m platformio run --target build)"
     ]
   }
 }

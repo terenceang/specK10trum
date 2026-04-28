@@ -193,6 +193,14 @@ void webserver_apply_pending(SpectrumBase* spectrum)
     }
 }
 
+static esp_err_t health_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    const char* response = "{\"status\":\"ok\",\"server\":\"running\"}";
+    return httpd_resp_sendstr(req, response);
+}
+
 static esp_err_t tape_handler(httpd_req_t *req)
 {
     char buf[1024];
@@ -339,6 +347,7 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     }
 
     static const httpd_uri_t uris[] = {
+        { "/api/health",    HTTP_GET, health_handler,     NULL, false, false, NULL },
         { "/ws",            HTTP_GET, ws_handler,         NULL, true, false, NULL },
         { "/api/files",     HTTP_GET, files_list_handler, NULL, false, false, NULL },
         { "/api/tapes",     HTTP_GET, files_list_handler, NULL, false, false, NULL },
@@ -371,4 +380,18 @@ void webserver_stop()
         }
     }
     s_server = NULL;
+}
+
+bool webserver_is_running(void)
+{
+    return s_server != NULL;
+}
+
+esp_err_t webserver_ensure_started(SpectrumBase* spectrum)
+{
+    if (webserver_is_running()) {
+        return ESP_OK;
+    }
+    ESP_LOGI(TAG, "Webserver not running, starting now");
+    return webserver_start(spectrum);
 }

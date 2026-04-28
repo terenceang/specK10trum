@@ -10,6 +10,8 @@ extern "C" {
 
 esp_err_t webserver_start(SpectrumBase* spectrum);
 void webserver_stop(void);
+bool webserver_is_running(void);
+esp_err_t webserver_ensure_started(SpectrumBase* spectrum);
 
 // Apply any pending reset/snapshot-load requested via the HTTP API.
 // Must be called from the emulator task between frames so spectrum state
