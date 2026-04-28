@@ -264,17 +264,24 @@ static esp_err_t ws_handler(httpd_req_t *req)
 
 static void ws_keepalive_task(void* arg)
 {
-    httpd_handle_t server = (httpd_handle_t)arg;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5000));
-        if (!server) continue;
+        if (!s_server) continue;
         size_t clients = 16;
         int fds[16];
-        if (httpd_get_client_list(server, &clients, fds) == ESP_OK) {
+        if (httpd_get_client_list(s_server, &clients, fds) == ESP_OK) {
             for (size_t i = 0; i < clients; i++) {
-                if (httpd_ws_get_fd_info(server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET) {
-                    httpd_ws_frame_t ping = { .type = HTTPD_WS_TYPE_PING };
-                    httpd_ws_send_frame_async(server, fds[i], &ping);
+                if (httpd_ws_get_fd_info(s_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET) {
+                    // Send a small text frame ("ping") instead of a ping frame
+                    const char* msg = "ping";
+                    httpd_ws_frame_t frame = {
+                        .final = true,
+                        .fragmented = false,
+                        .type = HTTPD_WS_TYPE_TEXT,
+                        .payload = (uint8_t*)msg,
+                        .len = strlen(msg)
+                    };
+                    httpd_ws_send_frame_async(s_server, fds[i], &frame);
                 }
             }
         }
@@ -301,7 +308,7 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     static bool keepalive_started = false;
     if (!keepalive_started) {
         keepalive_started = true;
-        xTaskCreatePinnedToCore(ws_keepalive_task, "ws_keepalive", 2048, s_server, 5, NULL, 1);
+        xTaskCreatePinnedToCore(ws_keepalive_task, "ws_keepalive", 4096, NULL, 5, NULL, 1);
         ESP_LOGI(TAG, "WebSocket keepalive task started");
     }
 
@@ -320,7 +327,6 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
         httpd_register_uri_handler(s_server, &uris[i]);
     }
 
-    xTaskCreatePinnedToCore(ws_keepalive_task, "ws_ka", 4096, s_server, 5, NULL, 1);
     return ESP_OK;
 }
 

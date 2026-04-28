@@ -201,12 +201,15 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
     m_pendingTapeTstates -= 11;
 
     // Standard Spectrum keyboard: Address bits A8-A15 select rows.
-    uint8_t row_addr = (port >> 8);
-    for (int i = 0; i < 8; i++) {
-        if (!(row_addr & (1 << i))) {
-            val &= input_getKeyboardRow(i);
-        }
-    }
+    uint8_t select = ~(port >> 8);
+    if (select & 0x01) val &= input_getKeyboardRow(0);
+    if (select & 0x02) val &= input_getKeyboardRow(1);
+    if (select & 0x04) val &= input_getKeyboardRow(2);
+    if (select & 0x08) val &= input_getKeyboardRow(3);
+    if (select & 0x10) val &= input_getKeyboardRow(4);
+    if (select & 0x20) val &= input_getKeyboardRow(5);
+    if (select & 0x40) val &= input_getKeyboardRow(6);
+    if (select & 0x80) val &= input_getKeyboardRow(7);
     
     // EAR input is bit 6.
     bool current_ear = m_tape.getEar();

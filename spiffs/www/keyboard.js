@@ -1,10 +1,6 @@
-// Standalone ZX Spectrum virtual keyboard logic
-(function () {
+(function(window) {
   'use strict';
-  const kb = document.getElementById('zx-kb');
-  if (!kb) return;
 
-  // MCU matrix mapping
   const KEY_MAP = {
     '1':[3,0],'2':[3,1],'3':[3,2],'4':[3,3],'5':[3,4],
     '6':[4,4],'7':[4,3],'8':[4,2],'9':[4,1],'0':[4,0],
@@ -15,6 +11,13 @@
     'CAPS':[0,0],'Z':[0,1],'X':[0,2],'C':[0,3],'V':[0,4],
     'B':[7,4],'N':[7,3],'M':[7,2],'SYM':[7,1],'SPACE':[7,0]
   };
+
+  const toggles = { caps: false, symbol: false };
+  const active = new Map();
+  const sendBuf = new Uint8Array(3);
+  let txCount = 0;
+  let onKeyCallback = null;
+
   function codeFor(k) {
     return (k.code || (k.main || '').toUpperCase().split(' ')[0] || '').replace(/[^A-Z0-9]/g, '');
   }
@@ -28,79 +31,97 @@
     return c || '?';
   }
 
-  // Toggle state for CAPS / SYM
-  const ledCaps  = document.getElementById('zx-led-caps');
-  const ledSym   = document.getElementById('zx-led-sym');
-  const toggles = { caps: false, symbol: false };
+  const esc = window.ZX_UTILS.esc;
+
+  function keyHTML(k, STRIPE) {
+    const wideCls =
+      k.wide >= 1.85 ? ' w185' :
+      k.wide >= 1.55 ? ' w155' :
+      k.wide >= 1.35 ? ' w135' : '';
+    const mainCls  = k.special ? 'zx-main sml' : 'zx-main';
+    const mainBody = (k.main && k.main.indexOf(' ') >= 0)
+      ? k.main.split(' ').map(p => `<div>${esc(p)}</div>`).join('')
+      : esc(k.main);
+
+    let parts = '';
+    if (k.stripeLabel) {
+      const col = (k.stripeColor && STRIPE[k.stripeColor])
+        ? ` style="color:${STRIPE[k.stripeColor]}"` : '';
+      parts += `<div class="zx-lab zx-stripe"${col}>${esc(k.stripeLabel)}</div>`;
+    }
+    if (k.keywordAbove) parts += `<div class="zx-lab zx-above">${esc(k.keywordAbove)}</div>`;
+    if (k.symbolRed)    parts += `<div class="zx-lab zx-sym">${esc(k.symbolRed)}</div>`;
+    parts += `<div class="${mainCls}">${mainBody}</div>`;
+    if (k.keyword)      parts += `<div class="zx-lab zx-kw">${esc(k.keyword)}</div>`;
+    if (k.commandBelow) parts += `<div class="zx-lab zx-below">${esc(k.commandBelow)}</div>`;
+    if (k.eModeRed)     parts += `<div class="zx-lab zx-er">${esc(k.eModeRed)}</div>`;
+    if (k.eModeGreen)   parts += `<div class="zx-lab zx-eg">${esc(k.eModeGreen)}</div>`;
+
+    const m = mapFor(k);
+    const data = m ? ` data-r="${m[0]}" data-b="${m[1]}"` : '';
+    const spc  = k.special ? ` data-special="${esc(k.special)}"` : '';
+    const lbl  = ` data-lbl="${esc(shortLabel(k))}"`;
+    return `<div class="zx-key${wideCls}"${data}${spc}${lbl}>${parts}</div>`;
+  }
+
+  function render(container) {
+    const LAYOUT = window.ZX_LAYOUT;
+    const STRIPE = (LAYOUT && LAYOUT.STRIPE) || {};
+    const rows = LAYOUT
+      ? [LAYOUT.ROW_1, LAYOUT.ROW_2, LAYOUT.ROW_3, LAYOUT.ROW_4]
+      : [
+          ['1','2','3','4','5','6','7','8','9','0'],
+          ['Q','W','E','R','T','Y','U','I','O','P'],
+          ['A','S','D','F','G','H','J','K','L','ENTER'],
+          ['CAPS','Z','X','C','V','B','N','M','SYM','SPACE']
+        ].map(r => r.map(m => ({ main: m })));
+
+    const ROW_OFFSET_EM = [0, 0.26, 0.52, 0];
+
+    const rowsHtml = rows.map((r, i) => {
+      const off = ROW_OFFSET_EM[i];
+      const ml  = off ? ` style="margin-left:calc(var(--key-size) * ${off})"` : '';
+      let html = `<div class="zx-row"${ml}>${r.map(k => keyHTML(k, STRIPE)).join('')}`;
+      if (i === 0) {
+        html += `
+          <div class="zx-kb-leds">
+            <div class="zx-led" id="zx-led-caps"><span class="lamp"></span>CAPS</div>
+            <div class="zx-led" id="zx-led-sym"><span class="lamp"></span>SYM</div>
+          </div>
+        `;
+      }
+      html += `</div>`;
+      return html;
+    }).join('');
+
+    const stripesHtml = (LAYOUT && LAYOUT.STRIPE)
+      ? `<div class="zx-stripebar">${
+          ['red','yellow','green','cyan']
+            .map(c => `<div style="background:${STRIPE[c] || '#fff'}"></div>`)
+            .join('')
+        }</div>`
+      : '';
+
+    container.innerHTML = rowsHtml + stripesHtml;
+    initEvents(container);
+  }
+
+  function sendKey(r, b, pressed, label) {
+    sendBuf[0] = r; sendBuf[1] = b; sendBuf[2] = pressed ? 1 : 0;
+    txCount++;
+    if (window.ZX_WS) window.ZX_WS.send(sendBuf);
+    if (onKeyCallback) onKeyCallback(label || `${r},${b}`, pressed, txCount);
+  }
+
   function setToggle(el, special, on) {
     toggles[special] = on;
     el.classList.toggle('toggled', on);
-    const led = special === 'caps' ? ledCaps : ledSym;
+    const led = document.getElementById('zx-led-' + special);
     if (led) led.classList.toggle('on', on);
     const r = +el.dataset.r, b = +el.dataset.b;
     if (!isNaN(r) && !isNaN(b)) sendKey(r, b, on, el.dataset.lbl);
   }
 
-  // Buffer ring
-  const bufEl = document.getElementById('zx-buf-list');
-  const BUF_MAX = 18;
-  const bufPool = [];
-  for (let i = 0; i < BUF_MAX; i++) {
-    const node = document.createElement('div');
-    node.className = 'zx-buf-item';
-    node.style.display = 'none';
-    bufEl.appendChild(node);
-    bufPool.push(node);
-  }
-  let bufHead = 0, bufLen = 0;
-  function pushBuf(label, pressed) {
-    let node;
-    if (bufLen < BUF_MAX) {
-      node = bufPool[(bufHead + bufLen) % BUF_MAX];
-      bufLen++;
-    } else {
-      node = bufPool[bufHead];
-      bufHead = (bufHead + 1) % BUF_MAX;
-      bufEl.appendChild(node);
-    }
-    node.textContent = label + (pressed ? '↓' : '↑');
-    node.className = 'zx-buf-item ' + (pressed ? 'down' : 'up');
-    node.style.display = '';
-  }
-
-  // Send logic
-  let ws = window.ws;
-  if (!ws || ws.readyState !== 1) {
-    try { ws = new WebSocket('ws://' + location.host + '/ws'); } catch (e) { ws = null; }
-  }
-  const sendBuf = new Uint8Array(3);
-  let txCount = 0, txDirty = false;
-  const txEl = document.getElementById('zx-tx');
-  function flushTx() {
-    txDirty = false;
-    txEl.textContent = `TX: ${txCount}`;
-  }
-  function sendKey(r, b, pressed, label) {
-    sendBuf[0] = r; sendBuf[1] = b; sendBuf[2] = pressed ? 1 : 0;
-    txCount++;
-    if (!txDirty) { txDirty = true; requestAnimationFrame(flushTx); }
-    pushBuf(label || `${r},${b}`, pressed);
-    // Logging for debugging
-    console.log('[ZX-KEYBOARD] sendKey:', { r, b, pressed, label, wsState: ws ? ws.readyState : 'no ws' });
-    if (ws && ws.readyState === 1) {
-      try {
-        ws.send(sendBuf);
-        console.log('[ZX-KEYBOARD] ws.send success', sendBuf);
-      } catch (e) {
-        console.warn('[ZX-KEYBOARD] ws.send error', e);
-      }
-    } else {
-      console.warn('[ZX-KEYBOARD] ws not open, key not sent');
-    }
-  }
-
-  // Input: Pointer Events
-  const active = new Map();
   function pressMomentary(el) {
     if (el.classList.contains('pressed')) return;
     el.classList.add('pressed');
@@ -113,11 +134,13 @@
     const r = +el.dataset.r, b = +el.dataset.b;
     if (!isNaN(r) && !isNaN(b)) sendKey(r, b, false, el.dataset.lbl);
   }
+
   function isToggle(el) {
     const s = el.dataset.special;
     return s === 'caps' || s === 'symbol';
   }
-  function onDown(el, pointerId) {
+
+  function onDown(el, pointerId, kb) {
     if (isToggle(el)) {
       const s = el.dataset.special;
       setToggle(el, s, !toggles[s]);
@@ -126,79 +149,93 @@
     active.set(pointerId, { el, rect: el.getBoundingClientRect() });
     pressMomentary(el);
   }
+
   function onUp(pointerId) {
     const entry = active.get(pointerId);
     if (!entry) return;
     active.delete(pointerId);
     releaseMomentary(entry.el);
   }
-  if (window.PointerEvent) {
-    kb.addEventListener('pointerdown', (e) => {
-      const el = e.target.closest('.zx-key');
-      if (!el) return;
-      e.preventDefault();
-      try { kb.setPointerCapture(e.pointerId); } catch (_) {}
-      onDown(el, e.pointerId);
-    });
-    const end = (e) => {
-      onUp(e.pointerId);
-      try { kb.releasePointerCapture(e.pointerId); } catch (_) {}
-    };
-    kb.addEventListener('pointerup',     end);
-    kb.addEventListener('pointercancel', end);
-    kb.addEventListener('pointermove', (e) => {
-      const entry = active.get(e.pointerId);
-      if (!entry) return;
-      const r = entry.rect;
-      if (e.clientX < r.left || e.clientX >= r.right ||
-          e.clientY < r.top  || e.clientY >= r.bottom) {
-        active.delete(e.pointerId);
-        releaseMomentary(entry.el);
-      }
-    });
-    const invalidateRects = () => {
-      active.forEach((entry) => { entry.rect = entry.el.getBoundingClientRect(); });
-    };
-    window.addEventListener('resize', invalidateRects);
-    window.addEventListener('scroll', invalidateRects, { passive: true });
-  } else {
-    kb.addEventListener('mousedown', (e) => {
-      const el = e.target.closest('.zx-key');
-      if (!el) return;
-      e.preventDefault();
-      onDown(el, 'mouse');
-      if (!isToggle(el)) {
-        const up = () => { onUp('mouse'); window.removeEventListener('mouseup', up); };
-        window.addEventListener('mouseup', up);
-      }
-    });
-    kb.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const t  = e.changedTouches[i];
-        const el = document.elementFromPoint(t.clientX, t.clientY);
-        const key = el && el.closest('.zx-key');
-        if (key) onDown(key, t.identifier);
-      }
-    }, { passive: false });
-    const endTouch = (e) => {
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        onUp(e.changedTouches[i].identifier);
-      }
-    };
-    kb.addEventListener('touchend',    endTouch);
-    kb.addEventListener('touchcancel', endTouch);
+
+  function initEvents(kb) {
+    if (window.PointerEvent) {
+      kb.addEventListener('pointerdown', (e) => {
+        const el = e.target.closest('.zx-key');
+        if (!el) return;
+        e.preventDefault();
+        try { kb.setPointerCapture(e.pointerId); } catch (_) {}
+        onDown(el, e.pointerId, kb);
+      });
+      const end = (e) => {
+        onUp(e.pointerId);
+        try { kb.releasePointerCapture(e.pointerId); } catch (_) {}
+      };
+      kb.addEventListener('pointerup',     end);
+      kb.addEventListener('pointercancel', end);
+      kb.addEventListener('pointermove', (e) => {
+        const entry = active.get(e.pointerId);
+        if (!entry) return;
+        const r = entry.rect;
+        if (e.clientX < r.left || e.clientX >= r.right ||
+            e.clientY < r.top  || e.clientY >= r.bottom) {
+          active.delete(e.pointerId);
+          releaseMomentary(entry.el);
+        }
+      });
+    } else {
+      // Fallback for touch/mouse
+      kb.addEventListener('mousedown', (e) => {
+        const el = e.target.closest('.zx-key');
+        if (!el) return;
+        e.preventDefault();
+        onDown(el, 'mouse', kb);
+        if (!isToggle(el)) {
+          const up = () => { onUp('mouse'); window.removeEventListener('mouseup', up); };
+          window.addEventListener('mouseup', up);
+        }
+      });
+      kb.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          const t  = e.changedTouches[i];
+          const el = document.elementFromPoint(t.clientX, t.clientY);
+          const key = el && el.closest('.zx-key');
+          if (key) onDown(key, t.identifier, kb);
+        }
+      }, { passive: false });
+      const endTouch = (e) => {
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          onUp(e.changedTouches[i].identifier);
+        }
+      };
+      kb.addEventListener('touchend',    endTouch);
+      kb.addEventListener('touchcancel', endTouch);
+    }
+    kb.addEventListener('contextmenu', (e) => e.preventDefault());
   }
-  kb.addEventListener('contextmenu', (e) => e.preventDefault());
+
   function releaseAll() {
     active.forEach((entry) => releaseMomentary(entry.el));
     active.clear();
+    const kb = document.getElementById('zx-kb');
+    if (!kb) return;
     ['caps', 'symbol'].forEach((s) => {
       if (!toggles[s]) return;
       const el = kb.querySelector(`.zx-key[data-special="${s}"]`);
       if (el) setToggle(el, s, false);
     });
   }
+
+  window.ZX_KB = {
+    render,
+    onKey: (cb) => { onKeyCallback = cb; },
+    releaseAll
+  };
+
   document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
   window.addEventListener('blur', releaseAll);
-})();
+  window.addEventListener('resize', () => {
+    active.forEach((entry) => { entry.rect = entry.el.getBoundingClientRect(); });
+  });
+
+})(window);
