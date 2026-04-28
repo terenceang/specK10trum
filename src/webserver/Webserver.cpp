@@ -160,7 +160,12 @@ void webserver_apply_pending(SpectrumBase* spectrum)
             else display_clearOverlay();
         } else if (ext && strcasecmp(ext, ".rom") == 0) {
             if (!spectrum->loadROM(s_pending_load_path)) display_setOverlayText("ROM LOAD FAILED", 0xF800);
-            else { spectrum->reset(); display_clearOverlay(); }
+            else {
+                display_pause_for_reset();
+                spectrum->reset();
+                display_resume_after_reset();
+                display_clearOverlay();
+            }
         } else {
             spectrum->tape().stop();
             if (!Snapshot::load(spectrum, s_pending_load_path)) display_setOverlayText("SNAPSHOT LOAD FAILED", 0xF800);
@@ -172,7 +177,9 @@ void webserver_apply_pending(SpectrumBase* spectrum)
     if (s_pending_reset) {
         s_pending_reset = false;
         display_clearOverlay();
+        display_pause_for_reset();
         spectrum->reset();
+        display_resume_after_reset();
         if (s_pending_instant_load) {
             Z80* cpu = spectrum->getCPU();
             const int max_tstates = 8000000;

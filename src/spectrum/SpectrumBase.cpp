@@ -156,11 +156,11 @@ int SpectrumBase::step() {
     m_pendingTapeTstates += tstates;
     advanceULA(tstates);
 
-    // Auto-stop tape when exiting LD-BYTES in NORMAL mode
-    if (m_tape.getMode() == TapeMode::NORMAL && m_tape.isPlaying()) {
+    // Auto-start tape when entering LD-BYTES in NORMAL mode
+    if (m_tape.getMode() == TapeMode::NORMAL && m_tape.isLoaded() && !m_tape.isPlaying()) {
         bool inLDBytes = (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
-        if (m_wasInLDBytes && !inLDBytes) {
-            m_tape.stop();
+        if (!m_wasInLDBytes && inLDBytes) {
+            m_tape.play();
         }
         m_wasInLDBytes = inLDBytes;
     }

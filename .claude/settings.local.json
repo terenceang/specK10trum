@@ -18,7 +18,9 @@
       "Bash(xargs wc *)",
       "Bash(/c/Users/teren/.platformio/penv/Scripts/pio.exe run *)",
       "Bash(python -m platformio --version)",
-      "Bash(python -m platformio run)"
+      "Bash(python -m platformio run)",
+      "Bash(python3 -m platformio run --help)",
+      "Bash(python3 -m platformio run)"
     ]
   }
 }

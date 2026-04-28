@@ -37,6 +37,8 @@ static uint16_t* s_frameBuffers[2] = { NULL, NULL };
 static int s_drawBuffer = 0;
 static TaskHandle_t s_videoTaskHandle = NULL;
 static SpectrumBase* s_pendingSpectrum = NULL;
+static volatile bool s_pause_video = false;
+static SemaphoreHandle_t s_video_pause_semaphore = NULL;
 
 static char s_overlayText[64] = {0};
 static uint16_t s_overlayColor = 0xFFFF;
@@ -149,6 +151,10 @@ static void video_task(void* pvParameters) {
     ESP_LOGI(TAG, "Video task started on core %d", xPortGetCoreID());
     while (1) {
         if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY)) {
+            if (s_pause_video) {
+                xSemaphoreGive(s_video_pause_semaphore);
+                continue;
+            }
             if (s_pendingSpectrum) {
                 instr_video_start();
                 display_renderSpectrum(s_pendingSpectrum);
@@ -324,7 +330,9 @@ bool display_init() {
     xTaskCreatePinnedToCore(video_task, "video", 3072, NULL, 6, &s_videoTaskHandle, 1);
     // Create mutex for overlay updates
     s_overlay_mutex = xSemaphoreCreateMutex();
-    
+    // Create semaphore for pause synchronization
+    s_video_pause_semaphore = xSemaphoreCreateBinary();
+
     display_clear();
 
     return true;
@@ -384,8 +392,17 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     // Drain any remaining transactions from the previous frame to avoid overwriting spi_transaction_t structures
     spi_transaction_t* rtrans;
     while (s_trans_count > 0) {
-        if (spi_device_get_trans_result(s_spi, &rtrans, portMAX_DELAY) == ESP_OK) {
+        esp_err_t result = spi_device_get_trans_result(s_spi, &rtrans, pdMS_TO_TICKS(100));
+        if (result == ESP_OK) {
             s_trans_count--;
+        } else if (result == ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "SPI timeout draining previous frame, resetting transaction count");
+            s_trans_count = 0;
+            break;
+        } else {
+            ESP_LOGE(TAG, "SPI error draining previous frame: %s", esp_err_to_name(result));
+            s_trans_count = 0;
+            break;
         }
     }
 
@@ -406,8 +423,17 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
         // Wait specifically for the strip buffer we want to reuse (ping-pong)
         if (i >= 2) {
             for (int j = 0; j < 6; j++) {
-                if (spi_device_get_trans_result(s_spi, &rtrans, portMAX_DELAY) == ESP_OK) {
+                esp_err_t result = spi_device_get_trans_result(s_spi, &rtrans, pdMS_TO_TICKS(100));
+                if (result == ESP_OK) {
                     s_trans_count--;
+                } else if (result == ESP_ERR_TIMEOUT) {
+                    ESP_LOGW(TAG, "SPI timeout waiting for strip buffer %d transaction %d", i, j);
+                    s_trans_count = 0;
+                    break;
+                } else {
+                    ESP_LOGE(TAG, "SPI error waiting for strip: %s", esp_err_to_name(result));
+                    s_trans_count = 0;
+                    break;
                 }
             }
         }
@@ -576,4 +602,22 @@ void display_setOverlayText(const char* text, uint16_t color) {
     s_overlayColor = new_swapped_color;
     ESP_LOGD(TAG, "Overlay set: '%s' color=0x%04X", s_overlayText, color);
     if (s_overlay_mutex) xSemaphoreGive(s_overlay_mutex);
+}
+
+void display_pause_for_reset() {
+    if (!s_videoTaskHandle || !s_video_pause_semaphore) return;
+
+    s_pause_video = true;
+    xTaskNotifyGive(s_videoTaskHandle);
+    xSemaphoreTake(s_video_pause_semaphore, pdMS_TO_TICKS(500));
+    s_trans_count = 0;
+    ESP_LOGD(TAG, "Display paused for reset");
+}
+
+void display_resume_after_reset() {
+    if (!s_videoTaskHandle) return;
+
+    s_pause_video = false;
+    display_clear();
+    ESP_LOGD(TAG, "Display resumed after reset");
 }
