@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_log.h>
@@ -86,6 +87,19 @@ static bool mountSPIFFS() {
     } else {
         ESP_LOGI(TAG, "SPIFFS mounted at /spiffs (total: %u, used: %u)", (unsigned)total, (unsigned)used);
     }
+
+    DIR* dir = opendir("/spiffs");
+    if (dir != NULL) {
+        ESP_LOGI(TAG, "Contents of /spiffs:");
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != NULL) {
+            ESP_LOGI(TAG, "  - %s", entry->d_name);
+        }
+        closedir(dir);
+    } else {
+        ESP_LOGW(TAG, "Failed to open /spiffs directory");
+    }
+
     return true;
 }
 
@@ -128,64 +142,113 @@ extern "C" void app_main(void) {
 
     // 2. Display
     bool display_ready = false;
+    display_boot_log_add_step(2, 16, "Display Init");
     if (!display_init()) {
         ESP_LOGE(TAG, "Display init FAILED");
     } else {
         display_ready = true;
-        display_boot_log_add("Boot: Display ready");
     }
 
-    // 3. Splash Screen
-    if (display_ready) {
-        display_boot_test();
-    }
-
-    // 4. PSRAM
-    if (display_ready) display_boot_log_add("Boot: PSRAM init");
+    // 3. PSRAM
+    log_ts(TAG, "=== STEP 3/16: PSRAM Init ===");
+    display_boot_log_add_step(3, 16, "PSRAM Init");
+    vTaskDelay(pdMS_TO_TICKS(20));
 #ifdef CONFIG_SPIRAM
     if (esp_psram_init() != ESP_OK) {
         ESP_LOGE(TAG, "PSRAM init failed!");
-        if (display_ready) display_boot_log_add("Boot: PSRAM failed!");
-    } else {
-        if (display_ready) display_boot_log_add("Boot: PSRAM ready");
     }
 #endif
 
-    // 5. SPIFFS
+    // 4. SPIFFS (must be before splash screen)
+    log_ts(TAG, "=== STEP 4/16: SPIFFS Mount ===");
+    display_boot_log_add_step(4, 16, "SPIFFS Mount");
+    vTaskDelay(pdMS_TO_TICKS(20));
     if (!mountSPIFFS()) {
         ESP_LOGE(TAG, "SPIFFS mount failed!");
     }
-    if (display_ready) display_boot_log_add("Boot: SPIFFS mounted");
 
-    // 6. Wi-Fi (blocking)
+    // 5. Splash Screen (now SPIFFS is available)
+    log_ts(TAG, "=== STEP 5/16: Splash Screen ===");
+    display_boot_log_add_step(5, 16, "Splash Screen");
+    vTaskDelay(pdMS_TO_TICKS(20));
+    if (display_ready) {
+        display_boot_test();
+    }
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // 6. Wi-Fi (blocking until connected or user provisions via BLE)
     bool wifi_connected = false;
-    if (display_ready) display_boot_log_add("Wi-Fi: Initializing...");
+    log_ts(TAG, "=== STEP 6/16: Wi-Fi Connect ===");
+    display_boot_log_add_step(6, 16, "Wi-Fi Connect");
+    if (display_ready) display_boot_update();
+    vTaskDelay(pdMS_TO_TICKS(100));
     if (!wifi_prov_start()) {
         ESP_LOGW(TAG, "wifi_prov_start() failed");
-        if (display_ready) display_boot_log_add("Wi-Fi: Init failed!");
     } else {
-        if (display_ready) display_boot_log_add("Wi-Fi: Connecting...");
-        if (wifi_prov_wait_for_ip(15000)) {
+        ESP_LOGI(TAG, "Waiting for Wi-Fi connection (60s timeout). If device was previously provisioned via BLE, it will attempt to reconnect to the saved network.");
+        if (wifi_prov_wait_for_ip(60000)) {
             wifi_connected = true;
-            if (display_ready) display_boot_log_add("Wi-Fi: Connected!");
+            ESP_LOGI(TAG, "Wi-Fi connected!");
         } else {
-            ESP_LOGW(TAG, "Wi-Fi timeout. Starting BLE fallback.");
-            if (display_ready) display_boot_log_add("Wi-Fi: Timeout! BLE fallback...");
+            ESP_LOGW(TAG, "Wi-Fi connection timeout after 60 seconds");
+            ESP_LOGW(TAG, "Troubleshooting: Check the serial log for WIFI_EVENT or disconnection reasons (e.g., 'MIC_FAILURE' = wrong password)");
+            ESP_LOGW(TAG, "Diagnostic checklist:");
+            ESP_LOGW(TAG, "  1. SSID Broadcasting: Verify AP broadcasts the SSID (not hidden)");
+            ESP_LOGW(TAG, "  2. Band Support: Device is 2.4GHz only (not 5GHz)");
+            ESP_LOGW(TAG, "  3. Password: Exact match required (case-sensitive)");
+            ESP_LOGW(TAG, "  4. AP Availability: Router reachable and not in sleep mode");
+            ESP_LOGW(TAG, "  5. Signal Strength: Device may be too far from AP");
+            ESP_LOGW(TAG, "  6. Security Type: WPA2/WPA3 supported; WEP/Open networks work");
+            ESP_LOGW(TAG, "  If MIC_FAILURE appears in logs: password is incorrect");
+            log_ts(TAG, "=== STEP 6/16: BLE Prov ===");
+            display_boot_log_add_step(6, 16, "BLE Prov");
+            if (display_ready) display_boot_update();
+            vTaskDelay(pdMS_TO_TICKS(20));
+            if (display_ready) display_setOverlayText("Use BLE app to provision", 0xFFE0);
+            if (display_ready) display_boot_update();
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            ESP_LOGI(TAG, "Starting BLE provisioning fallback...");
             wifi_prov_start_ble_fallback();
+
+            log_ts(TAG, "=== STEP 6/16: Waiting BLE ===");
+            display_boot_log_add_step(6, 16, "Waiting BLE");
+            if (display_ready) display_boot_update();
+            vTaskDelay(pdMS_TO_TICKS(20));
+            if (display_ready) display_setOverlayText("Waiting for Wi-Fi credentials", 0xFFE0);
+            if (display_ready) display_boot_update();
+            ESP_LOGI(TAG, "Blocking until Wi-Fi credentials provisioned via BLE...");
+            if (wifi_prov_wait_for_ip(UINT32_MAX)) {
+                wifi_connected = true;
+                ESP_LOGI(TAG, "Wi-Fi connected after BLE provisioning!");
+                if (display_ready) display_setOverlayText("Wi-Fi provisioned!", 0x07E0);
+                if (display_ready) display_boot_update();
+                vTaskDelay(pdMS_TO_TICKS(2000));
+            } else {
+                ESP_LOGE(TAG, "BLE provisioning failed or no IP obtained");
+                if (display_ready) display_setOverlayText("Provisioning failed!", 0xF800);
+                if (display_ready) display_boot_update();
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                return;
+            }
         }
     }
 
     // 7. ROM check
-    if (display_ready) display_boot_log_add("Boot: ROM check");
+    log_ts(TAG, "=== STEP 7/16: ROM Check ===");
+    display_boot_log_add_step(7, 16, "ROM Check");
+    if (display_ready) display_boot_update();
+    vTaskDelay(pdMS_TO_TICKS(20));
     struct stat st;
     if (stat(ROM_FILE, &st) != 0) {
         ESP_LOGE(TAG, "ROM %s not found! Aborting.", ROM_FILE);
-        if (display_ready) display_boot_log_add("Boot: ROM not found!");
         return;
     }
 
     // 8. Spectrum CPU
-    if (display_ready) display_boot_log_add("Boot: CPU init");
+    log_ts(TAG, "=== STEP 8/16: CPU Create ===");
+    display_boot_log_add_step(8, 16, "CPU Create");
+    if (display_ready) display_boot_update();
+    vTaskDelay(pdMS_TO_TICKS(20));
     spectrum = new SpectrumHardware();
     if (!spectrum) {
         ESP_LOGE(TAG, "Failed to create Spectrum hardware!");
@@ -193,13 +256,15 @@ extern "C" void app_main(void) {
     }
 
     // 9. Load ROM + Reset
-    if (display_ready) display_boot_log_add("Boot: ROM loading");
+    log_ts(TAG, "=== STEP 9/16: Load ROM ===");
+    display_boot_log_add_step(9, 16, "Load ROM");
+    if (display_ready) display_boot_update();
+    vTaskDelay(pdMS_TO_TICKS(20));
     if (!spectrum->loadROM(ROM_FILE)) {
         ESP_LOGE(TAG, "ROM load failed. Aborting.");
         return;
     }
     spectrum->reset();
-    if (display_ready) display_boot_log_add("Boot: CPU reset");
 
 #if RUN_ALL_TESTS
     run_all_tests(spectrum, MODEL_NAME);
@@ -207,47 +272,65 @@ extern "C" void app_main(void) {
 #endif
 
     // 10. Webserver (only if Wi-Fi up)
+    log_ts(TAG, "=== STEP 10/16: Webserver ===");
+    display_boot_log_add_step(10, 16, "Webserver");
+    if (display_ready) display_boot_update();
+    vTaskDelay(pdMS_TO_TICKS(20));
     if (wifi_connected) {
-        if (display_ready) display_boot_log_add("Webserver: Starting...");
         if (webserver_ensure_started(spectrum) == ESP_OK && webserver_is_running()) {
-            if (display_ready) display_boot_log_add("Webserver: Ready");
-            display_setOverlayText("Webserver ready", 0x07E0);
+            ESP_LOGI(TAG, "Webserver started successfully");
         } else {
             ESP_LOGW(TAG, "Webserver failed to start");
-            if (display_ready) display_boot_log_add("Webserver: Failed!");
         }
     }
 
     // 11. Input
-    if (display_ready) display_boot_log_add("Boot: Input init");
+    log_ts(TAG, "=== STEP 11/16: Input Init ===");
+    display_boot_log_add_step(11, 16, "Input Init");
+    if (display_ready) display_boot_update();
+    vTaskDelay(pdMS_TO_TICKS(20));
     input_init();
 
     // 12. Audio
-    if (display_ready) display_boot_log_add("Boot: Audio init");
+    log_ts(TAG, "=== STEP 12/16: Audio Init ===");
+    display_boot_log_add_step(12, 16, "Audio Init");
+    if (display_ready) display_boot_update();
+    vTaskDelay(pdMS_TO_TICKS(20));
     if (!audio_init()) {
         ESP_LOGW(TAG, "Audio init failed; continuing without sound");
-        if (display_ready) display_boot_log_add("Boot: Audio failed!");
-    } else {
-        if (display_ready) display_boot_log_add("Boot: Audio ready");
     }
 
     // 13. Wait for WebSocket keyboard client (only if webserver running)
+    log_ts(TAG, "=== STEP 13/16: Keyboard ===");
+    display_boot_log_add_step(13, 16, "Keyboard");
+    if (display_ready) display_boot_update();
+    vTaskDelay(pdMS_TO_TICKS(20));
     if (wifi_connected && webserver_is_running()) {
-        if (display_ready) display_boot_log_add("Boot: Waiting for keyboard...");
         if (webserver_wait_for_ws_client(30000)) {
-            if (display_ready) display_boot_log_add("Boot: Keyboard connected!");
+            ESP_LOGI(TAG, "WebSocket keyboard client connected");
         } else {
             ESP_LOGW(TAG, "No WebSocket keyboard connected within timeout; continuing.");
-            if (display_ready) display_boot_log_add("Boot: Keyboard timeout");
+            if (display_ready) display_setOverlayText("Connect virtual keyboard", 0xF800);
+            if (display_ready) display_boot_update();
+            vTaskDelay(pdMS_TO_TICKS(2000));
         }
     }
 
     // 14. Beep
+    log_ts(TAG, "=== STEP 14/16: Beep ===");
+    display_boot_log_add_step(14, 16, "Beep");
+    if (display_ready) display_boot_update();
+    vTaskDelay(pdMS_TO_TICKS(20));
     audio_play_tone(880, 120);
 
     // 15. Start Emulator Task
-    if (display_ready) display_boot_log_add("Boot: Emulator ready");
+    log_ts(TAG, "=== STEP 15/16: Emulator ===");
+    display_boot_log_hide();
     xTaskCreatePinnedToCore(emulator_task, "emulator", 8192, NULL, 5, NULL, 0);
+
+    // 16. Idle
+    log_ts(TAG, "=== STEP 16/16: Boot Done ===");
+    log_ts(TAG, "Boot complete. Entering idle loop.");
 
     // 16. Idle
     log_ts(TAG, "Boot complete. Entering idle loop.");

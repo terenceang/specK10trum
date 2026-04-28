@@ -135,9 +135,15 @@ static void drawChar(uint16_t* buffer, int x, int y, char c, uint16_t color) {
 }
 
 static void drawText(uint16_t* buffer, int x, int y, const char* text, uint16_t color) {
+    int line_x = x;
     while (*text) {
-        drawChar(buffer, x, y, *text, color);
-        x += 8;
+        if (*text == '\n') {
+            y -= 16;
+            line_x = x;
+        } else {
+            drawChar(buffer, line_x, y, *text, color);
+            line_x += 8;
+        }
         text++;
     }
 }
@@ -366,7 +372,39 @@ void display_present() {
         s_overlay_clear_frames--;
     }
     if (s_overlayText[0]) {
-        drawText(buf, 2, overlay_y, s_overlayText, s_overlayColor);
+        const char* text = s_overlayText;
+        int current_y = overlay_y;
+        const char* line_start = text;
+
+        // Count lines first
+        int line_count = 1;
+        const char* p = text;
+        while (*p) {
+            if (*p == '\n') line_count++;
+            p++;
+        }
+
+        // Draw each line centered
+        p = text;
+        while (*p) {
+            const char* line_end = p;
+            while (*line_end && *line_end != '\n') line_end++;
+
+            int line_len = line_end - p;
+            int line_width = line_len * 8;
+            int center_x = (s_lcdDisplayWidth - line_width) / 2;
+
+            for (int i = 0; i < line_len; i++) {
+                drawChar(buf, center_x + i * 8, current_y, p[i], s_overlayColor);
+            }
+
+            if (*line_end == '\n') {
+                current_y -= 16;
+                p = line_end + 1;
+            } else {
+                break;
+            }
+        }
     }
 
     lcd_push_frame_async_pingpong(buf);
@@ -599,7 +637,7 @@ void display_setOverlayText(const char* text, uint16_t color) {
         }
     }
     s_overlayColor = new_swapped_color;
-    ESP_LOGD(TAG, "Overlay set: '%s' color=0x%04X", s_overlayText, color);
+    ESP_LOGI(TAG, "LCD Update: '%s' (color=0x%04X)", s_overlayText, color);
     if (s_overlay_mutex) xSemaphoreGive(s_overlay_mutex);
 }
 
@@ -608,8 +646,79 @@ void display_boot_log_add(const char* message) {
     display_setOverlayText(message, 0xFFFF);
 }
 
+void display_boot_log_add_step(int step, int total, const char* description) {
+    static char buffer[128];
+    if (description) {
+        snprintf(buffer, sizeof(buffer), "Step %d/%d\n%s", step, total, description);
+    } else {
+        snprintf(buffer, sizeof(buffer), "Step %d/%d", step, total);
+    }
+    display_setOverlayText(buffer, 0xFFFF);
+}
+
 void display_boot_log_hide() {
     display_clearOverlay();
+}
+
+void display_boot_update() {
+    // During boot, update overlay on BOTH buffers to ensure splash + overlay are always correct
+    // regardless of which buffer is currently being displayed
+    if (!s_frameBuffers[0] || !s_frameBuffers[1]) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+        return;
+    }
+
+    int overlay_y = s_lcdDisplayHeight - 10;
+
+    // Update both frame buffers to ensure consistent display
+    for (int buf_idx = 0; buf_idx < 2; buf_idx++) {
+        uint16_t* buf = s_frameBuffers[buf_idx];
+
+        // Clear overlay area if needed
+        if (s_overlay_clear_frames > 0) {
+            for (int y = overlay_y; y < s_lcdDisplayHeight; y++) {
+                for (int x = 0; x < s_lcdDisplayWidth; x++) {
+                    buf[y * s_lcdDisplayWidth + x] = 0x0000;
+                }
+            }
+        }
+
+        // Draw new overlay text on both buffers
+        if (s_overlayText[0]) {
+            const char* text = s_overlayText;
+            int current_y = overlay_y;
+            const char* p = text;
+
+            while (*p) {
+                const char* line_end = p;
+                while (*line_end && *line_end != '\n') line_end++;
+
+                int line_len = line_end - p;
+                int line_width = line_len * 8;
+                int center_x = (s_lcdDisplayWidth - line_width) / 2;
+
+                for (int i = 0; i < line_len; i++) {
+                    drawChar(buf, center_x + i * 8, current_y, p[i], s_overlayColor);
+                }
+
+                if (*line_end == '\n') {
+                    current_y -= 16;
+                    p = line_end + 1;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    if (s_overlay_clear_frames > 0) {
+        s_overlay_clear_frames--;
+    }
+
+    // Push current back buffer to LCD (which now has the correct overlay)
+    lcd_push_frame_async_pingpong(s_frameBuffers[s_drawBuffer]);
+
+    vTaskDelay(pdMS_TO_TICKS(20));
 }
 
 void display_pause_for_reset() {

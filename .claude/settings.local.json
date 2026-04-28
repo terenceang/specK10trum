@@ -24,7 +24,11 @@
       "Bash(python -m platformio run --target build)",
       "Bash(idf.py build *)",
       "Bash(python -m platformio run --target=build)",
-      "Bash(python -m pip list)"
+      "Bash(python -m pip list)",
+      "Bash(export IDF_PATH=\"/c/Users/teren/.platformio/packages/framework-espidf\")",
+      "Bash(export PATH=\"$IDF_PATH/tools:$PATH\")",
+      "Bash(python \"/c/Users/teren/.platformio/packages/framework-espidf/tools/idf.py\" build)",
+      "Bash(python3 -m py_compile src/wifi_prov/wifi_prov.cpp)"
     ]
   }
 }
