@@ -668,25 +668,33 @@ void display_boot_update() {
         return;
     }
 
-    int overlay_y = s_lcdDisplayHeight - 10;
+    // Overlay is only the bottom 10 pixels (y: 230-239)
+    // Splash image is protected in rows 0-229
+    const int OVERLAY_HEIGHT = 10;
+    const int overlay_y_start = s_lcdDisplayHeight - OVERLAY_HEIGHT;  // 230
+    const int overlay_y_end = s_lcdDisplayHeight;                       // 240
+
+    // Safety check: ensure we never clear above row 230
+    if (overlay_y_start < 230) {
+        ESP_LOGE(TAG, "ERROR: overlay_y_start=%d is too high, would corrupt splash!", overlay_y_start);
+        return;
+    }
 
     // Update both frame buffers to ensure consistent display
     for (int buf_idx = 0; buf_idx < 2; buf_idx++) {
         uint16_t* buf = s_frameBuffers[buf_idx];
 
-        // Clear overlay area if needed
-        if (s_overlay_clear_frames > 0) {
-            for (int y = overlay_y; y < s_lcdDisplayHeight; y++) {
-                for (int x = 0; x < s_lcdDisplayWidth; x++) {
-                    buf[y * s_lcdDisplayWidth + x] = 0x0000;
-                }
+        // ONLY clear the bottom 10 pixels (overlay area), never touch splash image
+        for (int y = overlay_y_start; y < overlay_y_end; y++) {
+            for (int x = 0; x < s_lcdDisplayWidth; x++) {
+                buf[y * s_lcdDisplayWidth + x] = 0x0000;
             }
         }
 
-        // Draw new overlay text on both buffers
+        // Draw new overlay text on both buffers (only in bottom 10 pixel area)
         if (s_overlayText[0]) {
             const char* text = s_overlayText;
-            int current_y = overlay_y;
+            int current_y = overlay_y_start;  // Start drawing at y=230
             const char* p = text;
 
             while (*p) {
@@ -697,8 +705,11 @@ void display_boot_update() {
                 int line_width = line_len * 8;
                 int center_x = (s_lcdDisplayWidth - line_width) / 2;
 
-                for (int i = 0; i < line_len; i++) {
-                    drawChar(buf, center_x + i * 8, current_y, p[i], s_overlayColor);
+                // Only draw if text stays within overlay area (y >= 230)
+                if (current_y >= overlay_y_start && current_y < overlay_y_end) {
+                    for (int i = 0; i < line_len; i++) {
+                        drawChar(buf, center_x + i * 8, current_y, p[i], s_overlayColor);
+                    }
                 }
 
                 if (*line_end == '\n') {
@@ -711,9 +722,8 @@ void display_boot_update() {
         }
     }
 
-    if (s_overlay_clear_frames > 0) {
-        s_overlay_clear_frames--;
-    }
+    // Reset clear counter since we just cleared both buffers
+    s_overlay_clear_frames = 0;
 
     // Push current back buffer to LCD (which now has the correct overlay)
     lcd_push_frame_async_pingpong(s_frameBuffers[s_drawBuffer]);
