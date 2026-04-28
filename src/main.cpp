@@ -135,7 +135,7 @@ static void wifi_and_webserver_task(void* pvParameters) {
         ESP_LOGW(TAG, "wifi_prov_start() failed to initialize Wi‑Fi subsystem");
     }
 
-    // Wait for IP with a reasonable timeout. If we have saved credentials, 
+    // Wait for IP with a reasonable timeout. If we have saved credentials,
     // the driver will auto-connect in the background.
     display_setOverlayText("Connecting Wi-Fi...", 0xFFFF);
     if (wifi_prov_wait_for_ip(15000)) {
@@ -145,10 +145,8 @@ static void wifi_and_webserver_task(void* pvParameters) {
             display_setOverlayText("Webserver failed", 0xF800);
         }
     } else {
-        // If we didn't get an IP in 10s, it might be first boot or lost signal.
         ESP_LOGW(TAG, "Wi-Fi connection timeout. BLE provisioning will restart if needed.");
         display_setOverlayText("Wi-Fi Timeout", 0xF800);
-        // No fallback AP. BLE provisioning will handle recovery.
     }
 
     log_ts(TAG, "Wi-Fi task finished");

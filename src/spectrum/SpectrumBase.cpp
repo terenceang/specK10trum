@@ -107,6 +107,8 @@ void SpectrumBase::reset() {
     }
     // Reset beeper
     m_beeper.reset();
+    // Stop tape player
+    m_tape.stop();
 }
 
 void SpectrumBase::dumpMemory(uint16_t start, uint16_t end) {

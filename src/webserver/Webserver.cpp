@@ -162,6 +162,7 @@ void webserver_apply_pending(SpectrumBase* spectrum)
             if (!spectrum->loadROM(s_pending_load_path)) display_setOverlayText("ROM LOAD FAILED", 0xF800);
             else { spectrum->reset(); display_clearOverlay(); }
         } else {
+            spectrum->tape().stop();
             if (!Snapshot::load(spectrum, s_pending_load_path)) display_setOverlayText("SNAPSHOT LOAD FAILED", 0xF800);
             else display_clearOverlay();
         }
