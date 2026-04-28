@@ -18,6 +18,16 @@ public:
     SpectrumBase();
     virtual ~SpectrumBase();
 
+    // ULA Constants
+    static constexpr int T_STATES_PER_LINE = 224;
+    static constexpr int FRAME_LINES = 312;
+    static constexpr int FRAME_T_STATES = FRAME_LINES * T_STATES_PER_LINE;
+    static constexpr int FIRST_ACTIVE_LINE = 64;
+    static constexpr int ACTIVE_LINES = 192;
+    static constexpr int ACTIVE_CYCLES_PER_LINE = 128;
+    static constexpr uint16_t SCREEN_BASE = 0x4000;
+    static constexpr uint16_t ATTR_BASE = 0x5800;
+
     // Memory access (optimized)
     inline uint8_t read(uint16_t addr) override {
         return m_memReadMap[addr >> 14][addr & 0x3FFF];
@@ -48,89 +58,40 @@ public:
     // Abstract methods to be implemented by subclasses
     virtual void writePort(uint16_t port, uint8_t value) override = 0;
     virtual uint8_t readPort(uint16_t port) override = 0;
+    
     // Reset the system
     virtual void reset() override;
     virtual void dumpMemory(uint16_t start, uint16_t end) override;
 
-    // Snapshot loading (shared file handling)
-    // Subclasses should implement `applySnapshotData` to receive the raw or decompressed
-    // RAM image bytes. `loadSnapshot` performs file reading and simple .z80 RLE
-    // decompression and then calls `applySnapshotData`.
+    // Snapshot loading
     virtual bool loadSnapshot(const char* filepath);
-
-    // Apply a RAM image (raw or decompressed). Subclasses must implement this to
-    // place the bytes into their memory layout (banks, pointers, etc.).
     virtual bool applySnapshotData(const uint8_t* data, size_t len) { (void)data; (void)len; return false; }
-    // Query helper for subclass type identification (avoid RTTI/dynamic_cast)
+    
+    // Query helper
     virtual bool is128k() const { return false; }
-    // CPU execution. Intercepts the ROM LD-BYTES trap for virtual-tape
-    // instant-loading when a TAP is mounted and the 48K BASIC ROM is paged.
-    int step() {
-        if (m_tape.isEnabled() && m_tape.isLoaded()) {
-            if (m_tape.getMode() == TapeMode::INSTANT
-                && m_cpu.pc == Tape::LD_BYTES_ENTRY
-                && isTapeRomActive()) {
-                logTapeTrap("INSTANT trap fired @ 0x0556");
-                flushTape();
-                int t = m_tape.serviceLoadTrap(this);
-                m_tape.advance(t);
-                advanceULA(t);
-                return t;
-            }
-            // Only trigger auto-play when Z80 is in the port FE polling loop (PC=0x0574)
-            if (m_tape.getMode() == TapeMode::NORMAL
-                && m_cpu.pc == 0x0574
-                && isTapeRomActive()
-                && !m_tape.isPlaying()) {
-                logTapeTrap("NORMAL auto-play @ 0x0574 (poll loop)");
-                m_tape.play();
-                m_postTrapSteps = 0;
-                m_postTrapWatch = true;
-            }
-            // Sample PC ~ every 2 ms after the trap so we can see what the
-            // Z80 is actually doing during the dead window before LD-EDGE-1
-            // starts polling port FE.
-            if (m_postTrapWatch) {
-                m_postTrapSteps++;
-                // Commented out to reduce log spam during tape load timing
-                // if ((m_postTrapSteps & 0x7FF) == 0) {
-                //     ESP_LOGI("SpectrumBase", "post-trap step %u PC=0x%04X SP=0x%04X iff=%d halted=%d",
-                //              (unsigned)m_postTrapSteps,
-                //              (unsigned)m_cpu.pc, (unsigned)m_cpu.sp,
-                //              (int)m_cpu.iff1, (int)m_cpu.halted);
-                // }
-                if (m_postTrapSteps > 100000) m_postTrapWatch = false;
-            }
-        }
-        int t = z80_step(&m_cpu);
-        m_pendingTapeTstates += (uint32_t)t;
-        advanceULA(t);
-        return t;
-    }
+    
+    // CPU execution
+    int step();
+    
     Z80* getCPU() { return &m_cpu; }
-
     Tape& tape() { return m_tape; }
 
     void flushTape();
-
-    // Rate-limit so repeated calls (PC parked at 0x0556 between trap fires)
-    // don't flood the log. Logs at most once every ~250 ms per branch.
     void logTapeTrap(const char* msg);
 
-    // True when the 48K BASIC ROM (which contains LD-BYTES at 0x0556) is the
-    // currently paged ROM. Default: always (48K model). Overridden by 128K.
+    // True when the 48K BASIC ROM is paged.
     virtual bool isTapeRomActive() const { return true; }
 
     // Direct memory access for renderer
     inline uint8_t* getPagePtr(int block) { return m_memReadMap[block & 3]; }
-    // Render the current screen into an RGB565 framebuffer
+    
+    // Rendering
     void renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight);
-    // Render beeper audio into a PCM buffer (mono int16 samples)
     void renderBeeperAudio(int16_t* buffer, int num_samples) { m_beeper.renderFrame(buffer, num_samples); }
-    // Render PSG audio into a PCM buffer (mono int16 samples)
     virtual void renderPSGAudio(int16_t* buffer, int num_samples) { 
         memset(buffer, 0, num_samples * sizeof(int16_t)); 
     }
+
 protected:
     friend class Snapshot;
     void advanceULA(int tstates);
@@ -140,18 +101,21 @@ protected:
     void writePortFE(uint8_t value);
     uint8_t readPortFE(uint16_t port);
 
+    // Rendering sub-functions
+    void renderBorder(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height);
+    void renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height);
+
     Z80 m_cpu;
 
-    // Memory mapping cache for speed
+    // Memory mapping cache
     uint8_t* m_memReadMap[4];
     uint8_t* m_memWriteMap[4];
 
-    uint8_t* m_rom;           // ROM buffer (subclasses decide size)
+    uint8_t* m_rom;
     size_t m_romSize;
     
-    // Renderer optimization
-    uint8_t* m_videoPagePtr;  // Pointer to active video RAM (usually Bank 5)
-    uint8_t m_lastRenderedBorderColor; // Tracking for border clear optimization
+    uint8_t* m_videoPagePtr;
+    uint8_t m_lastRenderedBorderColor;
 
     struct BorderEvent {
         uint32_t tstates;
@@ -162,13 +126,6 @@ protected:
     size_t m_borderEventCount;
     uint8_t m_initialBorderColor;
 
-    // Double buffering for renderer.
-    // The writer (advanceULA on the emulator core) overwrites these at every
-    // frame boundary; the renderer (display task on the other core) reads
-    // them when triggered. The portMUX guards the publish/snapshot so the
-    // renderer never observes a half-written array — without it, a colour
-    // change near the end of frame N gets clobbered by frame N+1 mid-render
-    // and the loading stripe at that scanline disappears.
     BorderEvent m_renderBorderEvents[MAX_BORDER_EVENTS];
     size_t m_renderBorderEventCount;
     uint8_t m_renderInitialBorderColor;
@@ -179,25 +136,18 @@ protected:
     uint16_t m_ulaCycle;
 
     uint8_t m_borderColor;
-    uint8_t m_lastSpeakerBit; // Bit 4 of last port 0xFE write
+    uint8_t m_lastSpeakerBit;
     bool m_lastTapeEar;
 
-    // Beeper helper
     Beeper m_beeper;
-
-    // Virtual cassette. Services ROM LD-BYTES traps when enabled.
     Tape m_tape;
     int32_t m_pendingTapeTstates;
     bool m_postTrapWatch = false;
     uint32_t m_postTrapSteps = 0;
 
-    // Helper for allocation
     uint8_t* allocateMemory(size_t size, const char* name);
-    
-    // Update the memory map (to be called by subclasses when paging)
     void updateMap(int block, uint8_t* ptr, bool writable);
 
-    // Static callbacks for the Z80 core
     static uint8_t z80_mem_read(void* ctx, uint16_t addr);
     static void z80_mem_write(void* ctx, uint16_t addr, uint8_t val);
     static uint8_t z80_io_read(void* ctx, uint16_t port);

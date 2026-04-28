@@ -267,21 +267,28 @@ static void ws_keepalive_task(void* arg)
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         if (!s_server) continue;
+
         size_t clients = 16;
         int fds[16];
-        if (httpd_get_client_list(s_server, &clients, fds) == ESP_OK) {
-            for (size_t i = 0; i < clients; i++) {
-                if (httpd_ws_get_fd_info(s_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET) {
-                    // Send a small text frame ("ping") instead of a ping frame
-                    const char* msg = "ping";
-                    httpd_ws_frame_t frame = {
-                        .final = true,
-                        .fragmented = false,
-                        .type = HTTPD_WS_TYPE_TEXT,
-                        .payload = (uint8_t*)msg,
-                        .len = strlen(msg)
-                    };
-                    httpd_ws_send_frame_async(s_server, fds[i], &frame);
+        esp_err_t ret = httpd_get_client_list(s_server, &clients, fds);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "httpd_get_client_list failed: %s", esp_err_to_name(ret));
+            continue;
+        }
+
+        for (size_t i = 0; i < clients; i++) {
+            if (httpd_ws_get_fd_info(s_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET) {
+                const char* msg = "ping";
+                httpd_ws_frame_t frame = {
+                    .final = true,
+                    .fragmented = false,
+                    .type = HTTPD_WS_TYPE_TEXT,
+                    .payload = (uint8_t*)msg,
+                    .len = strlen(msg)
+                };
+                esp_err_t send_ret = httpd_ws_send_frame_async(s_server, fds[i], &frame);
+                if (send_ret != ESP_OK) {
+                    ESP_LOGD(TAG, "WebSocket keepalive send failed for fd %d: %s", fds[i], esp_err_to_name(send_ret));
                 }
             }
         }
@@ -291,8 +298,15 @@ static void ws_keepalive_task(void* arg)
 esp_err_t webserver_start(SpectrumBase* spectrum)
 {
     s_spectrum = spectrum;
+
+    // If server is already running, don't start again
+    if (s_server) {
+        ESP_LOGW(TAG, "Webserver already running, skipping restart");
+        return ESP_OK;
+    }
+
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.lru_purge_enable = true;
+    config.lru_purge_enable = false;  // Disable LRU purge to prevent unexpected disconnects
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.max_uri_handlers = 20;
     config.stack_size = 8192;
@@ -301,8 +315,12 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     config.keep_alive_interval = 2;
     config.keep_alive_count = 3;
 
-
-    if (httpd_start(&s_server, &config) != ESP_OK) return ESP_FAIL;
+    esp_err_t ret = httpd_start(&s_server, &config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "httpd_start failed: %s (%d)", esp_err_to_name(ret), ret);
+        s_server = NULL;
+        return ret;
+    }
 
     // Start keepalive ping task to keep WebSocket connections alive
     static bool keepalive_started = false;
@@ -324,14 +342,25 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     };
 
     for (size_t i = 0; i < sizeof(uris)/sizeof(uris[0]); i++) {
-        httpd_register_uri_handler(s_server, &uris[i]);
+        ret = httpd_register_uri_handler(s_server, &uris[i]);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to register URI handler: %s", esp_err_to_name(ret));
+        }
     }
 
+    ESP_LOGI(TAG, "Webserver started successfully");
     return ESP_OK;
 }
 
 void webserver_stop()
 {
-    if (s_server) httpd_stop(s_server);
+    if (s_server) {
+        esp_err_t ret = httpd_stop(s_server);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Webserver stopped successfully");
+        } else {
+            ESP_LOGW(TAG, "httpd_stop failed: %s", esp_err_to_name(ret));
+        }
+    }
     s_server = NULL;
 }

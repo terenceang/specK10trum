@@ -1,18 +1,11 @@
 #include "SpectrumBase.h"
-#include "Snapshot.h"
 #include "Spectrum128K.h"
 #include "input/Input.h"
 #include <esp_log.h>
-#include <esp_heap_caps.h>
-#include <esp_psram.h>
-#include <esp_timer.h>
 #include <string.h>
 #include <cstdio>
 
 static const char* TAG = "SpectrumBase";
-
-// Centralized palette
-#include "SpectrumPalette.h"
 
 // Build-time options for attribute LUT caching.
 #ifndef SPECTRUM_ATTR_LUT_ENABLED
@@ -85,190 +78,8 @@ void SpectrumBase::z80_io_write(void* ctx, uint16_t port, uint8_t val) {
     static_cast<SpectrumBase*>(ctx)->writePort(port, val);
 }
 
-uint8_t* SpectrumBase::allocateMemory(size_t size, const char* name) {
-    size_t allocCaps = MALLOC_CAP_DEFAULT;
-#ifdef CONFIG_SPIRAM
-    if (esp_psram_is_initialized()) {
-        allocCaps = MALLOC_CAP_SPIRAM;
-    }
-#endif
-
-    uint8_t* ptr = (uint8_t*)heap_caps_malloc(size, allocCaps);
-#ifdef CONFIG_SPIRAM
-    if (!ptr && allocCaps == MALLOC_CAP_SPIRAM) {
-        ESP_LOGW(TAG, "PSRAM allocation for %s failed, falling back to DRAM", name);
-        ptr = (uint8_t*)heap_caps_malloc(size, MALLOC_CAP_DEFAULT);
-    }
-#endif
-
-    if (!ptr) {
-        ESP_LOGE(TAG, "Failed to allocate %zu bytes for %s!", size, name);
-    }
-    return ptr;
-}
-
-void SpectrumBase::updateMap(int block, uint8_t* ptr, bool writable) {
-    if (block >= 0 && block < 4) {
-        m_memReadMap[block] = ptr;
-        m_memWriteMap[block] = writable ? ptr : nullptr;
-        // Update Z80 cached page pointers for fast access
-        m_cpu.page_read[block] = ptr;
-        m_cpu.page_write[block] = writable ? ptr : nullptr;
-    }
-}
-
-static constexpr int T_STATES_PER_LINE = 224;
-static constexpr int FRAME_LINES = 312;
-static constexpr int FRAME_T_STATES = FRAME_LINES * T_STATES_PER_LINE;
-static constexpr int FIRST_ACTIVE_LINE = 64;
-static constexpr int ACTIVE_LINES = 192;
-static constexpr int ACTIVE_CYCLES_PER_LINE = 128;
-static constexpr uint16_t SCREEN_BASE = 0x4000;
-static constexpr uint16_t ATTR_BASE = 0x5800;
-
-static uint16_t screenMemoryAddress(int line, int xByte) {
-    return SCREEN_BASE
-        | ((line & 0x07) << 11)
-        | ((line & 0x38) << 5)
-        | ((line & 0xC0) << 2)
-        | xByte;
-}
-
-static uint16_t attributeMemoryAddress(int line, int xByte) {
-    return ATTR_BASE + ((line >> 3) * 32) + xByte;
-}
-
-uint8_t SpectrumBase::getFloatingBusValue() {
-    int line = m_ulaScanline;
-    int cycle = m_ulaCycle;
-
-    if (line < FIRST_ACTIVE_LINE || line >= FIRST_ACTIVE_LINE + ACTIVE_LINES) {
-        return 0xFF;
-    }
-
-    if (cycle >= ACTIVE_CYCLES_PER_LINE) {
-        return 0xFF;
-    }
-
-    int offset = cycle & 0x07;
-    if (offset >= 4) {
-        return 0xFF;
-    }
-
-    int cell = cycle >> 3;
-    int xByte = (cell << 1) | ((offset >> 1) & 0x01);
-    bool requestAttribute = (offset & 0x01) != 0;
-    int lineInDisplay = line - FIRST_ACTIVE_LINE;
-
-    uint16_t addr = requestAttribute
-        ? attributeMemoryAddress(lineInDisplay, xByte)
-        : screenMemoryAddress(lineInDisplay, xByte);
-
-    uint8_t* page = m_memReadMap[addr >> 14];
-    return page ? page[addr & 0x3FFF] : 0xFF;
-}
-
-// Shared handlers for even ULA ports (0xFE and equivalents)
-void SpectrumBase::writePortFE(uint8_t value) {
-    uint8_t newColor = value & 0x07;
-    if (newColor != m_borderColor) {
-        if (m_borderEventCount < MAX_BORDER_EVENTS) {
-            m_borderEvents[m_borderEventCount++] = { m_ulaClocks, newColor };
-        }
-        m_borderColor = newColor;
-    }
-
-    // Speaker (bit 4) handling: delegate to Beeper
-    m_lastSpeakerBit = (value >> 4) & 0x01;
-    m_beeper.recordEvent(m_ulaClocks, m_lastSpeakerBit | (m_tape.getEar() ? 1 : 0));
-}
-
-uint8_t SpectrumBase::readPortFE(uint16_t port) {
-    uint8_t val = 0xBF; // Bits 0-4 are columns (active low), Bit 6 (EAR) is 0 by default, others 1
-
-    // Ensure tape is advanced to current CPU time before sampling EAR.
-    // First, flush any accumulated T-states from previous instructions.
-    flushTape();
-
-    // Then, proactively advance by 11 T-states (the duration of the IN A, (n) instruction).
-    // This allows sampling EAR at the exact machine cycle it is actually read.
-    m_tape.advance(11, [&](uint32_t offset, bool ear) {
-        m_beeper.recordEvent(m_ulaClocks + offset, m_lastSpeakerBit | (ear ? 1 : 0));
-        m_lastTapeEar = ear;
-    });
-    
-    // Compensate for the 11 states we just processed so they aren't counted twice.
-    m_pendingTapeTstates -= 11;
-
-    // Standard Spectrum keyboard: Address bits A8-A15 select rows.
-    uint8_t select = ~(port >> 8);
-    uint8_t kbd = 0xFF;
-    if (select & 0x01) kbd &= input_getKeyboardRow(0);
-    if (select & 0x02) kbd &= input_getKeyboardRow(1);
-    if (select & 0x04) kbd &= input_getKeyboardRow(2);
-    if (select & 0x08) kbd &= input_getKeyboardRow(3);
-    if (select & 0x10) kbd &= input_getKeyboardRow(4);
-    if (select & 0x20) kbd &= input_getKeyboardRow(5);
-    if (select & 0x40) kbd &= input_getKeyboardRow(6);
-    if (select & 0x80) kbd &= input_getKeyboardRow(7);
-    
-    val &= kbd;
-
-    // Diagnostic: Log when a key is actually detected as pressed in the emulator
-    if ((kbd & 0x1F) != 0x1F) {
-        static uint32_t s_lastKbdLog = 0;
-        uint32_t now = xTaskGetTickCount();
-        if (pdTICKS_TO_MS(now - s_lastKbdLog) > 500) {
-            ESP_LOGI("SpectrumBase", "KBD Read: port=0x%04X select=0x%02X kbd=0x%02X val=0x%02X", 
-                     port, select, kbd, val);
-            s_lastKbdLog = now;
-        }
-    }
-    
-    // EAR input is bit 6.
-    bool current_ear = m_tape.getEar();
-    if (current_ear) val |= 0x40;
-    else             val &= ~0x40;
-    
-    // Bits 5 and 7 are usually 1 or floating (we'll keep them 1)
-    val |= 0xA0; 
-    
-    return val;
-}
-
-bool SpectrumBase::loadROM(const char* filepath) {
-    if (!m_rom) {
-        ESP_LOGE(TAG, "ROM buffer not allocated");
-        return false;
-    }
-
-    FILE* file = fopen(filepath, "rb");
-    if (!file) {
-        ESP_LOGE(TAG, "Failed to open ROM: %s", filepath);
-        return false;
-    }
-
-    size_t bytesRead = fread(m_rom, 1, m_romSize, file);
-    fclose(file);
-
-    if (bytesRead != m_romSize) {
-        ESP_LOGE(TAG, "ROM size mismatch: read %zu, expected %zu", bytesRead, m_romSize);
-        return false;
-    }
-
-    ESP_LOGI(TAG, "ROM loaded: %zu bytes", bytesRead);
-    return true;
-}
-
-bool SpectrumBase::loadSnapshot(const char* filepath) {
-    return Snapshot::load(this, filepath);
-}
-
-void SpectrumBase::setKeyboardRow(uint8_t row, uint8_t columns) {
-    input_setKeyboardRow(row, columns);
-}
-
 void SpectrumBase::reset() {
+    ESP_LOGI("SpectrumBase", "Base Reset: PC was 0x%04X, clocks %llu", m_cpu.pc, m_cpu.clocks);
     m_borderColor = 0;
     m_lastSpeakerBit = 0;
     m_lastTapeEar = false;
@@ -288,7 +99,7 @@ void SpectrumBase::reset() {
     m_cpu.io_read = z80_io_read;
     m_cpu.io_write = z80_io_write;
     m_cpu.halted = 0; // Explicitly clear halted state
-    
+
     // Restore cached page pointers from our memory maps
     for (int i = 0; i < 4; i++) {
         m_cpu.page_read[i] = m_memReadMap[i];
@@ -296,67 +107,6 @@ void SpectrumBase::reset() {
     }
     // Reset beeper
     m_beeper.reset();
-}
-
-void SpectrumBase::logTapeTrap(const char* msg) {
-    static int64_t s_last_us = 0;
-    int64_t now = esp_timer_get_time();
-    if (now - s_last_us < 250000) return;
-    s_last_us = now;
-    ESP_LOGI(TAG, "%s (mode=%d, playing=%d)",
-             msg, (int)m_tape.getMode(), (int)m_tape.isPlaying());
-}
-
-void SpectrumBase::flushTape() {
-    if (m_pendingTapeTstates <= 0) return;
-
-    uint32_t tstates = (uint32_t)m_pendingTapeTstates;
-    m_pendingTapeTstates = 0;
-
-    // Advance the tape and record all EAR toggles for the beeper to hear them
-    uint32_t start_ula_clocks = m_ulaClocks - tstates;
-    m_tape.advance(tstates, [&](uint32_t offset, bool ear) {
-        m_beeper.recordEvent(start_ula_clocks + offset, m_lastSpeakerBit | (ear ? 1 : 0));
-        m_lastTapeEar = ear;
-    });
-}
-
-void SpectrumBase::advanceULA(int tstates) {
-    m_ulaClocks += (uint32_t)tstates;
-    
-    // Check for frame boundary
-    if (m_ulaClocks >= FRAME_T_STATES) {
-        // Ensure tape is advanced to the exact frame boundary for sound/sync
-        flushTape();
-
-        m_ulaClocks -= FRAME_T_STATES;
-
-        // Publish this frame's border events for the renderer.
-        portENTER_CRITICAL(&m_borderMux);
-        memcpy(m_renderBorderEvents, m_borderEvents, m_borderEventCount * sizeof(BorderEvent));
-        m_renderBorderEventCount = m_borderEventCount;
-        m_renderInitialBorderColor = m_initialBorderColor;
-        portEXIT_CRITICAL(&m_borderMux);
-
-        // Copy beeper events into render buffer
-        m_beeper.copyForFrame();
-
-        // Reset border events for the new frame
-        m_initialBorderColor = m_borderColor;
-        m_borderEventCount = 0;
-
-        // Trigger the 50Hz maskable interrupt
-        z80_interrupt(&m_cpu, 0xFF);
-    }
-
-    m_ulaCycle += (uint16_t)tstates;
-    while (m_ulaCycle >= T_STATES_PER_LINE) {
-        m_ulaCycle -= T_STATES_PER_LINE;
-        m_ulaScanline++;
-        if (m_ulaScanline >= FRAME_LINES) {
-            m_ulaScanline = 0;
-        }
-    }
 }
 
 void SpectrumBase::dumpMemory(uint16_t start, uint16_t end) {
@@ -397,156 +147,9 @@ void SpectrumBase::dumpMemoryMap() const {
     }
 }
 
-void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight) {
-    if (!buffer) return;
-
-    const int source_width = 256;
-    const int source_height = 192;
-    const int offset_x = (bufWidth - source_width) / 2;
-    const int offset_y = (bufHeight - source_height) / 2;
-
-    static uint16_t* attr_lut[128] = { 0 };
-
-    auto get_lut = [&](int attr_index) -> uint16_t* {
-        if ((unsigned)attr_index >= 128) return nullptr;
-        uint16_t* table = attr_lut[attr_index];
-        if (table) return table;
-
-        size_t bytes = 256 * 8 * sizeof(uint16_t);
-        uint16_t* alloc = (uint16_t*)allocateMemory(bytes, "Attr LUT");
-        if (!alloc) return nullptr;
-
-        bool bright = (attr_index & 0x40) != 0;
-        uint16_t ink = spectrum_palette(attr_index & 0x07, bright);
-        uint16_t paper = spectrum_palette((attr_index >> 3) & 0x07, bright);
-
-        uint32_t ink32 = (ink << 16) | ink;
-        uint32_t paper32 = (paper << 16) | paper;
-        uint32_t diff32 = ink32 ^ paper32;
-
-        for (int pix = 0; pix < 256; ++pix) {
-            uint32_t* out32 = (uint32_t*)&alloc[pix * 8];
-            for (int i = 0; i < 4; i++) {
-                uint8_t two_bits = (pix >> (6 - i * 2)) & 0x03;
-                uint32_t mask = (two_bits & 0x02) ? 0x0000FFFF : 0; 
-                mask |= (two_bits & 0x01) ? 0xFFFF0000 : 0;        
-                out32[i] = paper32 ^ (mask & diff32);
-            }
-        }
-
-        attr_lut[attr_index] = alloc;
-        return alloc;
-    };
-
-    static BorderEvent local_events[MAX_BORDER_EVENTS];
-    size_t local_count;
-    uint8_t local_init_color;
-    portENTER_CRITICAL(&m_borderMux);
-    local_count = m_renderBorderEventCount;
-    if (local_count > MAX_BORDER_EVENTS) local_count = MAX_BORDER_EVENTS;
-    if (local_count) memcpy(local_events, m_renderBorderEvents, local_count * sizeof(BorderEvent));
-    local_init_color = m_renderInitialBorderColor;
-    portEXIT_CRITICAL(&m_borderMux);
-
-    uint32_t border_pair[8];
-    for (int i = 0; i < 8; ++i) {
-        uint16_t c = spectrum_palette(i, false);
-        border_pair[i] = ((uint32_t)c << 16) | c;
-    }
-    size_t evt_idx = 0;
-    uint8_t cur_color = local_init_color & 0x07;
-    uint32_t cur_pair = border_pair[cur_color];
-
-    const int total_pairs = bufWidth / 2;
-    const int left_pairs = offset_x / 2;
-    const int active_end_pair = (offset_x + source_width) / 2;
-
-    auto consume_until = [&](uint32_t tstate_excl) {
-        while (evt_idx < local_count &&
-               local_events[evt_idx].tstates < tstate_excl) {
-            cur_color = local_events[evt_idx].color & 0x07;
-            evt_idx++;
-        }
-        cur_pair = border_pair[cur_color];
-    };
-
-    for (int y = 0; y < bufHeight; ++y) {
-        int spectrum_y = FIRST_ACTIVE_LINE + (y - offset_y);
-        if (spectrum_y < 0) spectrum_y = 0;
-        if (spectrum_y >= FRAME_LINES) spectrum_y = FRAME_LINES - 1;
-
-        uint32_t tstate_base = (uint32_t)spectrum_y * T_STATES_PER_LINE;
-        uint32_t* lineStart32 = (uint32_t*)&buffer[y * bufWidth];
-        bool is_active_y = (y >= offset_y && y < offset_y + source_height);
-
-        consume_until(tstate_base);
-
-        if (!is_active_y) {
-            for (int xp = 0; xp < total_pairs; ++xp) {
-                uint32_t t = tstate_base + (uint32_t)xp;
-                if (evt_idx < local_count &&
-                    local_events[evt_idx].tstates <= t) {
-                    consume_until(t + 1);
-                }
-                lineStart32[xp] = cur_pair;
-            }
-        } else {
-            for (int xp = 0; xp < left_pairs; ++xp) {
-                uint32_t t = tstate_base + (uint32_t)xp;
-                if (evt_idx < local_count &&
-                    local_events[evt_idx].tstates <= t) {
-                    consume_until(t + 1);
-                }
-                lineStart32[xp] = cur_pair;
-            }
-
-            consume_until(tstate_base + (uint32_t)active_end_pair);
-
-            for (int xp = active_end_pair; xp < total_pairs; ++xp) {
-                uint32_t t = tstate_base + (uint32_t)xp;
-                if (evt_idx < local_count &&
-                    local_events[evt_idx].tstates <= t) {
-                    consume_until(t + 1);
-                }
-                lineStart32[xp] = cur_pair;
-            }
-        }
-    }
-
-    uint8_t* ramBank1 = m_videoPagePtr ? m_videoPagePtr : getPagePtr(1);
-    if (!ramBank1) return;
-
-    for (int y = 0; y < source_height; ++y) {
-        uint16_t* linePtr = &buffer[(offset_y + y) * bufWidth + offset_x];
-        uint16_t y_off = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2);
-        uint16_t attr_off = 0x1800 + ((y >> 3) * 32);
-
-        for (int xByte = 0; xByte < 32; ++xByte) {
-            uint8_t pixels = ramBank1[y_off | xByte];
-            uint8_t attr = ramBank1[attr_off | xByte];
-            uint16_t* lut = get_lut(attr & 0x7F);
-            if (lut) {
-                uint64_t* src64 = (uint64_t*)&lut[pixels * 8];
-                uint64_t* dst64 = (uint64_t*)linePtr;
-                dst64[0] = src64[0]; dst64[1] = src64[1];
-            } else {
-                bool bright = (attr & 0x40) != 0;
-                uint16_t ink = spectrum_palette(attr & 0x07, bright);
-                uint16_t paper = spectrum_palette((attr >> 3) & 0x07, bright);
-                uint32_t ink32 = (ink << 16) | ink;
-                uint32_t paper32 = (paper << 16) | paper;
-                uint32_t diff32 = ink32 ^ paper32;
-                uint32_t* linePtr32 = (uint32_t*)linePtr;
-
-                for (int i = 0; i < 4; i++) {
-                    uint8_t two_bits = (pixels >> (6 - i * 2)) & 0x03;
-                    uint32_t mask = (two_bits & 0x02) ? 0x0000FFFF : 0;
-                    mask |= (two_bits & 0x01) ? 0xFFFF0000 : 0;
-                    linePtr32[i] = paper32 ^ (mask & diff32);
-                }
-            }
-            linePtr += 8;
-        }
-    }
-    m_lastRenderedBorderColor = m_borderColor;
+int SpectrumBase::step() {
+    int tstates = z80_step(&m_cpu);
+    m_pendingTapeTstates += tstates;
+    advanceULA(tstates);
+    return tstates;
 }

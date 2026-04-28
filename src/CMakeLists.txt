@@ -17,6 +17,12 @@ endif()
 idf_component_register(SRCS
     "main.cpp"
     "spectrum/SpectrumBase.cpp"
+    "spectrum/SpectrumBase_Memory.cpp"
+    "spectrum/SpectrumBase_IO.cpp"
+    "spectrum/SpectrumBase_ULA.cpp"
+    "spectrum/SpectrumBase_Rendering.cpp"
+    "spectrum/SpectrumBase_Snapshot.cpp"
+    "spectrum/SpectrumBase_Tape.cpp"
     "spectrum/Beeper.cpp"
     "spectrum/PSG.cpp"
     "spectrum/Snapshot.cpp"

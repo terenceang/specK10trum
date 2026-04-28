@@ -36,6 +36,7 @@ Spectrum48K::~Spectrum48K() {
 }
 
 void Spectrum48K::reset() {
+    ESP_LOGI(TAG, "Spectrum 48K reset START");
     SpectrumBase::reset();
     memset(m_ram, 0, RAM_SIZE);
     

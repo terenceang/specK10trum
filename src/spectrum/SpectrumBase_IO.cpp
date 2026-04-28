@@ -1,0 +1,96 @@
+#include "SpectrumBase.h"
+#include "input/Input.h"
+#include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+
+static const char* TAG = "SpectrumBase";
+
+static constexpr int T_STATES_PER_LINE = 224;
+static constexpr int FIRST_ACTIVE_LINE = 64;
+static constexpr int ACTIVE_LINES = 192;
+static constexpr int ACTIVE_CYCLES_PER_LINE = 128;
+static constexpr uint16_t SCREEN_BASE = 0x4000;
+static constexpr uint16_t ATTR_BASE = 0x5800;
+
+static uint16_t screenMemoryAddress(int line, int xByte) {
+    return SCREEN_BASE
+        | ((line & 0x07) << 11)
+        | ((line & 0x38) << 5)
+        | ((line & 0xC0) << 2)
+        | xByte;
+}
+
+static uint16_t attributeMemoryAddress(int line, int xByte) {
+    return ATTR_BASE + ((line >> 3) * 32) + xByte;
+}
+
+void SpectrumBase::writePortFE(uint8_t value) {
+    uint8_t newColor = value & 0x07;
+    if (newColor != m_borderColor) {
+        if (m_borderEventCount < MAX_BORDER_EVENTS) {
+            m_borderEvents[m_borderEventCount++] = { m_ulaClocks, newColor };
+        }
+        m_borderColor = newColor;
+    }
+
+    // Speaker (bit 4) handling: delegate to Beeper
+    m_lastSpeakerBit = (value >> 4) & 0x01;
+    m_beeper.recordEvent(m_ulaClocks, m_lastSpeakerBit | (m_tape.getEar() ? 1 : 0));
+}
+
+uint8_t SpectrumBase::readPortFE(uint16_t port) {
+    uint8_t val = 0xBF; // Bits 0-4 are columns (active low), Bit 6 (EAR) is 0 by default, others 1
+
+    // Ensure tape is advanced to current CPU time before sampling EAR.
+    // First, flush any accumulated T-states from previous instructions.
+    flushTape();
+
+    // Then, proactively advance by 11 T-states (the duration of the IN A, (n) instruction).
+    // This allows sampling EAR at the exact machine cycle it is actually read.
+    m_tape.advance(11, [&](uint32_t offset, bool ear) {
+        m_beeper.recordEvent(m_ulaClocks + offset, m_lastSpeakerBit | (ear ? 1 : 0));
+        m_lastTapeEar = ear;
+    });
+
+    // Compensate for the 11 states we just processed so they aren't counted twice.
+    m_pendingTapeTstates -= 11;
+
+    // Standard Spectrum keyboard: Address bits A8-A15 select rows.
+    uint8_t select = ~(port >> 8);
+    uint8_t kbd = 0xFF;
+    if (select & 0x01) kbd &= input_getKeyboardRow(0);
+    if (select & 0x02) kbd &= input_getKeyboardRow(1);
+    if (select & 0x04) kbd &= input_getKeyboardRow(2);
+    if (select & 0x08) kbd &= input_getKeyboardRow(3);
+    if (select & 0x10) kbd &= input_getKeyboardRow(4);
+    if (select & 0x20) kbd &= input_getKeyboardRow(5);
+    if (select & 0x40) kbd &= input_getKeyboardRow(6);
+    if (select & 0x80) kbd &= input_getKeyboardRow(7);
+
+    val &= kbd;
+
+    // Diagnostic: Log when a key is actually detected as pressed in the emulator
+    if ((kbd & 0x1F) != 0x1F) {
+        static uint32_t s_lastKbdLog = 0;
+        uint32_t now = xTaskGetTickCount();
+        if (pdTICKS_TO_MS(now - s_lastKbdLog) > 500) {
+            ESP_LOGI("SpectrumBase", "KBD Read: port=0x%04X select=0x%02X kbd=0x%02X val=0x%02X",
+                     port, select, kbd, val);
+            s_lastKbdLog = now;
+        }
+    }
+
+    // EAR input is bit 6.
+    bool current_ear = m_tape.getEar();
+    if (current_ear) val |= 0x40;
+    else             val &= ~0x40;
+
+    // Bits 5 and 7 are usually 1 or floating (we'll keep them 1)
+    val |= 0xA0;
+
+    return val;
+}
+
+void SpectrumBase::setKeyboardRow(uint8_t row, uint8_t columns) {
+    input_setKeyboardRow(row, columns);
+}
