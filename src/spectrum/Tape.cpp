@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char* TAG = "Tape";
+// static const char* TAG = "Tape"; // Unused
 
 // Arbitrary sanity cap (1 MiB). Real tapes are typically ~50 KiB.
 static constexpr size_t TAPE_MAX_BYTES = 1024 * 1024;

@@ -3,26 +3,9 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 
-static const char* TAG = "SpectrumBase";
-
-static constexpr int T_STATES_PER_LINE = 224;
-static constexpr int FIRST_ACTIVE_LINE = 64;
-static constexpr int ACTIVE_LINES = 192;
-static constexpr int ACTIVE_CYCLES_PER_LINE = 128;
-static constexpr uint16_t SCREEN_BASE = 0x4000;
-static constexpr uint16_t ATTR_BASE = 0x5800;
-
-static uint16_t screenMemoryAddress(int line, int xByte) {
-    return SCREEN_BASE
-        | ((line & 0x07) << 11)
-        | ((line & 0x38) << 5)
-        | ((line & 0xC0) << 2)
-        | xByte;
-}
-
-static uint16_t attributeMemoryAddress(int line, int xByte) {
-    return ATTR_BASE + ((line >> 3) * 32) + xByte;
-}
+// static const char* TAG = "SpectrumBase"; // Unused
+// static uint16_t screenMemoryAddress(int line, int xByte) { ... } // Unused
+// static uint16_t attributeMemoryAddress(int line, int xByte) { ... } // Unused
 
 void SpectrumBase::writePortFE(uint8_t value) {
     uint8_t newColor = value & 0x07;
