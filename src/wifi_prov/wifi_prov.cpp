@@ -16,8 +16,10 @@ static const char* TAG = "wifi_prov";
 #include <string.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
 #include "display/Display.h"
 
+static SemaphoreHandle_t s_state_mutex = NULL;
 
 static bool s_provisioning_started = false;
 static bool s_watcher_started = false;
@@ -29,11 +31,24 @@ static esp_event_handler_instance_t s_ip_handler = nullptr;
 static SemaphoreHandle_t s_wifi_connected_sem = NULL;
 static char s_last_ip_str[32] = {0};
 
+// Periodically checks for unapplied credentials and applies them.
+// Skips if provisioning is active to avoid race condition during BLE write.
 static void nvs_watcher_task(void* pv)
 {
     (void)pv;
     ESP_LOGI(TAG, "NVS watcher task started");
     while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            bool prov_active = s_provisioning_started;
+            xSemaphoreGive(s_state_mutex);
+
+            if (prov_active) {
+                continue;
+            }
+        }
+
         nvs_handle_t h;
         if (nvs_open("wifi_prov", NVS_READONLY, &h) == ESP_OK) {
             int32_t applied = 0;
@@ -53,12 +68,19 @@ static void nvs_watcher_task(void* pv)
                 nvs_close(h);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
 
 static int s_reconnect_retries = 0;
 static const int MAX_RECONNECT_RETRIES = 10;
+
+// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
+static uint32_t get_reconnect_backoff_ms(int retry_count)
+{
+    if (retry_count <= 0) return 0;
+    uint32_t delay_s = 1 << (retry_count - 1);
+    return (delay_s > 30 ? 30 : delay_s) * 1000;
+}
 
 static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* data)
 {
@@ -68,47 +90,63 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
         case WIFI_EVENT_STA_START: {
             // Enable Long Range mode for better stability at distance
             esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
-            
+
             wifi_config_t conf;
             esp_err_t conf_err = esp_wifi_get_config(WIFI_IF_STA, &conf);
             if (conf_err == ESP_OK && strlen((const char*)conf.sta.ssid) == 0) {
                     ESP_LOGW(TAG, "STA_START: SSID is empty after flash erase. Starting BLE provisioning.");
                     display_setOverlayText("No Wi-Fi creds. Start BLE prov.", 0xF800);
-                    if (!s_provisioning_started) {
-                        wifi_prov_start();
+                    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                        bool prov_active = s_provisioning_started;
+                        xSemaphoreGive(s_state_mutex);
+                        if (!prov_active) wifi_prov_start();
                     }
                 break;
             }
             ESP_LOGI(TAG, "Wi-Fi station started; connecting...");
-            s_sta_started = true;
+            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                s_sta_started = true;
+                xSemaphoreGive(s_state_mutex);
+            }
             esp_wifi_connect();
             break;
         }
         case WIFI_EVENT_STA_CONNECTED:
             ESP_LOGI(TAG, "Wi-Fi connected to AP; waiting for IP...");
             esp_wifi_set_ps(WIFI_PS_NONE);
-            s_reconnect_retries = 0; // Reset retries on successful connection
+            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                s_reconnect_retries = 0;
+                xSemaphoreGive(s_state_mutex);
+            }
             break;
         case WIFI_EVENT_STA_DISCONNECTED: {
             wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*)data;
             ESP_LOGW(TAG, "Wi-Fi disconnected (reason: %d)", disconnected->reason);
-            
-            s_last_ip_str[0] = '\0';
-            s_reconnect_retries++;
 
-            if (s_reconnect_retries > MAX_RECONNECT_RETRIES) {
-                ESP_LOGE(TAG, "Max retries reached. Restarting BLE provisioning.");
-                display_setOverlayText("Wi-Fi Failed. Start BLE prov.", 0xF800);
-                wifi_prov_stop();
-                wifi_prov_start();
-            } else {
-                char buf[64];
-                snprintf(buf, sizeof(buf), "Wi-Fi Drop (R:%d) Retry %d/%d", 
-                         disconnected->reason, s_reconnect_retries, MAX_RECONNECT_RETRIES);
-                display_setOverlayText(buf, 0xFFE0); // Amber warning
-                
-                // Always try to reconnect for ANY reason unless it was a deliberate stop
-                esp_wifi_connect();
+            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                s_last_ip_str[0] = '\0';
+                s_reconnect_retries++;
+                int current_retry = s_reconnect_retries;
+                xSemaphoreGive(s_state_mutex);
+
+                if (current_retry > MAX_RECONNECT_RETRIES) {
+                    ESP_LOGE(TAG, "Max retries reached. Restarting BLE provisioning.");
+                    display_setOverlayText("Wi-Fi Failed. Start BLE prov.", 0xF800);
+                    wifi_prov_stop();
+                    wifi_prov_start();
+                } else {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "Wi-Fi Drop (R:%d) Retry %d/%d",
+                             disconnected->reason, current_retry, MAX_RECONNECT_RETRIES);
+                    display_setOverlayText(buf, 0xFFE0);
+
+                    uint32_t backoff_ms = get_reconnect_backoff_ms(current_retry);
+                    if (backoff_ms > 0) {
+                        ESP_LOGI(TAG, "Waiting %lu ms before retry %d", backoff_ms, current_retry);
+                        vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+                    }
+                    esp_wifi_connect();
+                }
             }
             break;
         }
@@ -118,16 +156,16 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* evt = (ip_event_got_ip_t*)data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&evt->ip_info.ip));
-        
-        // Force power save OFF again at IP acquisition to ensure driver stability
+
         esp_wifi_set_ps(WIFI_PS_NONE);
 
-        snprintf(s_last_ip_str, sizeof(s_last_ip_str), "IP: " IPSTR, IP2STR(&evt->ip_info.ip));
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            snprintf(s_last_ip_str, sizeof(s_last_ip_str), "IP: " IPSTR, IP2STR(&evt->ip_info.ip));
+            xSemaphoreGive(s_state_mutex);
+        }
         display_setOverlayText(s_last_ip_str, 0xFFFF);
 
-        if (s_wifi_connected_sem) {
-            xSemaphoreGive(s_wifi_connected_sem);
-        }
+        if (s_wifi_connected_sem) xSemaphoreGive(s_wifi_connected_sem);
     }
 }
 
@@ -167,7 +205,10 @@ static void prov_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
     case WIFI_PROV_END:
         ESP_LOGI(TAG, "Provisioning finished; releasing manager resources");
         wifi_prov_mgr_deinit();
-        s_provisioning_started = false;
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            s_provisioning_started = false;
+            xSemaphoreGive(s_state_mutex);
+        }
         break;
     default:
         break;
@@ -176,7 +217,19 @@ static void prov_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
 
 static esp_err_t ensure_wifi_initialized()
 {
-    if (s_wifi_init_done) return ESP_OK;
+    if (!s_state_mutex) {
+        s_state_mutex = xSemaphoreCreateMutex();
+        if (!s_state_mutex) {
+            ESP_LOGE(TAG, "Failed to create state mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        bool already_init = s_wifi_init_done;
+        xSemaphoreGive(s_state_mutex);
+        if (already_init) return ESP_OK;
+    }
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -226,10 +279,14 @@ static esp_err_t ensure_wifi_initialized()
                                               wifi_event_cb, NULL, &s_ip_handler);
     if (err != ESP_OK) ESP_LOGW(TAG, "IP_EVENT register failed: %s", esp_err_to_name(err));
 
-    s_wifi_init_done = true;
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_wifi_init_done = true;
+        xSemaphoreGive(s_state_mutex);
+    }
     return ESP_OK;
 }
 
+// Start BLE-based Wi-Fi provisioning, or connect to saved credentials if provisioned.
 bool wifi_prov_start()
 {
     if (!s_wifi_connected_sem) {
@@ -241,14 +298,23 @@ bool wifi_prov_start()
         s_watcher_started = true;
     }
 
-    if (s_provisioning_started) {
-        ESP_LOGI(TAG, "Provisioning already running");
-        return true;
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        bool already_running = s_provisioning_started;
+        xSemaphoreGive(s_state_mutex);
+        if (already_running) {
+            ESP_LOGI(TAG, "Provisioning already running");
+            return true;
+        }
     }
 
     if (ensure_wifi_initialized() != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi subsystem init failed; cannot start provisioning");
         return false;
+    }
+
+    if (s_prov_handler != nullptr) {
+        esp_event_handler_instance_unregister(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, s_prov_handler);
+        s_prov_handler = nullptr;
     }
 
     esp_err_t err = esp_event_handler_instance_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID,
@@ -281,10 +347,6 @@ bool wifi_prov_start()
     }
 
     if (provisioned) {
-        // Already have saved credentials — skip BLE provisioning entirely.
-        // Release the provisioning manager so it doesn't interfere with the
-        // STA connection, then start Wi-Fi directly. The driver auto-connects
-        // using the config loaded from NVS by esp_wifi_init().
         ESP_LOGI(TAG, "Already provisioned; releasing manager and connecting to saved AP");
         wifi_prov_mgr_deinit();
 
@@ -293,10 +355,20 @@ bool wifi_prov_start()
             ESP_LOGE(TAG, "esp_wifi_set_mode(STA) failed: %d", m_err);
             return false;
         }
-        esp_err_t s_err = esp_wifi_start();
-        if (s_err != ESP_OK && s_err != ESP_ERR_WIFI_CONN) {
-            ESP_LOGE(TAG, "esp_wifi_start failed: %d", s_err);
-            return false;
+
+        wifi_mode_t current_mode;
+        if (esp_wifi_get_mode(&current_mode) == ESP_OK && current_mode == WIFI_MODE_STA) {
+            ESP_LOGI(TAG, "Wi-Fi already started in STA mode");
+            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                s_sta_started = true;
+                xSemaphoreGive(s_state_mutex);
+            }
+        } else {
+            esp_err_t s_err = esp_wifi_start();
+            if (s_err != ESP_OK && s_err != ESP_ERR_WIFI_CONN) {
+                ESP_LOGE(TAG, "esp_wifi_start failed: %d", s_err);
+                return false;
+            }
         }
         return true;
     }
@@ -312,45 +384,66 @@ bool wifi_prov_start()
         return false;
     }
 
-    s_provisioning_started = true;
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_provisioning_started = true;
+        xSemaphoreGive(s_state_mutex);
+    }
     return true;
 }
 
-static esp_netif_t* s_ap_netif = NULL;
-
+// Stop Wi-Fi provisioning and cleanup resources.
 void wifi_prov_stop()
 {
-    if (!s_provisioning_started) {
-        ESP_LOGI(TAG, "Provisioning not running");
-        return;
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (!s_provisioning_started) {
+            xSemaphoreGive(s_state_mutex);
+            ESP_LOGI(TAG, "Provisioning not running");
+            return;
+        }
+        s_provisioning_started = false;
+        xSemaphoreGive(s_state_mutex);
     }
+
+    if (s_prov_handler != nullptr) {
+        esp_event_handler_instance_unregister(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, s_prov_handler);
+        s_prov_handler = nullptr;
+    }
+
     (void)wifi_prov_mgr_stop_provisioning();
     (void)wifi_prov_mgr_deinit();
-    s_provisioning_started = false;
     ESP_LOGI(TAG, "Wi-Fi provisioning stopped");
 }
 
 
+// Block until Wi-Fi is connected and an IP is assigned, or timeout expires.
 bool wifi_prov_wait_for_ip(uint32_t timeout_ms)
 {
     if (!s_wifi_connected_sem) {
         s_wifi_connected_sem = xSemaphoreCreateBinary();
     }
 
-    // If the IP event already fired, an earlier overlay may have been
-    // overwritten by the caller — repaint so the display shows the IP.
-    if (s_last_ip_str[0] != '\0') {
-        display_setOverlayText(s_last_ip_str, 0xFFFF);
-        return true;
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (s_last_ip_str[0] != '\0') {
+            char ip_buf[32];
+            strncpy(ip_buf, s_last_ip_str, sizeof(ip_buf) - 1);
+            xSemaphoreGive(s_state_mutex);
+            display_setOverlayText(ip_buf, 0xFFFF);
+            return true;
+        }
+        xSemaphoreGive(s_state_mutex);
     }
 
     if (xSemaphoreTake(s_wifi_connected_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
-        display_setOverlayText(s_last_ip_str, 0xFFFF);
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            display_setOverlayText(s_last_ip_str, 0xFFFF);
+            xSemaphoreGive(s_state_mutex);
+        }
         return true;
     }
     return false;
 }
 
+// Apply credentials from NVS, provisioning, or CLI. Saves to NVS and connects.
 bool wifi_prov_apply_credentials(const char* ssid, const char* password)
 {
     if (!ssid) return false;
@@ -364,7 +457,7 @@ bool wifi_prov_apply_credentials(const char* ssid, const char* password)
     if (nvs_open("wifi_prov", NVS_READWRITE, &h) == ESP_OK) {
         nvs_set_str(h, "ssid", ssid);
         if (password) nvs_set_str(h, "pass", password);
-        else          nvs_erase_key(h, "pass");
+        else nvs_erase_key(h, "pass");
         nvs_set_i32(h, "applied", 1);
         nvs_commit(h);
         nvs_close(h);
@@ -387,13 +480,19 @@ bool wifi_prov_apply_credentials(const char* ssid, const char* password)
         ESP_LOGE(TAG, "esp_wifi_set_config failed: %d", err);
         return false;
     }
-    if (!s_sta_started) {
+
+    bool sta_started = false;
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        sta_started = s_sta_started;
+        xSemaphoreGive(s_state_mutex);
+    }
+
+    if (!sta_started) {
         err = esp_wifi_start();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "esp_wifi_start failed: %d", err);
             return false;
         }
-        // esp_wifi_connect() will fire from WIFI_EVENT_STA_START.
     } else {
         esp_wifi_disconnect();
         esp_wifi_connect();
@@ -401,24 +500,33 @@ bool wifi_prov_apply_credentials(const char* ssid, const char* password)
     return true;
 }
 
+// Convenience function to clear saved credentials and stop provisioning.
 void wifi_prov_clear_and_stop(bool clear_saved_creds)
 {
-    if (s_provisioning_started) {
-        (void)wifi_prov_mgr_stop_provisioning();
-        (void)wifi_prov_mgr_deinit();
-        s_provisioning_started = false;
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (s_provisioning_started) {
+            s_provisioning_started = false;
+            xSemaphoreGive(s_state_mutex);
+
+            if (s_prov_handler != nullptr) {
+                esp_event_handler_instance_unregister(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, s_prov_handler);
+                s_prov_handler = nullptr;
+            }
+
+            (void)wifi_prov_mgr_stop_provisioning();
+            (void)wifi_prov_mgr_deinit();
+        } else {
+            xSemaphoreGive(s_state_mutex);
+        }
     }
 
     if (clear_saved_creds) {
-        // Clear our helper namespace.
         nvs_handle_t h;
         if (nvs_open("wifi_prov", NVS_READWRITE, &h) == ESP_OK) {
             nvs_erase_all(h);
             (void)nvs_commit(h);
             nvs_close(h);
         }
-        // Clear the manager's own record so next boot re-enters provisioning.
-        // (Safe even if manager is deinitted — it touches NVS directly.)
         wifi_prov_mgr_config_t cfg = {};
         cfg.scheme = wifi_prov_scheme_ble;
         if (wifi_prov_mgr_init(cfg) == ESP_OK) {

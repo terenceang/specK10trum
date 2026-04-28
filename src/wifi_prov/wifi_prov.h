@@ -21,10 +21,6 @@ bool wifi_prov_start();
 // Stop provisioning and cleanup.
 void wifi_prov_stop();
 
-// Start a fallback SoftAP (Access Point) when no network is found.
-// Creates an open network named "SpecK10trum-Connect" at 192.168.4.1.
-bool wifi_prov_start_ap_fallback();
-
 // Block until Wi-Fi is connected and an IP is obtained.
 bool wifi_prov_wait_for_ip(uint32_t timeout_ms);
 
