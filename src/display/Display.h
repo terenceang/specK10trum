@@ -15,7 +15,7 @@ void display_present();
 void display_clear();
 void display_trigger_frame(SpectrumBase* spectrum);
 bool display_showSplash(const char* filename);
-void display_boot_test();
+void display_showBootScreen();
 void display_setOverlayText(const char* text, uint16_t color);
 void display_boot_log_add(const char* message);
 void display_boot_log_add_step(int step, int total, const char* description);

@@ -147,6 +147,10 @@ extern "C" void app_main(void) {
         ESP_LOGE(TAG, "Display init FAILED");
     } else {
         display_ready = true;
+        // Standalone LED blink after display init
+        expander_set_led(true);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        expander_set_led(false);
     }
 
     // 3. PSRAM
@@ -172,7 +176,7 @@ extern "C" void app_main(void) {
     display_boot_log_add_step(5, 16, "Splash Screen");
     vTaskDelay(pdMS_TO_TICKS(20));
     if (display_ready) {
-        display_boot_test();
+        display_showBootScreen();
     }
     vTaskDelay(pdMS_TO_TICKS(500));
 

@@ -101,7 +101,7 @@ static void drawChar(uint16_t* buffer, int x, int y, char c, uint16_t color) {
         {0x00, 0x00, 0x00, 0x7e, 0x00, 0x00, 0x00, 0x00}, // - (at index 39)
         {0x00, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x00}, // / (at index 40)
         {0x00, 0x01, 0x02, 0x44, 0x28, 0x10, 0x00, 0x00}, // ✓ (approx checkmark) (at index 41)
-        {0x00, 0x3c, 0x42, 0x5a, 0x5a, 0x42, 0x3c, 0x00}, // ? (fallback) (at index 42)
+        {0x00, 0x3c, 0x42, 0x5a, 0x5a, 0x42, 0x3c, 0x00}  // ? (fallback) (at index 42)
     };
 
     int idx = -1;
@@ -109,6 +109,16 @@ static void drawChar(uint16_t* buffer, int x, int y, char c, uint16_t color) {
     else if (c == '.') idx = 10;
     else if (c == ':') idx = 11;
     else if (c >= 'A' && c <= 'Z') idx = 12 + (c - 'A');
+    else if (c >= 'a' && c <= 'z') idx = 12 + (c - 'a');
+    else if (c == ' ') idx = 38;
+    else if (c == '-') idx = 39;
+    else if (c == '/') idx = 40;
+    else if ((unsigned char)c == 0xE2 || (unsigned char)c == 0x80) idx = 41; // Crude check for UTF-8 start of ✓
+    else if (c == '?') idx = 42;
+    else idx = 42; // Fallback to ? for any unknown char
+
+    if (idx == -1) return;
+// SPI Pre-transfer callback to handle DC pin
     else if (c >= 'a' && c <= 'z') idx = 12 + (c - 'a');
     else if (c == ' ') idx = 38;
     else if (c == '-') idx = 39;
@@ -131,20 +141,6 @@ static void drawChar(uint16_t* buffer, int x, int y, char c, uint16_t color) {
                 }
             }
         }
-    }
-}
-
-static void drawText(uint16_t* buffer, int x, int y, const char* text, uint16_t color) {
-    int line_x = x;
-    while (*text) {
-        if (*text == '\n') {
-            y -= 16;
-            line_x = x;
-        } else {
-            drawChar(buffer, line_x, y, *text, color);
-            line_x += 8;
-        }
-        text++;
     }
 }
 
@@ -342,6 +338,8 @@ bool display_init() {
 
     display_clear();
 
+    // Enable backlight as part of display init
+    expander_set_backlight(true);
     return true;
 }
 
@@ -374,7 +372,6 @@ void display_present() {
     if (s_overlayText[0]) {
         const char* text = s_overlayText;
         int current_y = overlay_y;
-        const char* line_start = text;
 
         // Count lines first
         int line_count = 1;
@@ -575,13 +572,8 @@ bool display_showSplash(const char* filename) {
     return true;
 }
 
-void display_boot_test() {
-    expander_set_led(true);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    expander_set_led(false);
-    
+void display_showBootScreen() {
     if (!display_showSplash("/spiffs/splash.bmp")) {
-        // Fallback to color bar if splash fails
         uint16_t* buffer = display_getBackBuffer();
         for (int y = 0; y < s_lcdDisplayHeight; y++) {
             for (int x = 0; x < s_lcdDisplayWidth; x++) {
@@ -590,10 +582,7 @@ void display_boot_test() {
         }
         display_present();
     }
-    
-    // Give the asynchronous transfer a moment to start before enabling backlight
     vTaskDelay(pdMS_TO_TICKS(50));
-    expander_set_backlight(true);
 }
 
 void display_setOverlayText(const char* text, uint16_t color) {
@@ -668,15 +657,15 @@ void display_boot_update() {
         return;
     }
 
-    // Overlay is only the bottom 10 pixels (y: 230-239)
-    // Splash image is protected in rows 0-229
-    const int OVERLAY_HEIGHT = 10;
-    const int overlay_y_start = s_lcdDisplayHeight - OVERLAY_HEIGHT;  // 230
-    const int overlay_y_end = s_lcdDisplayHeight;                       // 240
+    // Overlay is the bottom 50 pixels (y: 190-239)
+    // Splash/logo is protected in rows 0-189
+    const int OVERLAY_HEIGHT = 50;
+    const int overlay_y_start = s_lcdDisplayHeight - OVERLAY_HEIGHT;  // 190
+    const int overlay_y_end = s_lcdDisplayHeight;                     // 240
 
-    // Safety check: ensure we never clear above row 230
-    if (overlay_y_start < 230) {
-        ESP_LOGE(TAG, "ERROR: overlay_y_start=%d is too high, would corrupt splash!", overlay_y_start);
+    // Safety check: ensure we never clear above row 189
+    if (overlay_y_start < 190) {
+        ESP_LOGE(TAG, "ERROR: overlay_y_start=%d is too high, would corrupt splash/logo!", overlay_y_start);
         return;
     }
 
@@ -684,36 +673,44 @@ void display_boot_update() {
     for (int buf_idx = 0; buf_idx < 2; buf_idx++) {
         uint16_t* buf = s_frameBuffers[buf_idx];
 
-        // ONLY clear the bottom 10 pixels (overlay area), never touch splash image
+        // ONLY clear the bottom 25 pixels (overlay area), never touch splash image
         for (int y = overlay_y_start; y < overlay_y_end; y++) {
             for (int x = 0; x < s_lcdDisplayWidth; x++) {
                 buf[y * s_lcdDisplayWidth + x] = 0x0000;
             }
         }
 
-        // Draw new overlay text on both buffers (only in bottom 10 pixel area)
-        if (s_overlayText[0]) {
-            const char* text = s_overlayText;
-            int current_y = overlay_y_start;  // Start drawing at y=230
-            const char* p = text;
+        // Draw separator line at the top of the message area (y=215)
+        uint16_t line_color = __builtin_bswap16(0x07E0);  // Green line for visual separation
+        for (int x = 0; x < s_lcdDisplayWidth; x++) {
+            buf[overlay_y_start * s_lcdDisplayWidth + x] = line_color;
+        }
 
+        // Draw new overlay text on both buffers (only in bottom 25 pixel area)
+        if (s_overlayText[0]) {
+            // Count lines
+            int num_lines = 1;
+            for (const char* t = s_overlayText; *t; t++) {
+                if (*t == '\n') num_lines++;
+            }
+            // Calculate starting y to vertically center lines in overlay
+            int total_text_height = num_lines * 16;
+            int start_y = overlay_y_start + (OVERLAY_HEIGHT - total_text_height) / 2;
+            int current_y = start_y;
+            const char* p = s_overlayText;
             while (*p) {
                 const char* line_end = p;
                 while (*line_end && *line_end != '\n') line_end++;
-
                 int line_len = line_end - p;
                 int line_width = line_len * 8;
                 int center_x = (s_lcdDisplayWidth - line_width) / 2;
-
-                // Only draw if text stays within overlay area (y >= 230)
                 if (current_y >= overlay_y_start && current_y < overlay_y_end) {
                     for (int i = 0; i < line_len; i++) {
                         drawChar(buf, center_x + i * 8, current_y, p[i], s_overlayColor);
                     }
                 }
-
+                current_y += 16;
                 if (*line_end == '\n') {
-                    current_y -= 16;
                     p = line_end + 1;
                 } else {
                     break;
