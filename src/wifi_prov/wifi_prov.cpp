@@ -88,22 +88,25 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
     if (base == WIFI_EVENT) {
         switch (id) {
         case WIFI_EVENT_STA_START: {
-            // Enable Long Range mode for better stability at distance
             esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);
 
             wifi_config_t conf;
             esp_err_t conf_err = esp_wifi_get_config(WIFI_IF_STA, &conf);
             if (conf_err == ESP_OK && strlen((const char*)conf.sta.ssid) == 0) {
-                    ESP_LOGW(TAG, "STA_START: SSID is empty after flash erase. Starting BLE provisioning.");
-                    display_setOverlayText("No Wi-Fi creds. Start BLE prov.", 0xF800);
-                    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                        bool prov_active = s_provisioning_started;
-                        xSemaphoreGive(s_state_mutex);
-                        if (!prov_active) wifi_prov_start();
-                    }
+                ESP_LOGW(TAG, "STA_START: No saved credentials. Starting BLE provisioning.");
+                display_setOverlayText("No Wi-Fi creds. Start BLE prov.", 0xF800);
+                if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                    bool prov_active = s_provisioning_started;
+                    xSemaphoreGive(s_state_mutex);
+                    if (!prov_active) wifi_prov_start();
+                }
                 break;
             }
-            ESP_LOGI(TAG, "Wi-Fi station started; connecting...");
+            if (conf_err == ESP_OK) {
+                ESP_LOGI(TAG, "Wi-Fi station started; connecting to SSID: %s", (const char*)conf.sta.ssid);
+            } else {
+                ESP_LOGI(TAG, "Wi-Fi station started; connecting (config err: %d)...", conf_err);
+            }
             if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 s_sta_started = true;
                 xSemaphoreGive(s_state_mutex);
@@ -130,10 +133,12 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
                 xSemaphoreGive(s_state_mutex);
 
                 if (current_retry > MAX_RECONNECT_RETRIES) {
-                    ESP_LOGE(TAG, "Max retries reached. Restarting BLE provisioning.");
+                    ESP_LOGE(TAG, "Max retries reached (%d). Restarting BLE provisioning.", current_retry);
                     display_setOverlayText("Wi-Fi Failed. Start BLE prov.", 0xF800);
                     wifi_prov_stop();
-                    wifi_prov_start();
+                    if (!wifi_prov_start()) {
+                        ESP_LOGE(TAG, "Failed to restart BLE provisioning");
+                    }
                 } else {
                     char buf[64];
                     snprintf(buf, sizeof(buf), "Wi-Fi Drop (R:%d) Retry %d/%d",
@@ -145,6 +150,7 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
                         ESP_LOGI(TAG, "Waiting %lu ms before retry %d", backoff_ms, current_retry);
                         vTaskDelay(pdMS_TO_TICKS(backoff_ms));
                     }
+                    ESP_LOGI(TAG, "Attempting WiFi reconnect (retry %d/%d)", current_retry, MAX_RECONNECT_RETRIES);
                     esp_wifi_connect();
                 }
             }
@@ -217,14 +223,6 @@ static void prov_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
 
 static esp_err_t ensure_wifi_initialized()
 {
-    if (!s_state_mutex) {
-        s_state_mutex = xSemaphoreCreateMutex();
-        if (!s_state_mutex) {
-            ESP_LOGE(TAG, "Failed to create state mutex");
-            return ESP_ERR_NO_MEM;
-        }
-    }
-
     if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         bool already_init = s_wifi_init_done;
         xSemaphoreGive(s_state_mutex);
@@ -289,6 +287,14 @@ static esp_err_t ensure_wifi_initialized()
 // Start BLE-based Wi-Fi provisioning, or connect to saved credentials if provisioned.
 bool wifi_prov_start()
 {
+    if (!s_state_mutex) {
+        s_state_mutex = xSemaphoreCreateMutex();
+        if (!s_state_mutex) {
+            ESP_LOGE(TAG, "Failed to create state mutex");
+            return false;
+        }
+    }
+
     if (!s_wifi_connected_sem) {
         s_wifi_connected_sem = xSemaphoreCreateBinary();
     }
@@ -358,18 +364,26 @@ bool wifi_prov_start()
 
         wifi_mode_t current_mode;
         if (esp_wifi_get_mode(&current_mode) == ESP_OK && current_mode == WIFI_MODE_STA) {
-            ESP_LOGI(TAG, "Wi-Fi already started in STA mode");
+            ESP_LOGI(TAG, "Wi-Fi already started in STA mode; initiating connection");
             if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
                 s_sta_started = true;
                 xSemaphoreGive(s_state_mutex);
             }
         } else {
+            ESP_LOGI(TAG, "Starting Wi-Fi in STA mode");
             esp_err_t s_err = esp_wifi_start();
             if (s_err != ESP_OK && s_err != ESP_ERR_WIFI_CONN) {
                 ESP_LOGE(TAG, "esp_wifi_start failed: %d", s_err);
                 return false;
             }
+            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                s_sta_started = true;
+                xSemaphoreGive(s_state_mutex);
+            }
         }
+
+        ESP_LOGI(TAG, "Initiating WiFi connection attempt");
+        esp_wifi_connect();
         return true;
     }
 
