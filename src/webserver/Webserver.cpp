@@ -237,13 +237,13 @@ static esp_err_t ws_handler(httpd_req_t *req)
                 uint8_t cur = input_getKeyboardRow(row);
                 if (pressed) cur &= ~(1 << bit); else cur |= (1 << bit);
                 input_setKeyboardRow(row, cur);
-                
-                // Diagnostic: Log key events for problematic keys (like 'P' row 5, bit 0)
-                if (row == 5 || row == 7) {
-                    ESP_LOGI(TAG, "Key: row=%d bit=%d pressed=%d row_val=0x%02X", 
-                             row, bit, pressed, cur);
-                }
-            }
+
+                // Verification: Log key events and verify they were stored
+                uint8_t verified = input_getKeyboardRow(row);
+                if (row == 5 || row == 7 || verified != cur) {
+                    ESP_LOGI(TAG, "Key: row=%d bit=%d pressed=%d row_val=0x%02X verified=0x%02X",
+                             row, bit, pressed, cur, verified);
+                }            }
         } else if (ws_pkt.type == HTTPD_WS_TYPE_TEXT) {
             buffer[ws_pkt.len] = '\0';
             const char* json = (const char*)buffer;

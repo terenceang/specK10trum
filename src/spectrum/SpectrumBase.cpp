@@ -202,14 +202,28 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
 
     // Standard Spectrum keyboard: Address bits A8-A15 select rows.
     uint8_t select = ~(port >> 8);
-    if (select & 0x01) val &= input_getKeyboardRow(0);
-    if (select & 0x02) val &= input_getKeyboardRow(1);
-    if (select & 0x04) val &= input_getKeyboardRow(2);
-    if (select & 0x08) val &= input_getKeyboardRow(3);
-    if (select & 0x10) val &= input_getKeyboardRow(4);
-    if (select & 0x20) val &= input_getKeyboardRow(5);
-    if (select & 0x40) val &= input_getKeyboardRow(6);
-    if (select & 0x80) val &= input_getKeyboardRow(7);
+    uint8_t kbd = 0xFF;
+    if (select & 0x01) kbd &= input_getKeyboardRow(0);
+    if (select & 0x02) kbd &= input_getKeyboardRow(1);
+    if (select & 0x04) kbd &= input_getKeyboardRow(2);
+    if (select & 0x08) kbd &= input_getKeyboardRow(3);
+    if (select & 0x10) kbd &= input_getKeyboardRow(4);
+    if (select & 0x20) kbd &= input_getKeyboardRow(5);
+    if (select & 0x40) kbd &= input_getKeyboardRow(6);
+    if (select & 0x80) kbd &= input_getKeyboardRow(7);
+    
+    val &= kbd;
+
+    // Diagnostic: Log when a key is actually detected as pressed in the emulator
+    if ((kbd & 0x1F) != 0x1F) {
+        static uint32_t s_lastKbdLog = 0;
+        uint32_t now = xTaskGetTickCount();
+        if (pdTICKS_TO_MS(now - s_lastKbdLog) > 500) {
+            ESP_LOGI("SpectrumBase", "KBD Read: port=0x%04X select=0x%02X kbd=0x%02X val=0x%02X", 
+                     port, select, kbd, val);
+            s_lastKbdLog = now;
+        }
+    }
     
     // EAR input is bit 6.
     bool current_ear = m_tape.getEar();

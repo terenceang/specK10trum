@@ -4,14 +4,16 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_log.h>
-
 #include <string.h>
 
 // Keyboard rows (active-low; 0 = pressed)
-static uint8_t s_keyboardRows[8];
+// Marked volatile as it's updated by Webserver task and read by Emulator task
+static volatile uint8_t s_keyboardRows[8];
 
 void input_setKeyboardRow(uint8_t row, uint8_t columns) {
-    if (row < 8) s_keyboardRows[row] = columns;
+    if (row < 8) {
+        s_keyboardRows[row] = columns;
+    }
 }
 
 uint8_t input_getKeyboardRow(uint8_t row) {
@@ -19,7 +21,9 @@ uint8_t input_getKeyboardRow(uint8_t row) {
 }
 
 void input_resetKeyboardRows() {
-    memset(s_keyboardRows, 0xFF, sizeof(s_keyboardRows));
+    for (int i = 0; i < 8; i++) {
+        s_keyboardRows[i] = 0xFF;
+    }
 }
 
 static const char* TAG = "Input";
@@ -73,5 +77,6 @@ static void input_task(void* pvParameters) {
 }
 
 void input_init() {
+    input_resetKeyboardRows();
     xTaskCreate(input_task, "input", 4096, NULL, 4, NULL);
 }
