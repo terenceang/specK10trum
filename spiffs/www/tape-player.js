@@ -82,7 +82,13 @@
       const lbl = document.getElementById('zx-player-label');
       if (lbl) lbl.textContent = lastTape;
       // Auto-load persisted tape on start
-      fetch(`${window.ZX_UTILS.API.LOAD}?file=${encodeURIComponent(lastTape)}`).catch(() => {});
+      fetch(`${window.ZX_UTILS.API.LOAD}?file=${encodeURIComponent(lastTape)}`)
+        .then(res => {
+          if (res.ok && window.ZX_WS && currentTapeMode === 'normal') {
+            window.ZX_WS.send(JSON.stringify({ cmd: 'tape_play' }));
+          }
+        })
+        .catch(() => {});
     }
 
     // Handle WS open to sync mode
