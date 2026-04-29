@@ -31,6 +31,8 @@ static int16_t s_psg_buf[SAMPLES_PER_FRAME];
 // I2S write statistics
 static int s_write_attempts = 0;
 static int s_write_success = 0;
+static int s_frame_count = 0;
+static int s_last_logged_success = 0;
 
 bool audio_init() {
     ESP_LOGI(TAG, "Initializing ESP-IDF I2S DMA audio...");
@@ -154,13 +156,23 @@ void audio_play_frame(SpectrumBase* spectrum) {
     // Write to I2S with short timeout (non-blocking mode)
     size_t bytes_written = 0;
     s_write_attempts++;
+    s_frame_count++;
+
     esp_err_t ret = i2s_channel_write(s_tx_handle, stereo_buf,
                                       SAMPLES_PER_FRAME * 2 * sizeof(int16_t),
                                       &bytes_written, pdMS_TO_TICKS(10));
     if (ret == ESP_OK && bytes_written > 0) {
         s_write_success++;
     }
-    // Silently ignore timeout errors (expected if no audio codec connected)
+
+    // Log statistics every 50 frames (~1 second at 50fps)
+    if (s_frame_count >= 50) {
+        int new_success = s_write_success - s_last_logged_success;
+        ESP_LOGI(TAG, "Audio write: %d/%d successful in last 50 frames",
+                 new_success, 50);
+        s_last_logged_success = s_write_success;
+        s_frame_count = 0;
+    }
 }
 
 void audio_play_tone(int freq_hz, int duration_ms) {
