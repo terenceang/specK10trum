@@ -33,7 +33,12 @@
       "Bash(git commit *)",
       "Bash(xargs grep *)",
       "Bash(python3 -m platformio --version)",
-      "Bash(python3 -m platformio run -e unihiker_k10)"
+      "Bash(python3 -m platformio run -e unihiker_k10)",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(python -m platformio run --verbose)",
+      "Bash(python3 -m idf.py build)",
+      "Bash(cmake --version)"
     ]
   }
 }

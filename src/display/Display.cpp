@@ -37,6 +37,7 @@ static spi_device_handle_t s_spi = NULL;
 static uint16_t* s_frameBuffers[2] = { NULL, NULL };
 static int s_drawBuffer = 0;
 static TaskHandle_t s_videoTaskHandle = NULL;
+static TaskHandle_t s_emulatorTaskHandle = NULL;
 static SpectrumBase* s_pendingSpectrum = NULL;
 static volatile bool s_pause_video = false;
 static SemaphoreHandle_t s_video_pause_semaphore = NULL;
@@ -156,6 +157,10 @@ static void video_task(void* pvParameters) {
                 // Render and play audio on Core 1 (moved from emulator task)
                 audio_play_frame(s_pendingSpectrum);
                 instr_video_end();
+                // Signal emulator task that frame is complete
+                if (s_emulatorTaskHandle) {
+                    xTaskNotifyGive(s_emulatorTaskHandle);
+                }
             }
         }
     }
@@ -165,6 +170,16 @@ void display_trigger_frame(SpectrumBase* spectrum) {
     s_pendingSpectrum = spectrum;
     if (s_videoTaskHandle) {
         xTaskNotifyGive(s_videoTaskHandle);
+    }
+}
+
+void display_set_emulator_task(TaskHandle_t handle) {
+    s_emulatorTaskHandle = handle;
+}
+
+void display_wait_frame() {
+    if (s_emulatorTaskHandle) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     }
 }
 

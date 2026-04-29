@@ -135,8 +135,11 @@ static void emulator_task(void* pvParameters) {
     (void)pvParameters;
     ESP_LOGI(TAG, "Emulator task started on core %d", xPortGetCoreID());
 
+    // Register this task with the display module for frame synchronization
+    display_set_emulator_task(xTaskGetCurrentTaskHandle());
+
     const int T_STATES_PER_FRAME = 69888; // 3.5 MHz / 50.08 Hz
-    
+
     while (true) {
         // Apply any pending commands from the webserver (reset, snapshot load)
         webserver_apply_pending(spectrum);
@@ -148,10 +151,18 @@ static void emulator_task(void* pvParameters) {
         }
         instr_cpu_end();
 
+        // Show tape status indicator
+        if (spectrum->tape().isLoaded()) {
+            const char* status = spectrum->tape().isPlaying() ? "🔴 TAPE" : "⏸ TAPE";
+            display_setOverlayText(status, 0xF800);
+        } else {
+            display_clearOverlay();
+        }
+
         display_trigger_frame(spectrum);
 
-        // Yield to allow other tasks to run (audio rendering now on Core 1)
-        taskYIELD();
+        // Wait for video task to complete frame (allows IDLE task to run and reset watchdog)
+        display_wait_frame();
     }
 }
 

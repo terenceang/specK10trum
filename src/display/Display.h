@@ -2,6 +2,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "spectrum/SpectrumBase.h"
 
 #ifdef __cplusplus
@@ -14,6 +16,8 @@ void display_renderSpectrum(SpectrumBase* spectrum);
 void display_present();
 void display_clear();
 void display_trigger_frame(SpectrumBase* spectrum);
+void display_set_emulator_task(TaskHandle_t handle);
+void display_wait_frame();
 void showSplashScreen();
 void display_setOverlayText(const char* text, uint16_t color);
 void display_boot_log_add(const char* message);

@@ -460,7 +460,7 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     static bool keepalive_started = false;
     if (!keepalive_started) {
         keepalive_started = true;
-        xTaskCreatePinnedToCore(ws_keepalive_task, "ws_keepalive", 4096, NULL, 5, NULL, 0);
+        xTaskCreatePinnedToCore(ws_keepalive_task, "ws_keepalive", 4096, NULL, 5, NULL, 1);
         ESP_LOGI(TAG, "WebSocket keepalive task started");
     }
 

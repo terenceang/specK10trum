@@ -31,7 +31,7 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
     // Then, proactively advance by 11 T-states (the duration of the IN A, (n) instruction).
     // This allows sampling EAR at the exact machine cycle it is actually read.
     m_tape.advance(11, [&](uint32_t offset, bool ear) {
-        m_beeper.recordEvent(m_ulaClocks + offset, m_lastSpeakerBit | (ear ? 1 : 0));
+        m_beeper.recordEvent(m_ulaClocks + offset, m_lastSpeakerBit);
         m_lastTapeEar = ear;
     });
 
