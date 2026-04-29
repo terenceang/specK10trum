@@ -1,4 +1,5 @@
 #include "Spectrum128K.h"
+#include "input/Input.h"
 #include <esp_log.h>
 #include <string.h>
 
@@ -104,7 +105,10 @@ uint8_t Spectrum128K::readPort(uint16_t port) {
     if ((port & 0x0001) == 0) { // Port 0xFE
         return readPortFE(port);
     }
-    else if ((port & 0xC002) == 0xC000) { // Port 0xFFFD
+    if ((port & 0x00FF) == 0x1F) { // Port 0x1F - Kempston joystick
+        return input_getJoystick();
+    }
+    if ((port & 0xC002) == 0xC000) { // Port 0xFFFD
         return readAY(m_aySelectedReg);
     }
     return getFloatingBusValue();

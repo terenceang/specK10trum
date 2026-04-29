@@ -384,3 +384,21 @@ input:checked + .zx-slider:before { transform: translateX(14px); background-colo
 .zx-modal-btn:hover { background: rgba(255,255,255,0.15); }
 
 .zx-footer { color: var(--dim); font-size: clamp(9px, 1.3vw, 12px); }
+
+/* Kempston Gamepad */
+.zx-gamepad { display:none; flex-direction:column; align-items:center; justify-content:center; gap:calc(var(--key-size) * 0.4); padding:var(--kb-pad-t) var(--kb-pad) var(--kb-pad-b); background:#111; border:1px solid #333; width:max-content; touch-action:none; -webkit-user-select:none; user-select:none; }
+.zx-gamepad.active { display:flex; }
+.zx-joy-body { display:flex; align-items:center; gap:calc(var(--key-size) * 1.6); }
+.zx-dpad { display:grid; grid-template-columns:repeat(3, var(--key-size)); grid-template-rows:repeat(3, var(--key-size)); gap:calc(var(--key-size) * 0.08); }
+.zx-joy-btn { width:var(--key-size); height:var(--key-size); border:2px solid var(--ink); background:#1a1a1c; color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; touch-action:none; -webkit-tap-highlight-color:transparent; font-weight:900; font-size:max(14px, calc(var(--key-size) * 0.36)); border-radius:4px; -webkit-user-select:none; user-select:none; }
+.zx-joy-btn.pressed { background:var(--ink); color:#000; }
+.zx-joy-up    { grid-column:2; grid-row:1; }
+.zx-joy-left  { grid-column:1; grid-row:2; }
+.zx-joy-gap   { grid-column:2; grid-row:2; background:transparent; border:none; pointer-events:none; }
+.zx-joy-right { grid-column:3; grid-row:2; }
+.zx-joy-down  { grid-column:2; grid-row:3; }
+.zx-joy-fire { width:calc(var(--key-size) * 1.6); height:calc(var(--key-size) * 1.6); border-radius:50%; border:2px solid var(--red); color:var(--red); font-size:max(10px, calc(var(--key-size) * 0.22)); }
+.zx-joy-fire.pressed { background:var(--red); color:#fff; }
+.zx-joy-toolbar { display:flex; gap:calc(var(--key-size) * 0.4); align-items:center; }
+.zx-joy-back { padding:6px 16px; background:transparent; border:1px solid #444; color:var(--dim); font-family:inherit; font-size:10px; font-weight:800; letter-spacing:1px; cursor:pointer; border-radius:3px; text-transform:uppercase; touch-action:manipulation; }
+.zx-joy-back:hover { color:var(--ink); border-color:#666; }

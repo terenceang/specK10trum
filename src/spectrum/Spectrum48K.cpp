@@ -1,4 +1,5 @@
 #include "Spectrum48K.h"
+#include "input/Input.h"
 #include <esp_log.h>
 #include <string.h>
 #include <stdio.h>
@@ -60,6 +61,9 @@ void Spectrum48K::writePort(uint16_t port, uint8_t value) {
 uint8_t Spectrum48K::readPort(uint16_t port) {
     if ((port & 0x0001) == 0) {
         return readPortFE(port);
+    }
+    if ((port & 0x00FF) == 0x1F) {
+        return input_getJoystick();
     }
     return getFloatingBusValue();
 }

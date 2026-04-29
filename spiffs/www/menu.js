@@ -53,6 +53,8 @@
         } else if (action === 'tape_player') {
           document.getElementById('zx-player').classList.add('open');
           if (window.ZX_TAPE) window.ZX_TAPE.updateUI();
+        } else if (action === 'joystick') {
+          if (window.ZX_JOY) window.ZX_JOY.showGamepad();
         } else if (action === 'model') {
           try {
             const res = await fetch(window.ZX_UTILS.API.MODEL);

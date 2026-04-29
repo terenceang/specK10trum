@@ -10,3 +10,7 @@ void input_init();
 void input_setKeyboardRow(uint8_t row, uint8_t columns);
 uint8_t input_getKeyboardRow(uint8_t row);
 void input_resetKeyboardRows();
+
+// Kempston joystick (port 0x1F, active-HIGH: bit0=right,1=left,2=down,3=up,4=fire)
+void input_setJoystickBit(uint8_t bit, bool pressed);
+uint8_t input_getJoystick(void);

@@ -32,6 +32,11 @@
       }
     }
 
+    if (window.ZX_JOY) {
+      const gpContainer = document.getElementById('zx-gamepad');
+      if (gpContainer) window.ZX_JOY.render(gpContainer);
+    }
+
     if (window.ZX_MENU) window.ZX_MENU.init();
     if (window.ZX_TAPE) window.ZX_TAPE.init();
 

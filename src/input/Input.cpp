@@ -10,6 +10,9 @@
 // Marked volatile as it's updated by Webserver task and read by Emulator task
 static volatile uint8_t s_keyboardRows[8];
 
+// Kempston joystick state (active-HIGH; 0x00 = no buttons pressed)
+static volatile uint8_t s_joystickState = 0x00;
+
 void input_setKeyboardRow(uint8_t row, uint8_t columns) {
     if (row < 8) {
         s_keyboardRows[row] = columns;
@@ -24,6 +27,16 @@ void input_resetKeyboardRows() {
     for (int i = 0; i < 8; i++) {
         s_keyboardRows[i] = 0xFF;
     }
+}
+
+void input_setJoystickBit(uint8_t bit, bool pressed) {
+    if (bit > 4) return;
+    if (pressed) s_joystickState |=  (1u << bit);
+    else         s_joystickState &= ~(1u << bit);
+}
+
+uint8_t input_getJoystick(void) {
+    return s_joystickState;
 }
 
 static const char* TAG = "Input";

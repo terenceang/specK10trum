@@ -361,7 +361,9 @@ static esp_err_t ws_handler(httpd_req_t *req)
         if (ret != ESP_OK) return ret;
         if (ws_pkt.type == HTTPD_WS_TYPE_BINARY && ws_pkt.len == 3) {
             uint8_t row = buffer[0], bit = buffer[1], pressed = buffer[2];
-            if (row < 8 && bit < 5) {
+            if (row == 0xFF) {
+                input_setJoystickBit(bit, pressed != 0);
+            } else if (row < 8 && bit < 5) {
                 uint8_t cur = input_getKeyboardRow(row);
                 if (pressed) cur &= ~(1 << bit); else cur |= (1 << bit);
                 input_setKeyboardRow(row, cur);
@@ -371,7 +373,8 @@ static esp_err_t ws_handler(httpd_req_t *req)
                 if (row == 5 || row == 7 || verified != cur) {
                     ESP_LOGI(TAG, "Key: row=%d bit=%d pressed=%d row_val=0x%02X verified=0x%02X",
                              row, bit, pressed, cur, verified);
-                }            }
+                }
+            }
         } else if (ws_pkt.type == HTTPD_WS_TYPE_TEXT) {
             buffer[ws_pkt.len] = '\0';
             const char* json = (const char*)buffer;
