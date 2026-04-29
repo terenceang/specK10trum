@@ -493,6 +493,8 @@ void Tape::instaload(SpectrumBase* spectrum) {
         ESP_LOGW("Tape", "Program may crash or not work correctly on 48K");
     }
 
+    ESP_LOGI("Tape", "instaload: %d blocks in tape", m_num_blocks);
+
     Z80* cpu = spectrum->getCPU();
     uint16_t lastCodeStart = 0, totalProgLen = 0;
     bool hasCode = false, hasBasic = false;
@@ -512,6 +514,7 @@ void Tape::instaload(SpectrumBase* spectrum) {
         uint8_t type = hData[0];
         uint16_t len = hData[11] | (hData[12] << 8);
         uint16_t start = hData[13] | (hData[14] << 8);
+        ESP_LOGD("Tape", "instaload block %d: type=%d len=%d start=0x%04X", i, type, len, start);
 
         // Validate header length is reasonable
         if (len == 0 || len > 0x8000) {
@@ -575,10 +578,13 @@ void Tape::instaload(SpectrumBase* spectrum) {
     }
     // Setup CPU state for loaded program
     if (hasCode) {
+        ESP_LOGI("Tape", "instaload: executing CODE at 0x%04X", lastCodeStart);
         cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = lastCodeStart;
     } else if (hasBasic) {
+        ESP_LOGI("Tape", "instaload: executing BASIC at 23755");
         cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = 23755;
     } else {
+        ESP_LOGW("Tape", "instaload: no valid program blocks found!");
         // No valid blocks loaded - leave CPU at LD-BYTES for manual loading or show error
         // Don't change CPU state to avoid jumping to garbage address
     }
