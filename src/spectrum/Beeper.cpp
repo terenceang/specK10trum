@@ -87,9 +87,10 @@ void Beeper::renderSamples(int start, int end) {
     // Butterworth LPF coefficients (fs=44.1kHz, fc=8kHz) - essential for audio quality
     const float b0 = 0.1804f, b1 = 0.3608f, b2 = 0.1804f;
     const float a1 = -0.4932f, a2 = 0.2149f;
+    float volume_scale = m_volume * AMPLITUDE;  // Apply volume multiplier
 
     for (int i = start; i < end; ++i) {
-        float x = m_speakerLevel ? (float)AMPLITUDE : -(float)AMPLITUDE;
+        float x = m_speakerLevel ? volume_scale : -volume_scale;
 
         // Add residual from previous PolyBLEP event
         x += m_nextSampleCorrection;

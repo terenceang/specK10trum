@@ -19,10 +19,17 @@ void SpectrumBase::flushTape() {
     uint32_t tstates = (uint32_t)m_pendingTapeTstates;
     m_pendingTapeTstates = 0;
 
+    // Reduce beeper volume during tape loading (set to 30%)
+    float prev_volume = m_beeper.getVolume();
+    m_beeper.setVolume(0.3f);
+
     // Advance the tape and record all EAR toggles for the beeper to hear them
     uint32_t start_ula_clocks = m_ulaClocks - tstates;
     m_tape.advance(tstates, [&](uint32_t offset, bool ear) {
         m_beeper.recordEvent(start_ula_clocks + offset, m_lastSpeakerBit | (ear ? 1 : 0));
         m_lastTapeEar = ear;
     });
+
+    // Restore previous beeper volume
+    m_beeper.setVolume(prev_volume);
 }

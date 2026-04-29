@@ -17,6 +17,10 @@ public:
     void setExternalEar(bool high) { m_externalEar = high; }
     bool getExternalEar() const { return m_externalEar; }
     uint8_t currentSpeakerLevel() const { return m_speakerLevel; }
+
+    // Volume control for loading (0.0-1.0)
+    void setVolume(float vol) { m_volume = vol > 1.0f ? 1.0f : (vol < 0.0f ? 0.0f : vol); }
+    float getVolume() const { return m_volume; }
     
     static constexpr int16_t AMPLITUDE = 3276; // ~10% of 32767
     static constexpr int SAMPLES_PER_FRAME = 882;
@@ -29,6 +33,7 @@ private:
 
     uint8_t m_speakerLevel;
     bool m_externalEar;
+    float m_volume = 1.0f;  // Volume multiplier (0.0-1.0)
 
     // DC blocker state
     float m_lastX;
