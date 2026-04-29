@@ -163,6 +163,8 @@ static esp_err_t file_load_handler(httpd_req_t *req)
 static esp_err_t reset_handler(httpd_req_t *req)
 {
     s_pending_reset = true;
+    // Stop tape on reset to prevent auto-play after cold boot
+    if (s_spectrum) s_spectrum->tape().stop();
     httpd_resp_sendstr(req, "OK");
     return ESP_OK;
 }

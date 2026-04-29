@@ -6,6 +6,10 @@
   let currentTapeMode = (function() { try { return localStorage.getItem('zx_tape_mode') || 'normal'; } catch (_) { return 'normal'; } })();
   let lastTape = (function() { try { return localStorage.getItem('zx_last_tape') || null; } catch (_) { return null; } })();
 
+  function stopTape() {
+    if (window.ZX_WS) window.ZX_WS.send(JSON.stringify({ cmd: 'tape_stop' }));
+  }
+
   function init() {
     const autoPlayToggle = document.getElementById('zx-auto-play-toggle');
     const btnLoadTape = document.getElementById('zx-btn-load-tape');
@@ -81,30 +85,24 @@
     if (lastTape) {
       const lbl = document.getElementById('zx-player-label');
       if (lbl) lbl.textContent = lastTape;
-      // Auto-load persisted tape on start
+      // Load persisted tape on start, but don't auto-play
       fetch(`${window.ZX_UTILS.API.LOAD}?file=${encodeURIComponent(lastTape)}`)
-        .then(res => {
-          if (res.ok && window.ZX_WS && currentTapeMode === 'normal') {
-            window.ZX_WS.send(JSON.stringify({ cmd: 'tape_play' }));
-          }
-        })
         .catch(() => {});
     }
 
-    // Handle WS open to sync mode and ensure tape is loaded
+    // Handle WS open - only sync mode if page was already visible
     window.addEventListener('zx-ws-open', () => {
-      if (window.ZX_WS) {
+      if (window.ZX_WS && !document.hidden) {
         window.ZX_WS.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode }));
-        // Re-attempt tape loading on WebSocket connection
-        if (lastTape) {
-          fetch(`${window.ZX_UTILS.API.LOAD}?file=${encodeURIComponent(lastTape)}`)
-            .then(res => {
-              if (res.ok && window.ZX_WS && currentTapeMode === 'normal') {
-                window.ZX_WS.send(JSON.stringify({ cmd: 'tape_play' }));
-              }
-            })
-            .catch(() => {});
-        }
+      }
+    });
+
+    // Clear tape state on system reset
+    document.addEventListener('click', (e) => {
+      if (e.target.dataset.action === 'reset') {
+        lastTape = null;
+        try { localStorage.removeItem('zx_last_tape'); } catch(_) {}
+        stopTape();
       }
     });
   }

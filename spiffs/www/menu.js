@@ -34,6 +34,10 @@
     const modelModal = document.getElementById('zx-model-modal');
     const modelClose = document.getElementById('zx-model-close');
     const modelConfirm = document.getElementById('zx-model-confirm');
+    
+    const layoutModal = document.getElementById('zx-layout-modal');
+    const layoutClose = document.getElementById('zx-layout-close');
+    const layoutConfirm = document.getElementById('zx-layout-confirm');
 
     if (logo && menu) {
       logo.addEventListener('click', (e) => {
@@ -66,6 +70,8 @@
             console.error('Failed to fetch current model:', e);
           }
           modelModal.style.display = 'flex';
+        } else if (action === 'layout') {
+          layoutModal.style.display = 'flex';
         } else if (action === 'reset') {
           fetch(window.ZX_UTILS.API.RESET).then(r => console.log('Reset:', r.status));
         }
@@ -109,6 +115,47 @@
           alert('Error connecting to server: ' + e.message);
         }
       });
+    }
+
+    if (layoutClose) {
+      layoutClose.addEventListener('click', () => {
+        layoutModal.style.display = 'none';
+      });
+    }
+
+    if (layoutConfirm) {
+      layoutConfirm.addEventListener('click', () => {
+        const selected = document.querySelector('input[name="layout"]:checked');
+        if (!selected) return;
+        const layoutName = selected.value;
+        
+        if (window.ZX_LAYOUT_VARIANTS && window.ZX_LAYOUT_VARIANTS[layoutName]) {
+          window.ZX_LAYOUT = window.ZX_LAYOUT_VARIANTS[layoutName];
+          const kbContainer = document.getElementById('zx-kb');
+          if (kbContainer && window.ZX_KB) {
+            window.ZX_KB.render(kbContainer);
+          }
+          layoutModal.style.display = 'none';
+          localStorage.setItem('zx_kbd_layout', layoutName);
+        }
+      });
+    }
+
+    // Load saved layout
+    const savedLayout = localStorage.getItem('zx_kbd_layout');
+    if (savedLayout && document.getElementById(`layout-${savedLayout}`)) {
+      document.getElementById(`layout-${savedLayout}`).checked = true;
+      // We need to wait for zx-layout.js to be fully loaded and zx-layout-variants to be populated.
+      // But since zx-layout.js is loaded before menu.js, it should be fine.
+      setTimeout(() => {
+        if (window.ZX_LAYOUT_VARIANTS && window.ZX_LAYOUT_VARIANTS[savedLayout]) {
+          window.ZX_LAYOUT = window.ZX_LAYOUT_VARIANTS[savedLayout];
+          const kbContainer = document.getElementById('zx-kb');
+          if (kbContainer && window.ZX_KB) {
+            window.ZX_KB.render(kbContainer);
+          }
+        }
+      }, 100);
     }
 
     if (subclose) subclose.addEventListener('click', () => submenu.classList.remove('open'));

@@ -60,6 +60,7 @@
         <!-- Menu System -->
         <div class="zx-menu" id="zx-menu">
           <div class="zx-menu-item" data-action="model">Model</div>
+          <div class="zx-menu-item" data-action="layout">Keyboard Layout</div>
           <div class="zx-menu-item" data-action="tape_player">Tape Player</div>
           <div class="zx-menu-item" data-action="snapshot">Load Snapshot</div>
           <div class="zx-menu-item" data-action="joystick">Joystick</div>
@@ -78,6 +79,29 @@
                    style="width:100%; background:#0c0c0d; border:1px solid #444; color:#fff; padding:6px 10px; font-size:11px; border-radius:4px; outline:none">
           </div>
           <div class="zx-submenu-list" id="zx-submenu-list"></div>
+        </div>
+
+        <!-- Layout Selection Modal -->
+        <div class="zx-modal" id="zx-layout-modal" style="display:none">
+          <div class="zx-modal-content">
+            <div class="zx-modal-header">
+              <span class="zx-modal-title">Select Layout</span>
+              <span class="zx-modal-close" id="zx-layout-close">&times;</span>
+            </div>
+            <div class="zx-modal-body">
+              <div class="zx-model-option" data-layout="48k">
+                <input type="radio" name="layout" value="48k" id="layout-48k" checked>
+                <label for="layout-48k">Classic 48K</label>
+              </div>
+              <div class="zx-model-option" data-layout="plus">
+                <input type="radio" name="layout" value="plus" id="layout-plus">
+                <label for="layout-plus">Spectrum Plus</label>
+              </div>
+            </div>
+            <div class="zx-modal-footer">
+              <button class="zx-modal-btn" id="zx-layout-confirm">Apply</button>
+            </div>
+          </div>
         </div>
 
         <!-- Model Selection Modal -->
@@ -161,6 +185,8 @@
   </div>
 </div>
 
+<script src="/layout-48k.js?v=0.2.2"></script>
+<script src="/layout-plus.js?v=0.2.2"></script>
 <script src="/zx-layout.js?v=0.2.2"></script>
 <script src="/utils.js?v=0.2.2"></script>
 <script src="/ws.js?v=0.2.2"></script>

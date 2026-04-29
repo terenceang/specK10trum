@@ -57,8 +57,15 @@
     if (k.eModeRed)     parts += `<div class="zx-lab zx-er">${esc(k.eModeRed)}</div>`;
     if (k.eModeGreen)   parts += `<div class="zx-lab zx-eg">${esc(k.eModeGreen)}</div>`;
 
-    const m = mapFor(k);
-    const data = m ? ` data-r="${m[0]}" data-b="${m[1]}"` : '';
+    let data = '';
+    if (k.combo) {
+      const pairs = k.combo.map(code => KEY_MAP[code]).filter(m => !!m);
+      data = pairs.map((m, i) => ` data-r${i?i+1:''}="${m[0]}" data-b${i?i+1:''}="${m[1]}"`).join('');
+    } else {
+      const m = mapFor(k);
+      if (m) data = ` data-r="${m[0]}" data-b="${m[1]}"`;
+    }
+    
     const spc  = k.special ? ` data-special="${esc(k.special)}"` : '';
     const lbl  = ` data-lbl="${esc(shortLabel(k))}"`;
     return `<div class="zx-key${wideCls}"${data}${spc}${lbl}>${parts}</div>`;
@@ -68,7 +75,7 @@
     const LAYOUT = window.ZX_LAYOUT;
     const STRIPE = (LAYOUT && LAYOUT.STRIPE) || {};
     const rows = LAYOUT
-      ? [LAYOUT.ROW_1, LAYOUT.ROW_2, LAYOUT.ROW_3, LAYOUT.ROW_4]
+      ? (LAYOUT.ROWS || [LAYOUT.ROW_1, LAYOUT.ROW_2, LAYOUT.ROW_3, LAYOUT.ROW_4])
       : [
           ['1','2','3','4','5','6','7','8','9','0'],
           ['Q','W','E','R','T','Y','U','I','O','P'],
@@ -76,13 +83,13 @@
           ['CAPS','Z','X','C','V','B','N','M','SYM','SPACE']
         ].map(r => r.map(m => ({ main: m })));
 
-    const ROW_OFFSET_EM = [0, 0.26, 0.52, 0];
+    const ROW_OFFSET_EM = LAYOUT.OFFSETS || [0, 0.26, 0.52, 0];
 
     const rowsHtml = rows.map((r, i) => {
-      const off = ROW_OFFSET_EM[i];
+      const off = ROW_OFFSET_EM[i] || 0;
       const ml  = off ? ` style="margin-left:calc(var(--key-size) * ${off})"` : '';
       let html = `<div class="zx-row"${ml}>${r.map(k => keyHTML(k, STRIPE)).join('')}`;
-      if (i === 0) {
+      if (i === 0 && !LAYOUT.HIDE_LEDS) {
         html += `
           <div class="zx-kb-leds">
             <div class="zx-led" id="zx-led-caps"><span class="lamp"></span>CAPS</div>
@@ -94,7 +101,7 @@
       return html;
     }).join('');
 
-    const stripesHtml = (LAYOUT && LAYOUT.STRIPE)
+    const stripesHtml = (LAYOUT && LAYOUT.STRIPE && !LAYOUT.HIDE_STRIPE)
       ? `<div class="zx-stripebar">${
           ['red','yellow','green','cyan']
             .map(c => `<div style="background:${STRIPE[c] || '#fff'}"></div>`)
@@ -118,21 +125,29 @@
     el.classList.toggle('toggled', on);
     const led = document.getElementById('zx-led-' + special);
     if (led) led.classList.toggle('on', on);
-    const r = +el.dataset.r, b = +el.dataset.b;
-    if (!isNaN(r) && !isNaN(b)) sendKey(r, b, on, el.dataset.lbl);
+    const keys = getKeysFromEl(el);
+    keys.forEach(k => sendKey(k.r, k.b, on, el.dataset.lbl));
+  }
+
+  function getKeysFromEl(el) {
+    const keys = [];
+    if (el.dataset.r !== undefined) keys.push({ r: +el.dataset.r, b: +el.dataset.b });
+    if (el.dataset.r2 !== undefined) keys.push({ r: +el.dataset.r2, b: +el.dataset.b2 });
+    if (el.dataset.r3 !== undefined) keys.push({ r: +el.dataset.r3, b: +el.dataset.b3 });
+    return keys;
   }
 
   function pressMomentary(el) {
     if (el.classList.contains('pressed')) return;
     el.classList.add('pressed');
-    const r = +el.dataset.r, b = +el.dataset.b;
-    if (!isNaN(r) && !isNaN(b)) sendKey(r, b, true, el.dataset.lbl);
+    const keys = getKeysFromEl(el);
+    keys.forEach(k => sendKey(k.r, k.b, true, el.dataset.lbl));
   }
   function releaseMomentary(el) {
     if (!el.classList.contains('pressed')) return;
     el.classList.remove('pressed');
-    const r = +el.dataset.r, b = +el.dataset.b;
-    if (!isNaN(r) && !isNaN(b)) sendKey(r, b, false, el.dataset.lbl);
+    const keys = getKeysFromEl(el);
+    keys.reverse().forEach(k => sendKey(k.r, k.b, false, el.dataset.lbl));
   }
 
   function isToggle(el) {
