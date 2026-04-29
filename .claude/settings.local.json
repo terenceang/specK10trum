@@ -38,7 +38,9 @@
       "Read(//tmp/**)",
       "Bash(python -m platformio run --verbose)",
       "Bash(python3 -m idf.py build)",
-      "Bash(cmake --version)"
+      "Bash(cmake --version)",
+      "Bash(grep -E \"\\\\.\\(cpp|h\\)$\")",
+      "Bash(grep *)"
     ]
   }
 }

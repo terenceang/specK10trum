@@ -33,15 +33,7 @@ private:
 
     uint8_t m_speakerLevel;
     bool m_externalEar;
-    float m_volume = 1.0f;  // Volume multiplier (0.0-1.0)
-
-    // DC blocker state
-    float m_lastX;
-    float m_lastY;
-
-    // 2nd-order Butterworth Low-Pass (Analog Warmth)
-    float m_lp_x1, m_lp_x2;
-    float m_lp_y1, m_lp_y2;
+    float m_volume = 1.0f;
 
     void renderSamples(int start, int end);
 };

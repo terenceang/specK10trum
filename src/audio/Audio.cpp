@@ -4,9 +4,6 @@
 #include <driver/i2s_std.h>
 #include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <freertos/queue.h>
-#include <stdlib.h>
 #include <string.h>
 #include "../../components/audio_stream/include/board_pins_config.h"
 
@@ -20,7 +17,7 @@ static i2s_chan_handle_t s_tx_handle = NULL;
 static bool s_initialized = false;
 
 // Software volume control (0-100, stored as gain in 0.0-1.0 range)
-static float s_volume_gain = 0.7f;  // 70% default
+static float s_volume_gain = 0.05f;  // 5% default
 static bool s_muted = false;
 
 // Static audio buffers to avoid large stack allocations
@@ -30,6 +27,37 @@ static int16_t s_psg_buf[SAMPLES_PER_FRAME];
 
 // I2S write statistics (errors only)
 static int s_consecutive_failures = 0;
+
+// Master audio filter state (Butterworth 2nd-order LPF @ 8kHz + DC blocker)
+static float s_lp_x1 = 0, s_lp_x2 = 0;
+static float s_lp_y1 = 0, s_lp_y2 = 0;
+static float s_dc_lastX = 0, s_dc_lastY = 0;
+
+static void reset_master_filter(void) {
+    s_lp_x1 = s_lp_x2 = 0;
+    s_lp_y1 = s_lp_y2 = 0;
+    s_dc_lastX = s_dc_lastY = 0;
+}
+
+static void apply_master_filter(int16_t* stereo_buf, int samples) {
+    const float b0 = 0.1804f, b1 = 0.3608f, b2 = 0.1804f;
+    const float a1 = -0.4932f, a2 = 0.2149f;
+
+    for (int i = 0; i < samples * 2; ++i) {
+        float x = stereo_buf[i];
+        float lp = b0 * x + b1 * s_lp_x1 + b2 * s_lp_x2 - a1 * s_lp_y1 - a2 * s_lp_y2;
+        s_lp_x2 = s_lp_x1;
+        s_lp_x1 = x;
+        s_lp_y2 = s_lp_y1;
+        s_lp_y1 = lp;
+
+        float y = lp - s_dc_lastX + 0.995f * s_dc_lastY;
+        s_dc_lastX = lp;
+        s_dc_lastY = y;
+
+        stereo_buf[i] = (int16_t)((y > 32767.0f) ? 32767 : (y < -32768.0f) ? -32768 : (int16_t)y);
+    }
+}
 
 bool audio_init() {
     ESP_LOGI(TAG, "Initializing ESP-IDF I2S DMA audio...");
@@ -105,20 +133,18 @@ bool audio_init() {
     ESP_LOGI(TAG, "I2S channel enabled successfully");
 
     s_initialized = true;
+    reset_master_filter();
     ESP_LOGI(TAG, "I2S DMA audio initialized at %d Hz, volume=%d%%, frame size=%d samples",
              SAMPLE_RATE, (int)(s_volume_gain * 100), SAMPLES_PER_FRAME);
     return true;
 }
 
 static void apply_volume_gain(int16_t* stereo_buf, int samples, float gain) {
-    if (gain >= 0.99f) return;  // No gain needed
+    if (gain >= 0.99f) return;
 
     for (int i = 0; i < samples * 2; ++i) {
-        int32_t s = (int32_t)stereo_buf[i];
-        s = (int32_t)(s * gain);
-        if (s > 32767) s = 32767;
-        if (s < -32768) s = -32768;
-        stereo_buf[i] = (int16_t)s;
+        int32_t s = (int32_t)(stereo_buf[i] * gain);
+        stereo_buf[i] = (int16_t)((s > 32767) ? 32767 : (s < -32768) ? -32768 : s);
     }
 }
 
@@ -142,6 +168,9 @@ void audio_play_frame(SpectrumBase* spectrum) {
         stereo_buf[i * 2 + 0] = s16;
         stereo_buf[i * 2 + 1] = s16;
     }
+
+    // Apply master audio filter (LPF + DC blocker)
+    apply_master_filter(stereo_buf, SAMPLES_PER_FRAME);
 
     // Apply volume gain and mute
     if (s_muted) {
@@ -181,7 +210,7 @@ void audio_play_tone(int freq_hz, int duration_ms) {
 
     int fade_samples = (samp * 8) / 1000;
     if (fade_samples * 2 > total_target) fade_samples = total_target / 2;
-    const int peak_amp = 8000;
+    const int peak_amp = 3276;
     int sample_idx = 0;
 
     while (remaining > 0) {
@@ -218,11 +247,18 @@ void audio_play_tone(int freq_hz, int duration_ms) {
             memset(stereo + n * 2, 0, (CHUNK - n) * 2 * sizeof(int16_t));
         }
 
+        // Apply master audio filter
+        apply_master_filter(stereo, n);
+
+        // Apply volume gain to boot tone
+        apply_volume_gain(stereo, n, s_volume_gain);
+
         size_t bytes_written = 0;
         i2s_channel_write(s_tx_handle, stereo, n * 2 * sizeof(int16_t),
                          &bytes_written, pdMS_TO_TICKS(100));
         remaining -= n;
     }
+    reset_master_filter();
 }
 
 void audio_set_volume(int volume) {

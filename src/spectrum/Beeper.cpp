@@ -10,10 +10,6 @@ Beeper::Beeper()
     , m_nextSampleCorrection(0.0f)
     , m_speakerLevel(0)
     , m_externalEar(false)
-    , m_lastX(0)
-    , m_lastY(0)
-    , m_lp_x1(0), m_lp_x2(0)
-    , m_lp_y1(0), m_lp_y2(0)
 {
     memset(m_frameBuffer, 0, sizeof(m_frameBuffer));
     memset(m_renderBuffer, 0, sizeof(m_renderBuffer));
@@ -24,12 +20,6 @@ void Beeper::reset() {
     m_nextSampleCorrection = 0.0f;
     m_speakerLevel = 0;
     m_externalEar = false;
-    // DC blocker state (only lastX, lastY used now)
-    m_lastX = 0;
-    m_lastY = 0;
-    // Legacy LP filter state (kept for compatibility, not used)
-    m_lp_x1 = 0; m_lp_x2 = 0;
-    m_lp_y1 = 0; m_lp_y2 = 0;
     memset(m_frameBuffer, 0, sizeof(m_frameBuffer));
     memset(m_renderBuffer, 0, sizeof(m_renderBuffer));
 }
@@ -84,33 +74,16 @@ void Beeper::renderTo(uint32_t tstates) {
 }
 
 void Beeper::renderSamples(int start, int end) {
-    // Butterworth LPF coefficients (fs=44.1kHz, fc=8kHz) - essential for audio quality
-    const float b0 = 0.1804f, b1 = 0.3608f, b2 = 0.1804f;
-    const float a1 = -0.4932f, a2 = 0.2149f;
-    float volume_scale = m_volume * AMPLITUDE;  // Apply volume multiplier
+    float volume_scale = m_volume * AMPLITUDE;
 
     for (int i = start; i < end; ++i) {
-        float x = m_speakerLevel ? volume_scale : -volume_scale;
-
-        // Add residual from previous PolyBLEP event
-        x += m_nextSampleCorrection;
+        float y = m_speakerLevel ? volume_scale : -volume_scale;
+        y += m_nextSampleCorrection;
         m_nextSampleCorrection = 0.0f;
 
-        // Butterworth IIR low-pass filter
-        float lp_out = b0 * x + b1 * m_lp_x1 + b2 * m_lp_x2 - a1 * m_lp_y1 - a2 * m_lp_y2;
-        m_lp_x2 = m_lp_x1; m_lp_x1 = x;
-        m_lp_y2 = m_lp_y1; m_lp_y1 = lp_out;
-
-        // DC Blocker (High-pass ~20Hz)
-        float y = lp_out - m_lastX + 0.995f * m_lastY;
-        m_lastX = lp_out;
-        m_lastY = y;
-
-        // Clamp and output
         if (y > 32767.0f) y = 32767.0f;
         else if (y < -32768.0f) y = -32768.0f;
 
-        // Use += to preserve PolyBLEP corrections that may have been added already
         m_frameBuffer[i] += (int16_t)y;
     }
 }
