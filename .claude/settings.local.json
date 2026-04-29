@@ -30,7 +30,10 @@
       "Bash(python \"/c/Users/teren/.platformio/packages/framework-espidf/tools/idf.py\" build)",
       "Bash(python3 -m py_compile src/wifi_prov/wifi_prov.cpp)",
       "Bash(git checkout *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(xargs grep *)",
+      "Bash(python3 -m platformio --version)",
+      "Bash(python3 -m platformio run -e unihiker_k10)"
     ]
   }
 }

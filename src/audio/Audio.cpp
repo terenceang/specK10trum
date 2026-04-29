@@ -1,92 +1,172 @@
 #include "Audio.h"
 #include <esp_log.h>
+#include <driver/i2s_common.h>
+#include <driver/i2s_std.h>
+#include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/queue.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "audio_pipeline.h"
-#include "i2s_stream.h"
-#include "raw_stream.h"
+#include "../../components/audio_stream/include/board_pins_config.h"
 
 static const char* TAG = "Audio";
 static const int SAMPLE_RATE = 44100;
+static const int I2S_PORT = I2S_NUM_0;
 #define SAMPLES_PER_FRAME SpectrumBase::SAMPLES_PER_FRAME
 
-static audio_pipeline_handle_t s_pipeline = NULL;
-static audio_element_handle_t s_raw_write = NULL;
-static audio_element_handle_t s_i2s_writer = NULL;
+// I2S handle
+static i2s_chan_handle_t s_tx_handle = NULL;
+static bool s_initialized = false;
 
-static int s_volume = 70; // Increased default volume
+// Software volume control (0-100, stored as gain in 0.0-1.0 range)
+static float s_volume_gain = 0.7f;  // 70% default
 static bool s_muted = false;
 
+// Frame queue for async audio output
+static QueueHandle_t s_frame_queue = NULL;
+static const int FRAME_QUEUE_SIZE = 4;
+
+// Audio frame structure
+typedef struct {
+    int16_t samples[SAMPLES_PER_FRAME * 2];  // Stereo interleaved
+} audio_frame_t;
+
+static void audio_output_task(void* arg) {
+    audio_frame_t frame;
+
+    while (s_tx_handle) {
+        if (xQueueReceive(s_frame_queue, &frame, pdMS_TO_TICKS(100))) {
+            size_t bytes_written = 0;
+            esp_err_t ret = i2s_channel_write(s_tx_handle, &frame.samples,
+                                              sizeof(frame.samples),
+                                              &bytes_written,
+                                              pdMS_TO_TICKS(100));
+            if (ret != ESP_OK) {
+                ESP_LOGW(TAG, "i2s_channel_write failed: %d", ret);
+            }
+        }
+    }
+    vTaskDelete(NULL);
+}
+
 bool audio_init() {
-    ESP_LOGI(TAG, "Initializing ESP-ADF audio pipeline...");
+    ESP_LOGI(TAG, "Initializing ESP-IDF I2S DMA audio...");
 
-    audio_pipeline_cfg_t pipeline_cfg = DEFAULT_AUDIO_PIPELINE_CONFIG();
-    s_pipeline = audio_pipeline_init(&pipeline_cfg);
-    if (!s_pipeline) {
-        ESP_LOGE(TAG, "Failed to initialize audio pipeline");
+    if (s_initialized) {
+        ESP_LOGW(TAG, "Audio already initialized");
+        return true;
+    }
+
+    // Configure I2S channel
+    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG((i2s_port_t)I2S_PORT, I2S_ROLE_MASTER);
+    chan_cfg.dma_desc_num = 8;
+    chan_cfg.dma_frame_num = 256;
+
+    esp_err_t ret = i2s_new_channel(&chan_cfg, &s_tx_handle, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create I2S channel: %d", ret);
         return false;
     }
 
-    // raw_stream must be AUDIO_STREAM_WRITER to accept raw_stream_write from application
-    raw_stream_cfg_t raw_cfg = RAW_STREAM_CFG_DEFAULT();
-    raw_cfg.type = AUDIO_STREAM_WRITER; 
-    raw_cfg.out_rb_size = 16 * 1024;
-    s_raw_write = raw_stream_init(&raw_cfg);
-    if (!s_raw_write) {
-        ESP_LOGE(TAG, "Failed to initialize raw stream");
+    // Configure standard mode clock
+    i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE);
+
+    // Configure standard mode slot (Philips/I2S format, stereo)
+    i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
+
+    // Get I2S pin configuration from board config
+    board_i2s_pin_t i2s_pins;
+    if (get_i2s_pins(0, &i2s_pins) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get I2S pin configuration");
+        i2s_del_channel(s_tx_handle);
+        s_tx_handle = NULL;
         return false;
     }
 
-    i2s_stream_cfg_t i2s_cfg = I2S_STREAM_CFG_DEFAULT();
-    i2s_cfg.type = AUDIO_STREAM_WRITER;
-    i2s_cfg.chan_cfg.id = I2S_NUM_0;
-    i2s_cfg.use_alc = true;
-    
-    // Note: Pin configuration is handled via get_i2s_pins in board_pins_config.h
-    // which is called by the ADF I2S stream driver during startup.
-    i2s_cfg.std_cfg.clk_cfg.sample_rate_hz = SAMPLE_RATE;
+    // Configure GPIO pins
+    i2s_std_gpio_config_t gpio_cfg = {
+        .mclk = i2s_pins.mclk,
+        .bclk = i2s_pins.bclk,
+        .ws = i2s_pins.ws,
+        .dout = i2s_pins.dout,
+        .din = GPIO_NUM_NC,
+        .invert_flags = {0},
+    };
 
-    s_i2s_writer = i2s_stream_init(&i2s_cfg);
-    if (!s_i2s_writer) {
-        ESP_LOGE(TAG, "Failed to initialize I2S stream");
+    // Combine into std config
+    i2s_std_config_t std_cfg = {
+        .clk_cfg = clk_cfg,
+        .slot_cfg = slot_cfg,
+        .gpio_cfg = gpio_cfg,
+    };
+
+    ret = i2s_channel_init_std_mode(s_tx_handle, &std_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to init I2S standard mode: %d", ret);
+        i2s_del_channel(s_tx_handle);
+        s_tx_handle = NULL;
         return false;
     }
 
-    audio_pipeline_register(s_pipeline, s_raw_write, "raw");
-    audio_pipeline_register(s_pipeline, s_i2s_writer, "i2s");
-
-    const char *link_tag[2] = {"raw", "i2s"};
-    if (audio_pipeline_link(s_pipeline, &link_tag[0], 2) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to link audio pipeline");
+    // Enable I2S channel
+    ret = i2s_channel_enable(s_tx_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to enable I2S channel: %d", ret);
+        i2s_channel_disable(s_tx_handle);
+        i2s_del_channel(s_tx_handle);
+        s_tx_handle = NULL;
         return false;
     }
 
-    // Set audio info so ALC and I2S know what they are processing
-    audio_element_set_music_info(s_raw_write, SAMPLE_RATE, 2, 16);
-    audio_element_set_music_info(s_i2s_writer, SAMPLE_RATE, 2, 16);
-
-    if (audio_pipeline_run(s_pipeline) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to run audio pipeline");
+    // Create frame queue and output task
+    s_frame_queue = xQueueCreate(FRAME_QUEUE_SIZE, sizeof(audio_frame_t));
+    if (!s_frame_queue) {
+        ESP_LOGE(TAG, "Failed to create frame queue");
+        i2s_channel_disable(s_tx_handle);
+        i2s_del_channel(s_tx_handle);
+        s_tx_handle = NULL;
         return false;
     }
 
-    audio_set_volume(s_volume);
+    // Start audio output task (needs large stack for frame buffer)
+    if (xTaskCreate(audio_output_task, "audio_out", 8192, NULL, 10, NULL) == pdFAIL) {
+        ESP_LOGE(TAG, "Failed to create audio output task");
+        vQueueDelete(s_frame_queue);
+        s_frame_queue = NULL;
+        i2s_channel_disable(s_tx_handle);
+        i2s_del_channel(s_tx_handle);
+        s_tx_handle = NULL;
+        return false;
+    }
 
-    ESP_LOGI(TAG, "ADF Audio pipeline initialized and running (Vol=%d)", s_volume);
+    s_initialized = true;
+    ESP_LOGI(TAG, "I2S DMA audio initialized at %d Hz, volume=%d%%",
+             SAMPLE_RATE, (int)(s_volume_gain * 100));
     return true;
 }
 
+static void apply_volume_gain(int16_t* stereo_buf, int samples, float gain) {
+    if (gain >= 0.99f) return;  // No gain needed
+
+    for (int i = 0; i < samples * 2; ++i) {
+        int32_t s = (int32_t)stereo_buf[i];
+        s = (int32_t)(s * gain);
+        if (s > 32767) s = 32767;
+        if (s < -32768) s = -32768;
+        stereo_buf[i] = (int16_t)s;
+    }
+}
+
 void audio_play_frame(SpectrumBase* spectrum) {
-    if (!spectrum || !s_raw_write) return;
+    if (!spectrum || !s_tx_handle || !s_frame_queue) return;
+
+    audio_frame_t frame;
+    int16_t* stereo_buf = frame.samples;
 
     // Buffers for beeper and PSG
     int16_t beeper_buf[SAMPLES_PER_FRAME];
     int16_t psg_buf[SAMPLES_PER_FRAME];
-    // Stereo interleaved buffer (L,R)
-    int16_t stereo_buf[SAMPLES_PER_FRAME * 2];
 
     // Render both audio sources
     spectrum->renderBeeperAudio(beeper_buf, SAMPLES_PER_FRAME);
@@ -98,37 +178,46 @@ void audio_play_frame(SpectrumBase* spectrum) {
         int32_t mixed = (int32_t)beeper_buf[i] + (int32_t)psg_buf[i];
         if (mixed > 32767) mixed = 32767;
         if (mixed < -32768) mixed = -32768;
-        
+
         int16_t s16 = (int16_t)mixed;
         stereo_buf[i * 2 + 0] = s16;
         stereo_buf[i * 2 + 1] = s16;
     }
 
-    int ret = raw_stream_write(s_raw_write, (char*)stereo_buf, sizeof(stereo_buf));
-    if (ret < 0) {
-        ESP_LOGW(TAG, "raw_stream_write error: %d", ret);
+    // Apply volume gain and mute
+    if (s_muted) {
+        memset(stereo_buf, 0, sizeof(frame.samples));
+    } else {
+        apply_volume_gain(stereo_buf, SAMPLES_PER_FRAME, s_volume_gain);
     }
+
+    // Queue frame for output (non-blocking, drop if queue is full)
+    xQueueSendToBack(s_frame_queue, &frame, 0);
 }
 
 void audio_play_tone(int freq_hz, int duration_ms) {
-    if (freq_hz <= 0 || duration_ms <= 0 || !s_raw_write) return;
+    if (freq_hz <= 0 || duration_ms <= 0 || !s_tx_handle) return;
+
     const int samp = SAMPLE_RATE;
     const int total_target = (duration_ms * samp) / 1000;
     int remaining = total_target;
     const int CHUNK = 256;
-    int16_t stereo[CHUNK * 2];
 
-    int toggle_period = samp / (freq_hz * 2); 
+    int toggle_period = samp / (freq_hz * 2);
     int state = 0;
     int period_cnt = 0;
 
     int fade_samples = (samp * 8) / 1000;
     if (fade_samples * 2 > total_target) fade_samples = total_target / 2;
-    const int peak_amp = 8000; 
+    const int peak_amp = 8000;
     int sample_idx = 0;
 
     while (remaining > 0) {
         int n = remaining > CHUNK ? CHUNK : remaining;
+
+        audio_frame_t frame;
+        int16_t* stereo = frame.samples;
+
         for (int i = 0; i < n; ++i) {
             if (period_cnt >= toggle_period) {
                 state = 1 - state;
@@ -154,7 +243,14 @@ void audio_play_tone(int freq_hz, int duration_ms) {
             sample_idx++;
         }
 
-        raw_stream_write(s_raw_write, (char*)stereo, n * 2 * sizeof(int16_t));
+        // Pad remaining if this is the last chunk
+        if (n < CHUNK) {
+            memset(stereo + n * 2, 0, (CHUNK - n) * 2 * sizeof(int16_t));
+        }
+
+        size_t bytes_written = 0;
+        i2s_channel_write(s_tx_handle, stereo, n * 2 * sizeof(int16_t),
+                         &bytes_written, pdMS_TO_TICKS(100));
         remaining -= n;
     }
 }
@@ -162,28 +258,18 @@ void audio_play_tone(int freq_hz, int duration_ms) {
 void audio_set_volume(int volume) {
     if (volume < 0) volume = 0;
     if (volume > 100) volume = 100;
-    s_volume = volume;
-    
-    if (s_i2s_writer) {
-        int db_gain;
-        if (s_muted || s_volume == 0) {
-            db_gain = -64;
-        } else {
-            // Map 1-100 to -40 to 0 dB
-            db_gain = (s_volume * 40 / 100) - 40;
-        }
-        i2s_alc_volume_set(s_i2s_writer, db_gain);
-        ESP_LOGI(TAG, "Volume set to %d (%d dB)", s_volume, db_gain);
-    }
+
+    s_volume_gain = volume / 100.0f;
+    ESP_LOGI(TAG, "Volume set to %d%%", volume);
 }
 
 int audio_get_volume() {
-    return s_volume;
+    return (int)(s_volume_gain * 100);
 }
 
 void audio_set_mute(bool mute) {
     s_muted = mute;
-    audio_set_volume(s_volume);
+    ESP_LOGI(TAG, "Audio %s", mute ? "muted" : "unmuted");
 }
 
 bool audio_get_mute() {
