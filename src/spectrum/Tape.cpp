@@ -537,13 +537,9 @@ void Tape::instaload(SpectrumBase* spectrum) {
             totalProgLen = (uint16_t)dLen;
         } else if (type == 3) {
             // CODE block - validate address range
-            // Reject display memory (0x4000-0x5AFF) which would corrupt screen
-            if (start >= 0x4000 && start <= 0x5AFF) {
-                ++i;
-                continue;
-            }
-            // Reject anything below 0x8000 (user program area)
-            if (start < 0x8000) {
+            // Reject display memory (0x4000-0x57FF) which would corrupt screen
+            // Allow everything else including workspace/BASIC areas for compatibility
+            if (start >= 0x4000 && start <= 0x57FF) {
                 ++i;
                 continue;
             }
