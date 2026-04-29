@@ -91,9 +91,21 @@
         .catch(() => {});
     }
 
-    // Handle WS open to sync mode
+    // Handle WS open to sync mode and ensure tape is loaded
     window.addEventListener('zx-ws-open', () => {
-      if (window.ZX_WS) window.ZX_WS.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode }));
+      if (window.ZX_WS) {
+        window.ZX_WS.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode }));
+        // Re-attempt tape loading on WebSocket connection
+        if (lastTape) {
+          fetch(`${window.ZX_UTILS.API.LOAD}?file=${encodeURIComponent(lastTape)}`)
+            .then(res => {
+              if (res.ok && window.ZX_WS && currentTapeMode === 'normal') {
+                window.ZX_WS.send(JSON.stringify({ cmd: 'tape_play' }));
+              }
+            })
+            .catch(() => {});
+        }
+      }
     });
   }
 

@@ -52,17 +52,6 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
 
     val &= kbd;
 
-    // Diagnostic: Log when a key is actually detected as pressed in the emulator
-    if ((kbd & 0x1F) != 0x1F) {
-        static uint32_t s_lastKbdLog = 0;
-        uint32_t now = xTaskGetTickCount();
-        if (pdTICKS_TO_MS(now - s_lastKbdLog) > 500) {
-            ESP_LOGI("SpectrumBase", "KBD Read: port=0x%04X select=0x%02X kbd=0x%02X val=0x%02X",
-                     port, select, kbd, val);
-            s_lastKbdLog = now;
-        }
-    }
-
     // EAR input is bit 6.
     bool current_ear = m_tape.getEar();
     if (current_ear) val |= 0x40;
