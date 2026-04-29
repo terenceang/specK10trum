@@ -23,37 +23,14 @@ static bool s_initialized = false;
 static float s_volume_gain = 0.7f;  // 70% default
 static bool s_muted = false;
 
-// Frame queue for async audio output
-static QueueHandle_t s_frame_queue = NULL;
-static const int FRAME_QUEUE_SIZE = 4;
-
-// Audio frame structure
-typedef struct {
-    int16_t samples[SAMPLES_PER_FRAME * 2];  // Stereo interleaved
-} audio_frame_t;
-
 // Static audio buffers to avoid large stack allocations
-static audio_frame_t s_frame_buffer;
+static int16_t s_frame_buffer[SAMPLES_PER_FRAME * 2];  // Stereo interleaved
 static int16_t s_beeper_buf[SAMPLES_PER_FRAME];
 static int16_t s_psg_buf[SAMPLES_PER_FRAME];
 
-static void audio_output_task(void* arg) {
-    audio_frame_t frame;
-
-    while (s_tx_handle) {
-        if (xQueueReceive(s_frame_queue, &frame, pdMS_TO_TICKS(100))) {
-            size_t bytes_written = 0;
-            esp_err_t ret = i2s_channel_write(s_tx_handle, &frame.samples,
-                                              sizeof(frame.samples),
-                                              &bytes_written,
-                                              pdMS_TO_TICKS(100));
-            if (ret != ESP_OK) {
-                ESP_LOGW(TAG, "i2s_channel_write failed: %d", ret);
-            }
-        }
-    }
-    vTaskDelete(NULL);
-}
+// I2S write statistics
+static int s_write_attempts = 0;
+static int s_write_success = 0;
 
 bool audio_init() {
     ESP_LOGI(TAG, "Initializing ESP-IDF I2S DMA audio...");
@@ -89,6 +66,9 @@ bool audio_init() {
         return false;
     }
 
+    ESP_LOGI(TAG, "I2S pins - MCLK:%d BCLK:%d WS:%d DOUT:%d",
+             i2s_pins.mclk, i2s_pins.bclk, i2s_pins.ws, i2s_pins.dout);
+
     // Configure GPIO pins
     i2s_std_gpio_config_t gpio_cfg = {
         .mclk = i2s_pins.mclk,
@@ -123,31 +103,11 @@ bool audio_init() {
         s_tx_handle = NULL;
         return false;
     }
-
-    // Create frame queue and output task
-    s_frame_queue = xQueueCreate(FRAME_QUEUE_SIZE, sizeof(audio_frame_t));
-    if (!s_frame_queue) {
-        ESP_LOGE(TAG, "Failed to create frame queue");
-        i2s_channel_disable(s_tx_handle);
-        i2s_del_channel(s_tx_handle);
-        s_tx_handle = NULL;
-        return false;
-    }
-
-    // Start audio output task (needs large stack for frame buffer)
-    if (xTaskCreate(audio_output_task, "audio_out", 8192, NULL, 10, NULL) == pdFAIL) {
-        ESP_LOGE(TAG, "Failed to create audio output task");
-        vQueueDelete(s_frame_queue);
-        s_frame_queue = NULL;
-        i2s_channel_disable(s_tx_handle);
-        i2s_del_channel(s_tx_handle);
-        s_tx_handle = NULL;
-        return false;
-    }
+    ESP_LOGI(TAG, "I2S channel enabled successfully");
 
     s_initialized = true;
-    ESP_LOGI(TAG, "I2S DMA audio initialized at %d Hz, volume=%d%%",
-             SAMPLE_RATE, (int)(s_volume_gain * 100));
+    ESP_LOGI(TAG, "I2S DMA audio initialized at %d Hz, volume=%d%%, frame size=%d samples",
+             SAMPLE_RATE, (int)(s_volume_gain * 100), SAMPLES_PER_FRAME);
     return true;
 }
 
@@ -164,9 +124,9 @@ static void apply_volume_gain(int16_t* stereo_buf, int samples, float gain) {
 }
 
 void audio_play_frame(SpectrumBase* spectrum) {
-    if (!spectrum || !s_tx_handle || !s_frame_queue) return;
+    if (!spectrum || !s_tx_handle) return;
 
-    int16_t* stereo_buf = s_frame_buffer.samples;
+    int16_t* stereo_buf = s_frame_buffer;
 
     // Render both audio sources
     spectrum->renderBeeperAudio(s_beeper_buf, SAMPLES_PER_FRAME);
@@ -191,8 +151,16 @@ void audio_play_frame(SpectrumBase* spectrum) {
         apply_volume_gain(stereo_buf, SAMPLES_PER_FRAME, s_volume_gain);
     }
 
-    // Queue frame for output (non-blocking, drop if queue is full)
-    xQueueSendToBack(s_frame_queue, &s_frame_buffer, 0);
+    // Write to I2S with short timeout (non-blocking mode)
+    size_t bytes_written = 0;
+    s_write_attempts++;
+    esp_err_t ret = i2s_channel_write(s_tx_handle, stereo_buf,
+                                      SAMPLES_PER_FRAME * 2 * sizeof(int16_t),
+                                      &bytes_written, pdMS_TO_TICKS(10));
+    if (ret == ESP_OK && bytes_written > 0) {
+        s_write_success++;
+    }
+    // Silently ignore timeout errors (expected if no audio codec connected)
 }
 
 void audio_play_tone(int freq_hz, int duration_ms) {
@@ -214,7 +182,7 @@ void audio_play_tone(int freq_hz, int duration_ms) {
 
     while (remaining > 0) {
         int n = remaining > CHUNK ? CHUNK : remaining;
-        int16_t* stereo = s_frame_buffer.samples;
+        int16_t* stereo = s_frame_buffer;
 
         for (int i = 0; i < n; ++i) {
             if (period_cnt >= toggle_period) {
