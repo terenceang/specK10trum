@@ -46,9 +46,11 @@ static const char* TAG = "Main";
 static SpectrumBase* spectrum = nullptr;
 static bool display_ready = false;
 
-// Single Source of Truth for boot status: overlay only, log to console
-static inline void boot_showStatus(int step, int total, const char* message, uint16_t color) {
+// Universal boot status printer with separator
+static inline void boot_printStatus(int step, int total, const char* message, uint16_t color) {
+    ESP_LOGI(TAG, "--------------------------------------------------");
     ESP_LOGI(TAG, "Boot %d/%d: %s", step, total, message);
+    ESP_LOGI(TAG, "--------------------------------------------------");
     if (display_ready) {
         display_setOverlayText(message, color);
         display_boot_update();
@@ -141,8 +143,8 @@ extern "C" void app_main(void) {
     log_ts(TAG, "=== STEP 2/16: Display Init ===");
     if (display_init()) {
         display_ready = true;
-        boot_showStatus(2, 16, "Display Init", 0xFFFF);
-        showSplashScreen(); // Show splash immediately after display init
+        showSplashScreen();
+        boot_printStatus(2, 16, "Display Init", 0xFFFF);
         expander_set_led(true);
         vTaskDelay(pdMS_TO_TICKS(100));
         expander_set_led(false);
@@ -152,26 +154,26 @@ extern "C" void app_main(void) {
 
     // 3. PSRAM
     log_ts(TAG, "=== STEP 3/16: PSRAM Init ===");
-    boot_showStatus(3, 16, "PSRAM Init", 0xFFFF);
+    boot_printStatus(3, 16, "PSRAM Init", 0xFFFF);
     if (esp_psram_init() != ESP_OK) {
         ESP_LOGE(TAG, "PSRAM init failed!");
     }
 
     // 4. SPIFFS
     log_ts(TAG, "=== STEP 4/16: SPIFFS Mount ===");
-    boot_showStatus(4, 16, "SPIFFS Mount", 0xFFFF);
+    boot_printStatus(4, 16, "SPIFFS Mount", 0xFFFF);
     if (!mountSPIFFS()) {
         ESP_LOGE(TAG, "SPIFFS mount failed!");
     }
 
     // 5. Splash Screen (already shown after display init)
     log_ts(TAG, "=== STEP 5/16: Splash Screen ===");
-    boot_showStatus(5, 16, "Splash Screen", 0xFFFF);
+    boot_printStatus(5, 16, "Splash Screen", 0xFFFF);
     vTaskDelay(pdMS_TO_TICKS(500));
 
     // 6. Wi-Fi
     log_ts(TAG, "=== STEP 6/16: Wi-Fi Connect ===");
-    boot_showStatus(6, 16, "Wi-Fi Connect", 0xFFFF);
+    boot_printStatus(6, 16, "Wi-Fi Connect", 0xFFFF);
     bool wifi_connected = false;
     if (!wifi_prov_start()) {
         ESP_LOGW(TAG, "wifi_prov_start() failed");
@@ -182,52 +184,61 @@ extern "C" void app_main(void) {
             ESP_LOGI(TAG, "Wi-Fi connected!");
         } else {
             ESP_LOGW(TAG, "Wi-Fi connection timeout, starting BLE provisioning fallback...");
-            boot_showStatus(61, 16, "BLE Prov", 0xFFE0);
+            boot_printStatus(61, 16, "BLE Prov", 0xFFE0);
             vTaskDelay(pdMS_TO_TICKS(1000));
-            boot_showStatus(62, 16, "Use BLE app to provision", 0xFFE0);
-            wifi_prov_start_ble_fallback();
-            
-            boot_showStatus(63, 16, "Waiting BLE", 0xFFE0);
-            if (wifi_prov_wait_for_ip(UINT32_MAX)) {
-                wifi_connected = true;
-                ESP_LOGI(TAG, "Wi-Fi connected after BLE provisioning!");
-                boot_showStatus(65, 16, "Wi-Fi provisioned!", 0x07E0);
-                vTaskDelay(pdMS_TO_TICKS(2000));
+            boot_printStatus(62, 16, "Use BLE app to provision", 0xFFE0);
+            // Prevent repeated BLE provisioning attempts if already running
+            static bool ble_prov_attempted = false;
+            if (!ble_prov_attempted) {
+                ble_prov_attempted = true;
+                if (wifi_prov_start_ble_fallback()) {
+                    boot_printStatus(63, 16, "Waiting BLE", 0xFFE0);
+                    if (wifi_prov_wait_for_ip(UINT32_MAX)) {
+                        wifi_connected = true;
+                        ESP_LOGI(TAG, "Wi-Fi connected after BLE provisioning!");
+                        boot_printStatus(65, 16, "Wi-Fi provisioned!", 0x07E0);
+                        vTaskDelay(pdMS_TO_TICKS(2000));
+                    } else {
+                        ESP_LOGE(TAG, "BLE provisioning failed or no IP obtained");
+                        boot_printStatus(6, 16, "Provisioning failed!", 0xF800);
+                        vTaskDelay(pdMS_TO_TICKS(2000));
+                        // Continue anyway, maybe we can run offline
+                    }
+                } else {
+                    ESP_LOGW(TAG, "BLE provisioning already running or failed to start");
+                }
             } else {
-                ESP_LOGE(TAG, "BLE provisioning failed or no IP obtained");
-                boot_showStatus(6, 16, "Provisioning failed!", 0xF800);
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                // Continue anyway, maybe we can run offline
+                ESP_LOGW(TAG, "BLE provisioning attempt already made, skipping repeat.");
             }
         }
     }
 
     // 7. ROM check
     log_ts(TAG, "=== STEP 7/16: ROM Check ===");
-    boot_showStatus(7, 16, "ROM Check", 0xFFFF);
+    boot_printStatus(7, 16, "ROM Check", 0xFFFF);
     struct stat st;
     if (stat(ROM_FILE, &st) != 0) {
         ESP_LOGE(TAG, "ROM %s not found! Aborting.", ROM_FILE);
-        boot_showStatus(7, 16, "ROM MISSING!", 0xF800);
+        boot_printStatus(7, 16, "ROM MISSING!", 0xF800);
         return;
     }
 
     // 8. Spectrum CPU
     log_ts(TAG, "=== STEP 8/16: CPU Create ===");
-    boot_showStatus(8, 16, "CPU Create", 0xFFFF);
+    boot_printStatus(8, 16, "CPU Create", 0xFFFF);
     spectrum = new SpectrumHardware();
     if (!spectrum) {
         ESP_LOGE(TAG, "Failed to create Spectrum hardware!");
-        boot_showStatus(8, 16, "CPU CREATE FAILED", 0xF800);
+        boot_printStatus(8, 16, "CPU CREATE FAILED", 0xF800);
         return;
     }
 
     // 9. Load ROM + Reset
     log_ts(TAG, "=== STEP 9/16: Load ROM ===");
-    boot_showStatus(9, 16, "Load ROM", 0xFFFF);
+    boot_printStatus(9, 16, "Load ROM", 0xFFFF);
     if (!spectrum->loadROM(ROM_FILE)) {
         ESP_LOGE(TAG, "ROM load failed. Aborting.");
-        boot_showStatus(9, 16, "ROM LOAD FAILED", 0xF800);
+        boot_printStatus(9, 16, "ROM LOAD FAILED", 0xF800);
         return;
     }
     spectrum->reset();
@@ -239,7 +250,7 @@ extern "C" void app_main(void) {
 
     // 10. Webserver
     log_ts(TAG, "=== STEP 10/16: Webserver ===");
-    boot_showStatus(10, 16, "Webserver", 0xFFFF);
+    boot_printStatus(10, 16, "Webserver", 0xFFFF);
     if (wifi_connected) {
         if (webserver_ensure_started(spectrum) == ESP_OK && webserver_is_running()) {
             ESP_LOGI(TAG, "Webserver started successfully");
@@ -250,32 +261,32 @@ extern "C" void app_main(void) {
 
     // 11. Input
     log_ts(TAG, "=== STEP 11/16: Input Init ===");
-    boot_showStatus(11, 16, "Input Init", 0xFFFF);
+    boot_printStatus(11, 16, "Input Init", 0xFFFF);
     input_init();
 
     // 12. Audio
     log_ts(TAG, "=== STEP 12/16: Audio Init ===");
-    boot_showStatus(12, 16, "Audio Init", 0xFFFF);
+    boot_printStatus(12, 16, "Audio Init", 0xFFFF);
     if (!audio_init()) {
         ESP_LOGW(TAG, "Audio init failed; continuing without sound");
     }
 
     // 13. Keyboard Client
     log_ts(TAG, "=== STEP 13/16: Keyboard ===");
-    boot_showStatus(13, 16, "Keyboard", 0xFFFF);
+    boot_printStatus(13, 16, "Keyboard", 0xFFFF);
     if (wifi_connected && webserver_is_running()) {
         if (webserver_wait_for_ws_client(30000)) {
             ESP_LOGI(TAG, "WebSocket keyboard client connected");
         } else {
             ESP_LOGW(TAG, "No WebSocket keyboard connected within timeout");
-            boot_showStatus(13, 16, "Connect virtual kbd", 0xFFE0);
+            boot_printStatus(13, 16, "Connect virtual kbd", 0xFFE0);
             vTaskDelay(pdMS_TO_TICKS(2000));
         }
     }
 
     // 14. Beep
     log_ts(TAG, "=== STEP 14/16: Beep ===");
-    boot_showStatus(14, 16, "Beep", 0xFFFF);
+    boot_printStatus(14, 16, "Beep", 0xFFFF);
     audio_play_tone(880, 120);
 
     // 15. Start Emulator Task

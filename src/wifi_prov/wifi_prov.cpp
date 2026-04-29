@@ -419,17 +419,23 @@ bool wifi_prov_start()
         s_watcher_started = true;
     }
 
+    // Prevent repeated provisioning attempts if already started
     if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        bool already_running = s_provisioning_started;
-        xSemaphoreGive(s_state_mutex);
-        if (already_running) {
-            ESP_LOGI(TAG, "Provisioning already running");
+        if (s_provisioning_started) {
+            ESP_LOGW(TAG, "Provisioning already active, skipping re-init");
+            xSemaphoreGive(s_state_mutex);
             return true;
         }
+        s_provisioning_started = true;
+        xSemaphoreGive(s_state_mutex);
     }
 
     if (ensure_wifi_initialized() != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi subsystem init failed; cannot start provisioning");
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            s_provisioning_started = false;
+            xSemaphoreGive(s_state_mutex);
+        }
         return false;
     }
 
@@ -447,8 +453,15 @@ bool wifi_prov_start()
     cfg.scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BT;
 
     err = wifi_prov_mgr_init(cfg);
-    if (err != ESP_OK) {
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "wifi_prov_mgr_init: Provisioning manager already initialized, skipping re-init");
+        return true;
+    } else if (err != ESP_OK) {
         ESP_LOGE(TAG, "wifi_prov_mgr_init failed: %d", err);
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            s_provisioning_started = false;
+            xSemaphoreGive(s_state_mutex);
+        }
         return false;
     }
 
@@ -498,6 +511,10 @@ bool wifi_prov_start()
         err = wifi_prov_mgr_init(cfg);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "wifi_prov_mgr_init failed: %d", err);
+            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                s_provisioning_started = false;
+                xSemaphoreGive(s_state_mutex);
+            }
             return false;
         }
 
@@ -510,12 +527,11 @@ bool wifi_prov_start()
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "wifi_prov_mgr_start_provisioning failed: %d", err);
             wifi_prov_mgr_deinit();
+            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                s_provisioning_started = false;
+                xSemaphoreGive(s_state_mutex);
+            }
             return false;
-        }
-
-        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            s_provisioning_started = true;
-            xSemaphoreGive(s_state_mutex);
         }
         return true;
     }
@@ -526,6 +542,10 @@ bool wifi_prov_start()
                  strlen((char*)conf.sta.ssid), strlen((char*)conf.sta.password));
         ESP_LOGI(TAG, "Already provisioned; releasing manager and connecting to saved AP");
         wifi_prov_mgr_deinit();
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            s_provisioning_started = false;
+            xSemaphoreGive(s_state_mutex);
+        }
 
         esp_err_t m_err = esp_wifi_set_mode(WIFI_MODE_STA);
         if (m_err != ESP_OK) {
@@ -681,10 +701,19 @@ bool wifi_prov_start_ble_fallback()
 {
     ESP_LOGI(TAG, "WiFi failed; starting BLE provisioning fallback");
 
+    // Global guard: prevent repeated provisioning attempts if already running
+    bool already_provisioning = false;
     if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        s_reconnect_retries = 0;
-        s_ble_fallback_mode = true;
+        already_provisioning = s_provisioning_started;
+        if (!already_provisioning) {
+            s_reconnect_retries = 0;
+            s_ble_fallback_mode = true;
+        }
         xSemaphoreGive(s_state_mutex);
+    }
+    if (already_provisioning) {
+        ESP_LOGW(TAG, "BLE provisioning already running, skipping fallback.");
+        return true;
     }
 
     esp_wifi_stop();
