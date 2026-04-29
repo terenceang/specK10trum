@@ -418,14 +418,19 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
 
     // Drain any remaining transactions from the previous frame to avoid overwriting spi_transaction_t structures
     spi_transaction_t* rtrans;
-    while (s_trans_count > 0) {
-        esp_err_t result = spi_device_get_trans_result(s_spi, &rtrans, pdMS_TO_TICKS(100));
+    int drain_timeout_count = 0;
+    while (s_trans_count > 0 && drain_timeout_count < 3) {
+        esp_err_t result = spi_device_get_trans_result(s_spi, &rtrans, pdMS_TO_TICKS(200));
         if (result == ESP_OK) {
             s_trans_count--;
+            drain_timeout_count = 0;  // Reset on success
         } else if (result == ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "SPI timeout draining previous frame, resetting transaction count");
-            s_trans_count = 0;
-            break;
+            drain_timeout_count++;
+            if (drain_timeout_count >= 3) {
+                ESP_LOGW(TAG, "SPI queue congestion: %d transactions pending, giving up", s_trans_count);
+                s_trans_count = 0;
+                break;
+            }
         } else {
             ESP_LOGE(TAG, "SPI error draining previous frame: %s", esp_err_to_name(result));
             s_trans_count = 0;
@@ -447,16 +452,27 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
             s_trans_count--;
         }
 
-        // Wait specifically for the strip buffer we want to reuse (ping-pong)
+        // Wait for the strip buffer we want to reuse (ping-pong)
+        // Strips 0-1 won't be reused immediately, but strips 2-4 will
         if (i >= 2) {
+            int wait_count = 0;
             for (int j = 0; j < 6; j++) {
-                esp_err_t result = spi_device_get_trans_result(s_spi, &rtrans, pdMS_TO_TICKS(100));
+                // Use longer timeout for buffer reuse (up to 200ms per transaction)
+                // to account for CPU load and SPI bus congestion
+                esp_err_t result = spi_device_get_trans_result(s_spi, &rtrans, pdMS_TO_TICKS(200));
                 if (result == ESP_OK) {
                     s_trans_count--;
+                    wait_count = 0;  // Reset consecutive fail counter
                 } else if (result == ESP_ERR_TIMEOUT) {
-                    ESP_LOGW(TAG, "SPI timeout waiting for strip buffer %d transaction %d", i, j);
-                    s_trans_count = 0;
-                    break;
+                    wait_count++;
+                    if (wait_count >= 2) {
+                        // After 2 consecutive timeouts, give up and reset queue
+                        // This prevents hanging but allows some tolerance
+                        ESP_LOGW(TAG, "SPI queue congestion: strip %d, resetting (%d/%d)", i, j, 6);
+                        s_trans_count = 0;
+                        break;
+                    }
+                    // Single timeout: continue waiting for next transaction
                 } else {
                     ESP_LOGE(TAG, "SPI error waiting for strip: %s", esp_err_to_name(result));
                     s_trans_count = 0;
