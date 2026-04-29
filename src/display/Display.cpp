@@ -1,5 +1,6 @@
 
 #include "display/Display.h"
+#include "display/splash_image.h"
 #include <driver/gpio.h>
 #include <driver/i2c.h>
 #include <driver/spi_master.h>
@@ -109,16 +110,6 @@ static void drawChar(uint16_t* buffer, int x, int y, char c, uint16_t color) {
     else if (c == '.') idx = 10;
     else if (c == ':') idx = 11;
     else if (c >= 'A' && c <= 'Z') idx = 12 + (c - 'A');
-    else if (c >= 'a' && c <= 'z') idx = 12 + (c - 'a');
-    else if (c == ' ') idx = 38;
-    else if (c == '-') idx = 39;
-    else if (c == '/') idx = 40;
-    else if ((unsigned char)c == 0xE2 || (unsigned char)c == 0x80) idx = 41; // Crude check for UTF-8 start of ✓
-    else if (c == '?') idx = 42;
-    else idx = 42; // Fallback to ? for any unknown char
-
-    if (idx == -1) return;
-// SPI Pre-transfer callback to handle DC pin
     else if (c >= 'a' && c <= 'z') idx = 12 + (c - 'a');
     else if (c == ' ') idx = 38;
     else if (c == '-') idx = 39;
@@ -496,92 +487,30 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     }
 }
 
-bool display_showSplash(const char* filename) {
-    FILE* f = fopen(filename, "rb");
-    if (!f) {
-        ESP_LOGE(TAG, "Failed to open splash file: %s", filename);
-        return false;
-    }
 
-    // Basic BMP Header check
-    uint8_t header[54];
-    if (fread(header, 1, 54, f) != 54 || header[0] != 'B' || header[1] != 'M') {
-        ESP_LOGE(TAG, "Invalid BMP file: %s", filename);
-        fclose(f);
-        return false;
-    }
-
-    int32_t width = *(int32_t*)&header[18];
-    int32_t height = *(int32_t*)&header[22];
-    uint16_t bpp = *(uint16_t*)&header[28];
-    uint32_t dataOffset = *(uint32_t*)&header[10];
-
-    if (bpp != 24) {
-        ESP_LOGE(TAG, "Only 24-bit BMP supported (found %d bpp)", bpp);
-        fclose(f);
-        return false;
-    }
-
-    ESP_LOGI(TAG, "Loading splash: %s (%dx%d, %d bpp)", filename, (int)width, (int)height, (int)bpp);
-
-    bool flip = true;
-    if (height < 0) {
-        height = -height;
-        flip = false;
-    }
-
-    // We only support full screen or smaller
-    int drawW = width > s_lcdDisplayWidth ? s_lcdDisplayWidth : width;
-    int drawH = height > s_lcdDisplayHeight ? s_lcdDisplayHeight : height;
-
+void showSplashScreen() {
     uint16_t* buffer = display_getBackBuffer();
+    
+    // Copy embedded splash image to back buffer
+    // We only support images that match or are smaller than the screen
+    int drawW = splash_width > s_lcdDisplayWidth ? s_lcdDisplayWidth : splash_width;
+    int drawH = splash_height > s_lcdDisplayHeight ? s_lcdDisplayHeight : splash_height;
+    
+    // Clear buffer first (in case splash is smaller than screen)
     memset(buffer, 0, s_lcdDisplayWidth * s_lcdDisplayHeight * 2);
-
-    fseek(f, dataOffset, SEEK_SET);
-
-    // Read BGR24 and convert to RGB565 line by line
-    // BMP lines are padded to 4-byte boundaries
-    int rowSize = (width * 3 + 3) & ~3;
-    uint8_t* rowBuf = (uint8_t*)heap_caps_malloc(rowSize, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
-    if (!rowBuf) {
-        ESP_LOGE(TAG, "Failed to allocate row buffer");
-        fclose(f);
-        return false;
-    }
-
+    
     for (int y = 0; y < drawH; y++) {
-        if (fread(rowBuf, 1, rowSize, f) != (size_t)rowSize) break;
-        
-        int destY = flip ? (drawH - 1 - y) : y;
-        if (destY >= s_lcdDisplayHeight) continue;
-
-        for (int x = 0; x < drawW; x++) {
-            uint8_t b = rowBuf[x * 3 + 0];
-            uint8_t g = rowBuf[x * 3 + 1];
-            uint8_t r = rowBuf[x * 3 + 2];
-            
-            // RGB565 conversion
-            uint16_t color = __builtin_bswap16(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-            buffer[destY * s_lcdDisplayWidth + x] = color;
-        }
+        memcpy(&buffer[y * s_lcdDisplayWidth], &splash_image_data[y * splash_width], drawW * 2);
     }
+    
+    // Ensure both buffers have the splash for the boot overlay.
+    // This prevents the screen from going black when display_boot_update() pushes 
+    // the other buffer during the boot sequence.
+    int currentBack = s_drawBuffer;
+    int currentFront = 1 - s_drawBuffer;
+    memcpy(s_frameBuffers[currentFront], s_frameBuffers[currentBack], s_lcdDisplayWidth * s_lcdDisplayHeight * 2);
 
-    free(rowBuf);
-    fclose(f);
     display_present();
-    return true;
-}
-
-void display_showBootScreen() {
-    if (!display_showSplash("/spiffs/splash.bmp")) {
-        uint16_t* buffer = display_getBackBuffer();
-        for (int y = 0; y < s_lcdDisplayHeight; y++) {
-            for (int x = 0; x < s_lcdDisplayWidth; x++) {
-                buffer[y * s_lcdDisplayWidth + x] = __builtin_bswap16(s_palette[(x / (s_lcdDisplayWidth / 8)) % 8]);
-            }
-        }
-        display_present();
-    }
     vTaskDelay(pdMS_TO_TICKS(50));
 }
 
