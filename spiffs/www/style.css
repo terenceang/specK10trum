@@ -385,19 +385,101 @@ input:checked + .zx-slider:before { transform: translateX(14px); background-colo
 
 .zx-footer { color: var(--dim); font-size: clamp(9px, 1.3vw, 12px); }
 
-/* Kempston Gamepad - Phone-friendly vertical layout */
-.zx-gamepad { display:none; flex-direction:column; align-items:center; justify-content:flex-start; gap:calc(var(--key-size) * 0.5); padding:calc(var(--key-size) * 0.6) var(--kb-pad) calc(var(--key-size) * 0.4); background:#111; border:1px solid #333; width:100%; max-width:max-content; touch-action:none; -webkit-user-select:none; user-select:none; }
+/* Kempston Gamepad - Stylish responsive layout */
+.zx-gamepad {
+  display:none; flex-direction:column; align-items:center; justify-content:flex-start;
+  gap:calc(var(--key-size) * 0.5); padding:calc(var(--key-size) * 0.6) var(--kb-pad) calc(var(--key-size) * 0.4);
+  background:linear-gradient(180deg, #1a1a1c 0%, #0f0f10 100%);
+  border:2px solid #2a2a2e; border-radius:8px; width:100%; max-width:max-content;
+  touch-action:none; -webkit-user-select:none; user-select:none;
+  box-shadow:0 8px 32px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition:all 0.3s ease;
+}
 .zx-gamepad.active { display:flex; }
-.zx-dpad { display:grid; grid-template-columns:repeat(3, var(--key-size)); grid-template-rows:repeat(3, var(--key-size)); gap:calc(var(--key-size) * 0.08); }
-.zx-joy-btn { width:var(--key-size); height:var(--key-size); border:2px solid var(--ink); background:#1a1a1c; color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; touch-action:none; -webkit-tap-highlight-color:transparent; font-weight:900; font-size:max(14px, calc(var(--key-size) * 0.36)); border-radius:4px; -webkit-user-select:none; user-select:none; }
-.zx-joy-btn.pressed { background:var(--ink); color:#000; }
+
+.zx-dpad { display:grid; grid-template-columns:repeat(3, var(--key-size)); grid-template-rows:repeat(3, var(--key-size)); gap:calc(var(--key-size) * 0.12); }
+
+.zx-joy-btn {
+  width:var(--key-size); height:var(--key-size);
+  border:2px solid #444; background:linear-gradient(145deg, #2a2a2e, #1a1a1c);
+  color:var(--ink); display:flex; align-items:center; justify-content:center;
+  cursor:pointer; touch-action:none; -webkit-tap-highlight-color:transparent;
+  font-weight:900; font-size:max(14px, calc(var(--key-size) * 0.36));
+  border-radius:6px; -webkit-user-select:none; user-select:none;
+  box-shadow:0 4px 12px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transition:all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.zx-joy-btn:active {
+  transform:scale(0.92);
+  box-shadow:0 2px 6px rgba(0, 0, 0, 0.8), inset 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.zx-joy-btn.pressed {
+  background:linear-gradient(145deg, var(--ink), #ccc);
+  color:#000;
+  box-shadow:0 2px 8px rgba(0, 0, 0, 0.8), inset 0 -2px 4px rgba(255, 255, 255, 0.2);
+}
+
 .zx-joy-up    { grid-column:2; grid-row:1; }
 .zx-joy-left  { grid-column:1; grid-row:2; }
 .zx-joy-gap   { grid-column:2; grid-row:2; background:transparent; border:none; pointer-events:none; }
 .zx-joy-right { grid-column:3; grid-row:2; }
 .zx-joy-down  { grid-column:2; grid-row:3; }
-.zx-joy-fire { width:calc(var(--key-size) * 2); height:calc(var(--key-size) * 2); border-radius:50%; border:2px solid var(--red); color:var(--red); font-size:max(12px, calc(var(--key-size) * 0.28)); font-weight:900; }
-.zx-joy-fire.pressed { background:var(--red); color:#fff; }
-.zx-joy-toolbar { display:flex; gap:calc(var(--key-size) * 0.4); align-items:center; width:100%; justify-content:center; }
-.zx-joy-back { padding:8px 20px; background:transparent; border:1px solid #444; color:var(--dim); font-family:inherit; font-size:11px; font-weight:800; letter-spacing:1px; cursor:pointer; border-radius:3px; text-transform:uppercase; touch-action:manipulation; }
-.zx-joy-back:hover { color:var(--ink); border-color:#666; }
+
+.zx-joy-fire {
+  width:calc(var(--key-size) * 2); height:calc(var(--key-size) * 2);
+  border-radius:50%; border:2px solid #d32f2f;
+  background:radial-gradient(135deg, #ff5252, #d32f2f);
+  color:#fff; font-size:max(12px, calc(var(--key-size) * 0.28)); font-weight:900;
+  box-shadow:0 6px 24px rgba(211, 47, 47, 0.6), inset 0 2px 4px rgba(255, 255, 255, 0.3);
+  transition:all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.zx-joy-fire:active {
+  transform:scale(0.94);
+  box-shadow:0 3px 12px rgba(211, 47, 47, 0.8), inset 0 -2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.zx-joy-fire.pressed {
+  background:radial-gradient(135deg, #ff6b6b, #c62828);
+  box-shadow:0 4px 16px rgba(211, 47, 47, 0.9), inset 0 -3px 8px rgba(0, 0, 0, 0.4);
+}
+
+.zx-joy-toolbar {
+  display:flex; gap:calc(var(--key-size) * 0.4); align-items:center;
+  width:100%; justify-content:center;
+}
+
+.zx-joy-back {
+  padding:10px 24px; background:rgba(255, 255, 255, 0.08);
+  border:1.5px solid #444; color:var(--dim); font-family:inherit;
+  font-size:11px; font-weight:800; letter-spacing:1px; cursor:pointer;
+  border-radius:6px; text-transform:uppercase; touch-action:manipulation;
+  transition:all 0.2s ease;
+  box-shadow:0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.zx-joy-back:hover {
+  color:var(--ink); border-color:#666; background:rgba(255, 255, 255, 0.12);
+  box-shadow:0 4px 12px rgba(0, 0, 0, 0.6);
+}
+
+.zx-joy-back:active {
+  transform:translateY(1px);
+  box-shadow:0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+/* Landscape mode - side-by-side layout */
+@media (orientation:landscape) {
+  .zx-gamepad {
+    flex-direction:row; justify-content:center; align-items:center; gap:calc(var(--key-size) * 2);
+    padding:calc(var(--key-size) * 0.4) calc(var(--kb-pad) * 1.5);
+    width:100%; height:auto;
+  }
+
+  .zx-joy-toolbar {
+    position:absolute; bottom:calc(var(--key-size) * 0.3); right:calc(var(--kb-pad) * 1.5);
+    width:auto; justify-content:flex-end;
+  }
+}
