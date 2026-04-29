@@ -88,7 +88,7 @@ public:
     
     // Rendering
     void renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight);
-    void renderBeeperAudio(int16_t* buffer, int num_samples) { m_beeper.renderFrame(buffer, num_samples); }
+    void renderBeeperAudio(int16_t* buffer, int num_samples) { m_beeper.getFrameBuffer(buffer, num_samples); }
     virtual void renderPSGAudio(int16_t* buffer, int num_samples) { 
         memset(buffer, 0, num_samples * sizeof(int16_t)); 
     }
