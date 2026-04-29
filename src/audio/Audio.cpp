@@ -32,6 +32,11 @@ typedef struct {
     int16_t samples[SAMPLES_PER_FRAME * 2];  // Stereo interleaved
 } audio_frame_t;
 
+// Static audio buffers to avoid large stack allocations
+static audio_frame_t s_frame_buffer;
+static int16_t s_beeper_buf[SAMPLES_PER_FRAME];
+static int16_t s_psg_buf[SAMPLES_PER_FRAME];
+
 static void audio_output_task(void* arg) {
     audio_frame_t frame;
 
@@ -161,21 +166,16 @@ static void apply_volume_gain(int16_t* stereo_buf, int samples, float gain) {
 void audio_play_frame(SpectrumBase* spectrum) {
     if (!spectrum || !s_tx_handle || !s_frame_queue) return;
 
-    audio_frame_t frame;
-    int16_t* stereo_buf = frame.samples;
-
-    // Buffers for beeper and PSG
-    int16_t beeper_buf[SAMPLES_PER_FRAME];
-    int16_t psg_buf[SAMPLES_PER_FRAME];
+    int16_t* stereo_buf = s_frame_buffer.samples;
 
     // Render both audio sources
-    spectrum->renderBeeperAudio(beeper_buf, SAMPLES_PER_FRAME);
-    spectrum->renderPSGAudio(psg_buf, SAMPLES_PER_FRAME);
+    spectrum->renderBeeperAudio(s_beeper_buf, SAMPLES_PER_FRAME);
+    spectrum->renderPSGAudio(s_psg_buf, SAMPLES_PER_FRAME);
 
     // Mix and duplicate mono to stereo
     for (int i = 0; i < SAMPLES_PER_FRAME; ++i) {
         // Simple additive mixing with saturation
-        int32_t mixed = (int32_t)beeper_buf[i] + (int32_t)psg_buf[i];
+        int32_t mixed = (int32_t)s_beeper_buf[i] + (int32_t)s_psg_buf[i];
         if (mixed > 32767) mixed = 32767;
         if (mixed < -32768) mixed = -32768;
 
@@ -186,13 +186,13 @@ void audio_play_frame(SpectrumBase* spectrum) {
 
     // Apply volume gain and mute
     if (s_muted) {
-        memset(stereo_buf, 0, sizeof(frame.samples));
+        memset(stereo_buf, 0, SAMPLES_PER_FRAME * 2 * sizeof(int16_t));
     } else {
         apply_volume_gain(stereo_buf, SAMPLES_PER_FRAME, s_volume_gain);
     }
 
     // Queue frame for output (non-blocking, drop if queue is full)
-    xQueueSendToBack(s_frame_queue, &frame, 0);
+    xQueueSendToBack(s_frame_queue, &s_frame_buffer, 0);
 }
 
 void audio_play_tone(int freq_hz, int duration_ms) {
@@ -214,9 +214,7 @@ void audio_play_tone(int freq_hz, int duration_ms) {
 
     while (remaining > 0) {
         int n = remaining > CHUNK ? CHUNK : remaining;
-
-        audio_frame_t frame;
-        int16_t* stereo = frame.samples;
+        int16_t* stereo = s_frame_buffer.samples;
 
         for (int i = 0; i < n; ++i) {
             if (period_cnt >= toggle_period) {
