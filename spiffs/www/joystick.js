@@ -15,16 +15,14 @@
 
   function render(container) {
     container.innerHTML = [
-      '<div class="zx-joy-body">',
-        '<div class="zx-dpad">',
-          '<div class="zx-joy-btn zx-joy-up"    data-joy-bit="3">&#9650;</div>',
-          '<div class="zx-joy-btn zx-joy-left"  data-joy-bit="1">&#9664;</div>',
-          '<div class="zx-joy-gap"></div>',
-          '<div class="zx-joy-btn zx-joy-right" data-joy-bit="0">&#9654;</div>',
-          '<div class="zx-joy-btn zx-joy-down"  data-joy-bit="2">&#9660;</div>',
-        '</div>',
-        '<div class="zx-joy-btn zx-joy-fire" data-joy-bit="4">FIRE</div>',
+      '<div class="zx-dpad">',
+        '<div class="zx-joy-btn zx-joy-up"    data-joy-bit="3">&#9650;</div>',
+        '<div class="zx-joy-btn zx-joy-left"  data-joy-bit="1">&#9664;</div>',
+        '<div class="zx-joy-gap"></div>',
+        '<div class="zx-joy-btn zx-joy-right" data-joy-bit="0">&#9654;</div>',
+        '<div class="zx-joy-btn zx-joy-down"  data-joy-bit="2">&#9660;</div>',
       '</div>',
+      '<div class="zx-joy-btn zx-joy-fire" data-joy-bit="4">FIRE</div>',
       '<div class="zx-joy-toolbar">',
         '<button class="zx-joy-back" id="zx-joy-back">&#8592; Keyboard</button>',
       '</div>'
