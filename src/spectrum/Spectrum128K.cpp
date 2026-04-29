@@ -41,6 +41,8 @@ void Spectrum128K::reset() {
     m_pagingLocked = false;
     m_aySelectedReg = 0;
     m_psg.reset();
+    m_psg.resetFrame();
+    memset(m_ayFrameBuffer, 0, sizeof(m_ayFrameBuffer));
     
     for (int i = 0; i < 8; i++) {
         if (m_ramBanks[i]) memset(m_ramBanks[i], 0, BANK_SIZE);
@@ -85,6 +87,10 @@ void Spectrum128K::writePort(uint16_t port, uint8_t value) {
         m_aySelectedReg = value & 0x0F;
     }
     else if ((port & 0xC002) == 0x8000) { // Port 0xBFFD - Register Data
+        // Incremental render up to current T-state before changing register
+        int targetSample = (int)(((uint64_t)m_ulaClocks * SAMPLES_PER_FRAME) / FRAME_T_STATES);
+        m_psg.renderTo(m_ayFrameBuffer, targetSample, 1773400.0, 44100.0);
+        
         m_psg.writeRegister(m_aySelectedReg, value);
     }
 }
@@ -154,6 +160,18 @@ void Spectrum128K::writeAY(uint8_t reg, uint8_t value) {
 }
 
 void Spectrum128K::renderPSGAudio(int16_t* buffer, int num_samples) {
-    // Spectrum 128K AY clock is 1.7734 MHz
-    m_psg.render(buffer, num_samples, 1773400.0, 44100.0);
+    // Finish rendering the frame
+    m_psg.renderTo(m_ayFrameBuffer, SAMPLES_PER_FRAME, 1773400.0, 44100.0);
+    
+    // Copy the results to the output buffer (up to num_samples)
+    int toCopy = (num_samples < SAMPLES_PER_FRAME) ? num_samples : SAMPLES_PER_FRAME;
+    memcpy(buffer, m_ayFrameBuffer, toCopy * sizeof(int16_t));
+    
+    // If num_samples > SAMPLES_PER_FRAME, zero the rest
+    if (num_samples > SAMPLES_PER_FRAME) {
+        memset(buffer + SAMPLES_PER_FRAME, 0, (num_samples - SAMPLES_PER_FRAME) * sizeof(int16_t));
+    }
+    
+    // Reset frame state for next frame
+    m_psg.resetFrame();
 }

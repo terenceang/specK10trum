@@ -25,6 +25,7 @@ public:
     static constexpr int FIRST_ACTIVE_LINE = 64;
     static constexpr int ACTIVE_LINES = 192;
     static constexpr int ACTIVE_CYCLES_PER_LINE = 128;
+    static constexpr int SAMPLES_PER_FRAME = 882; // 44100 / 50
     static constexpr uint16_t SCREEN_BASE = 0x4000;
     static constexpr uint16_t ATTR_BASE = 0x5800;
 

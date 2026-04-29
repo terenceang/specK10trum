@@ -9,11 +9,14 @@ public:
     void writeRegister(uint8_t reg, uint8_t value);
     uint8_t readRegister(uint8_t reg) const;
     
-    // Render PSG audio into the buffer.
-    // num_samples: number of samples to generate.
+    // Render PSG audio into the buffer up to target_sample.
+    // target_sample: sample index to render up to (exclusive).
     // clock_hz: The clock frequency of the PSG (usually ~1.77 MHz for Spectrum).
     // sample_rate: The output audio sample rate (e.g. 44100).
-    void render(int16_t* buffer, int num_samples, double clock_hz, double sample_rate);
+    void renderTo(int16_t* buffer, int target_sample, double clock_hz, double sample_rate);
+    
+    // Reset frame-specific state (rendered samples count)
+    void resetFrame() { m_renderedSamples = 0; }
 
 private:
     uint8_t m_registers[16];
@@ -31,6 +34,7 @@ private:
     bool     m_envHolding;
     
     double m_phase; // For fractional clock steps per sample
+    int    m_renderedSamples;
     
     static const uint16_t s_volumes[16];
     

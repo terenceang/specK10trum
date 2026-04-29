@@ -27,6 +27,7 @@ void PSG::reset() {
     m_envPos = 15;
     m_envHolding = false;
     m_phase = 0;
+    m_renderedSamples = 0;
 }
 
 void PSG::writeRegister(uint8_t reg, uint8_t value) {
@@ -45,12 +46,14 @@ uint8_t PSG::readRegister(uint8_t reg) const {
     return (reg < 16) ? m_registers[reg] : 0xFF;
 }
 
-void PSG::render(int16_t* buffer, int num_samples, double clock_hz, double sample_rate) {
+void PSG::renderTo(int16_t* buffer, int target_sample, double clock_hz, double sample_rate) {
+    if (target_sample <= m_renderedSamples) return;
+
     // PSG internal clock is clock_hz / 16
     double psg_clock = clock_hz / 16.0;
     double ticks_per_sample = psg_clock / sample_rate;
 
-    for (int s = 0; s < num_samples; ++s) {
+    for (int s = m_renderedSamples; s < target_sample; ++s) {
         m_phase += ticks_per_sample;
         uint32_t ticks = (uint32_t)m_phase;
         m_phase -= ticks;
@@ -118,6 +121,7 @@ void PSG::render(int16_t* buffer, int num_samples, double clock_hz, double sampl
         // Max sum is ~90000, so divide by 3 to stay in range of int16.
         buffer[s] = (int16_t)(mixed / 3);
     }
+    m_renderedSamples = target_sample;
 }
 
 void PSG::updateEnvelope() {

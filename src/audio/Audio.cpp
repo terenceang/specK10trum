@@ -11,7 +11,7 @@
 
 static const char* TAG = "Audio";
 static const int SAMPLE_RATE = 44100;
-static const int SAMPLES_PER_FRAME = 882;
+#define SAMPLES_PER_FRAME SpectrumBase::SAMPLES_PER_FRAME
 
 static audio_pipeline_handle_t s_pipeline = NULL;
 static audio_element_handle_t s_raw_write = NULL;

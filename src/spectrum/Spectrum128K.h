@@ -36,6 +36,7 @@ private:
     // AY-3-8912 sound chip emulation
     PSG m_psg;
     uint8_t m_aySelectedReg;
+    int16_t m_ayFrameBuffer[SAMPLES_PER_FRAME];
     
     void updatePaging();
     
