@@ -26,7 +26,7 @@ void SpectrumBase::flushTape() {
     // Advance the tape and record all EAR toggles for the beeper to hear them
     uint32_t start_ula_clocks = m_ulaClocks - tstates;
     m_tape.advance(tstates, [&](uint32_t offset, bool ear) {
-        m_beeper.recordEvent(start_ula_clocks + offset, m_lastSpeakerBit);
+        m_beeper.recordEvent(start_ula_clocks + offset, ear ? 1 : 0);
         m_lastTapeEar = ear;
     });
 
