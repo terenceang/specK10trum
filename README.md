@@ -1,4 +1,13 @@
+
 # specK10trum
+
+## 0.2.1 (2026-04-29)
+Merged feature/joystick-testing:
+- Added joystick support (see spiffs/www/joystick.js)
+- New layouts: layout-48k.js, layout-plus.js
+- Web UI improvements: menu, style, keyboard updates
+- Input and Spectrum core enhancements
+
 
 <p align="center">
 	<img src="assets/baner.png" alt="SpecK10trum banner" />
