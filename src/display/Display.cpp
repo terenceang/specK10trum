@@ -153,6 +153,8 @@ static void video_task(void* pvParameters) {
                 instr_video_start();
                 display_renderSpectrum(s_pendingSpectrum);
                 display_present();
+                // Render and play audio on Core 1 (moved from emulator task)
+                audio_play_frame(s_pendingSpectrum);
                 instr_video_end();
             }
         }
@@ -321,7 +323,7 @@ bool display_init() {
     
     s_trans_pool = (spi_transaction_t*)heap_caps_malloc(sizeof(spi_transaction_t) * MAX_TRANSACTIONS, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 
-    xTaskCreatePinnedToCore(video_task, "video", 3072, NULL, 6, &s_videoTaskHandle, 1);
+    xTaskCreatePinnedToCore(video_task, "video", 4096, NULL, 6, &s_videoTaskHandle, 1);
     // Create mutex for overlay updates
     s_overlay_mutex = xSemaphoreCreateMutex();
     // Create semaphore for pause synchronization

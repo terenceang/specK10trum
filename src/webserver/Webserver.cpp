@@ -456,10 +456,11 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     }
 
     // Start keepalive ping task to keep WebSocket connections alive
+    // Pinned to Core 0 to decouple network I/O from Core 1 display/audio pipeline
     static bool keepalive_started = false;
     if (!keepalive_started) {
         keepalive_started = true;
-        xTaskCreatePinnedToCore(ws_keepalive_task, "ws_keepalive", 4096, NULL, 5, NULL, 1);
+        xTaskCreatePinnedToCore(ws_keepalive_task, "ws_keepalive", 4096, NULL, 5, NULL, 0);
         ESP_LOGI(TAG, "WebSocket keepalive task started");
     }
 

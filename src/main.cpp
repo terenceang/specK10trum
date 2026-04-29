@@ -149,11 +149,9 @@ static void emulator_task(void* pvParameters) {
         instr_cpu_end();
 
         display_trigger_frame(spectrum);
-        // Render and play beeper audio for this frame.
-        audio_play_frame(spectrum);
-        
-        // Yield to allow other tasks (like Webserver) to run
-        vTaskDelay(1);
+
+        // Yield to allow other tasks to run (audio rendering now on Core 1)
+        taskYIELD();
     }
 }
 
