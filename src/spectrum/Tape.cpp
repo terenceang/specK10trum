@@ -582,5 +582,8 @@ void Tape::instaload(SpectrumBase* spectrum) {
         cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = lastCodeStart;
     } else if (hasBasic) {
         cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = 23755;
+    } else {
+        // No valid blocks loaded - leave CPU at LD-BYTES for manual loading or show error
+        // Don't change CPU state to avoid jumping to garbage address
     }
 }
