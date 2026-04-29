@@ -1,5 +1,7 @@
 # UniHiker K10 Development Reference
 
+**Note:** This document is a hardware reference for the UniHiker K10 platform. It is not firmware-specific and is intended to be used for any compatible firmware or emulator targeting K10 hardware.
+
 **DFR0992 · ESP32-S3-WROOM-1 · Revision V1.0**
 
 This document is a unified hardware and PSRAM configuration reference for the UniHiker K10 platform. It covers board pin assignments, peripheral interfaces, power rails, on-board controls, and ESP-IDF / PlatformIO PSRAM setup guidance.
@@ -10,14 +12,14 @@ The UniHiker K10 is a development platform centred on the ESP32-S3-WROOM-1 modul
 
 - ILI9341 SPI TFT display
 - GC2145 camera module
-- ES7243 audio codec + NS4168 amplifier
+- ES7243 audio codec + NS4168 amplifier (audio handled via ESP-IDF ADF drivers)
 - XL9535 I2C GPIO expander
 - RGB LEDs and onboard button controls
 - Micro:bit-compatible edge connector pins
 - SPI MicroSD + SPI font ROM
 - Optional external SPI PSRAM
 
-The board architecture separates high-speed native signals (display, camera, audio) from lower-speed I/O via the XL9535 expander.
+The board architecture separates high-speed native signals (display, camera, audio — all handled via ESP-IDF ADF drivers) from lower-speed I/O via the XL9535 expander.
 
 ## 2. Main MCU — ESP32-S3-WROOM-1
 
@@ -57,7 +59,7 @@ The board architecture separates high-speed native signals (display, camera, aud
 
 ### 3.1 I2C Bus (Primary)
 
-Used by the XL9535 expander, audio codec, onboard sensors, and external I2C headers.
+Used by the XL9535 expander, audio codec (via ESP-IDF ADF), onboard sensors, and external I2C headers.
 
 | Signal | ESP32 Pin |
 |---|---|
@@ -68,7 +70,7 @@ Used by the XL9535 expander, audio codec, onboard sensors, and external I2C head
 
 | Address | Major IC | Function | Notes |
 |---|---|---|---|
-| 0x11 | ES7243EU8 | Audio Codec | Microphone interface & control |
+| 0x11 | ES7243EU8 | Audio Codec (ESP-IDF ADF) | Microphone interface & control |
 | 0x19 | SC7A20H | 3-axis Accelerometer | Motion/orientation sensing |
 | 0x20 | XL9535QF24 | IO Expander | Backlight, buttons, edge connector |
 | 0x29 | LTR-303ALS-01 | Ambient Light Sensor | Illuminance measurement |
@@ -86,7 +88,7 @@ Used by the XL9535 expander, audio codec, onboard sensors, and external I2C head
 | LCD_EN | GPIO40 (`K10_TFT_ENABLE`) |
 | LCD_BLK | Backlight control via XL9535 P00 (expander output, not a direct ESP32 GPIO) |
 
-### 3.4 I2S Bus (Audio)
+### 3.4 I2S Bus (Audio — handled by ESP-IDF ADF)
 
 | Signal | Function |
 |---|---|
@@ -130,11 +132,25 @@ The GC2145 camera uses an 8-bit DVP interface and dedicated camera power rails.
 
 Data is transferred directly into ESP32 memory via DMA.
 
-## 6. Audio Subsystem
+## 6. Audio Subsystem (ESP-IDF ADF)
 
-### 6.1 Audio Codec — ES7243EU8
+### AY-3-8912 PSG Emulation Improvements (v1.0+)
 
-The ES7243 audio codec is controlled over I2C and delivers microphone ADC data to the ESP32.
+The AY PSG audio pipeline is now inspired by [ZX-ESPectrum-IDF](https://github.com/Toysoft/ZX-ESPectrum-IDF):
+
+- **No More Clicking and Popping:** AY audio buffer generation is tightly synced to the video frame, eliminating clicks, pops, and desync artifacts. This ensures totally clean audio output, even for complex effects and voice samples (e.g., Robocop).
+- **Frame-Synced Buffering:** The AY buffer is built once per video frame, guaranteeing smooth playback and perfect sync with emulation timing.
+- **On-Demand Processing:** AY emulation only processes samples when needed (before an OUT instruction or at the end of a frame), minimizing CPU usage on the ESP32.
+- **Immersive Game Audio:** This approach ensures that all AY effects, including advanced voice and SFX, play back as intended by the original hardware.
+
+For dedicated AY playback, see also: [ESP32AY](https://github.com/Toysoft/ESP32AY).
+
+**Implementation note:**
+The AY PSG emulation and audio mixing are handled in the main emulation loop. The buffer is rendered and flushed exactly once per frame, and only recalculated if register writes or frame boundaries require it. This matches the best practices from ZX-ESPectrum-IDF v1.0 beta 5.2 and later.
+
+### 6.1 Audio Codec — ES7243EU8 (ESP-IDF ADF)
+
+The ES7243 audio codec is controlled over I2C and delivers microphone ADC data to the ESP32. All audio streaming, configuration, and I2S routing are handled by ESP-IDF ADF (esp-adf) drivers.
 
 | Signal | Net |
 |---|---|
@@ -260,7 +276,7 @@ The board provides three onboard buttons and a Micro:bit-compatible edge connect
 | U2 | LTR-303ALS-01 | 0x29 | Ambient Light |
 | U3 | SC7A20H | 0x19 | 3-axis Accelerometer |
 | U5 | XL9535QF24 | 0x20 | GPIO Expander |
-| U8 | ES7243EU8 | 0x10+ | Audio Codec |
+| U8 | ES7243EU8 | 0x10+ | Audio Codec (ESP-IDF ADF) |
 
 ## 10. External Memory & Storage
 
@@ -311,7 +327,7 @@ PSRAM clock uses GPIO30 and CS uses GPIO26.
 
 1. Power enters the system; the 3.3 V LDO provides the main logic rail.
 2. The ESP32-S3 can initialize I2C and configure the XL9535 for backlight, camera hold/power, and other low-speed controls.
-3. I2C sensors and SPI/I2S peripherals are brought up after power and reset are stable.
+3. I2C sensors and SPI/I2S peripherals (audio via ESP-IDF ADF) are brought up after power and reset are stable.
 
 ## 12. Video & Display Development Notes
 
@@ -346,11 +362,11 @@ Because the ESP32-S3 has a finite number of GPIOs, some pins are multiplexed or 
 | Shared Resource | Functions | Constraint |
 |---|---|---|
 | Pin 40 / CS3 | MicroSD CS and Camera_D2 | SD card CS must be released before camera can use the pin |
-| Pins 42 & 45 | I2S clocks and camera data lines | High-quality audio recording and camera streaming cannot run simultaneously |
+| Pins 42 & 45 | I2S clocks and camera data lines (audio via ESP-IDF ADF) | High-quality audio recording and camera streaming cannot run simultaneously |
 
 ## 14. Reference Scope
 
-This document is intended as a unified K10 development reference. It is board-focused and omits detailed application-specific software logic, while still providing the pinout, power, peripheral, and expander details needed for firmware and hardware design.
+This document is a unified K10 hardware development reference. It is not tied to any specific firmware or software implementation. The focus is on board-level details: pinout, power, peripherals, and expander configuration. Application-specific or firmware-specific logic is intentionally omitted to keep this reference generic and broadly useful for any K10-based project.
 
 ## 15. PSRAM Setup for `unihiker_k10`
 

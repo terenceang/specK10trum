@@ -14,7 +14,8 @@ Merged feature/joystick-testing:
 </p>
 
 Author: Terence Ang
-
+    <!-- The following image is not included in the repository. Place your own 'assets/baner.png' for the banner to appear. -->
+    <img src="assets/baner.png" alt="SpecK10trum banner (user-supplied)" />
 Overview
 --------
 specK10trum is an ESP32-targeted project implementing a ZX Spectrum emulator and related tooling.
@@ -37,18 +38,22 @@ Gallery
 -------
 
 <p align="center">
-	<img src="assets/baner.png" alt="SpecK10trum banner" style="max-width:100%;height:auto;" />
-</p>
 
-### Device Photos
+Gallery
+-------
 
 <p align="center">
+    <!-- The following images are not included in the repository. Place your own files in 'assets/' for them to appear. -->
+    <img src="assets/SpecK10trum Logo keybd.svg" alt="SpecK10trum logo (user-supplied)" width="320" style="margin-right:8px;" />
+    <img src="assets/baner.png" alt="SpecK10trum banner (user-supplied)" width="320" style="margin-right:8px;" />
+</p>
 	<img src="assets/SpecK10trum Logo keybd.svg" alt="SpecK10trum logo" width="320" style="margin-right:8px;" />
 	<img src="assets/baner.png" alt="SpecK10trum banner" width="320" style="margin-right:8px;" />
 </p>
 
-_Captions: left: project logo; right: project banner. Note: device-specific photos can be added to the `assets/` folder to populate this section._ 
-
+    <!-- Images below are not included in the repository. Place your own files in 'assets/' for them to appear. -->
+    <img src="assets/SpecK10trum Logo keybd.svg" alt="SpecK10trum logo (user-supplied)" width="320" style="margin-right:8px;" />
+    <img src="assets/baner.png" alt="SpecK10trum banner (user-supplied)" width="320" style="margin-right:8px;" />
 This project contains original code by Terence Ang and portions derived from ZOT (MIT). Unless otherwise noted in individual files, ZOT-derived code is distributed under the MIT license.
 
 Build

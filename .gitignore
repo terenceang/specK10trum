@@ -25,3 +25,12 @@ build/
 
 # Versioning script
 scripts/bump_version.py
+
+# Copyrighted material (do not track in git)
+spiffs/48k.rom
+spiffs/128k.rom
+spiffs/snapshots/
+spiffs/tapes/
+assets/
+!assets/baner.png
+!assets/SpecK10trum Logo keybd.svg
