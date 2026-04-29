@@ -84,27 +84,33 @@ void Beeper::renderTo(uint32_t tstates) {
 }
 
 void Beeper::renderSamples(int start, int end) {
-    // Simplified approach: reduce filtering overhead
-    // DC blocker with faster response (1-pole HPF ~100Hz)
-    const float HPF_COEFF = 0.98f;  // Faster DC removal than 0.995f
-    int16_t speaker_value = m_speakerLevel ? AMPLITUDE : -AMPLITUDE;
+    // Butterworth LPF coefficients (fs=44.1kHz, fc=8kHz) - essential for audio quality
+    const float b0 = 0.1804f, b1 = 0.3608f, b2 = 0.1804f;
+    const float a1 = -0.4932f, a2 = 0.2149f;
 
     for (int i = start; i < end; ++i) {
-        // Input: square wave + residual correction
-        float x = (float)speaker_value + m_nextSampleCorrection;
+        float x = m_speakerLevel ? (float)AMPLITUDE : -(float)AMPLITUDE;
+
+        // Add residual from previous PolyBLEP event
+        x += m_nextSampleCorrection;
         m_nextSampleCorrection = 0.0f;
 
-        // Fast 1-pole high-pass for DC blocking
-        // y[n] = HPF_COEFF * y[n-1] + (1 - HPF_COEFF) * (x[n] - x[n-1])
-        float dc_free = HPF_COEFF * m_lastY + 0.02f * (x - m_lastX);
-        m_lastX = x;
-        m_lastY = dc_free;
+        // Butterworth IIR low-pass filter
+        float lp_out = b0 * x + b1 * m_lp_x1 + b2 * m_lp_x2 - a1 * m_lp_y1 - a2 * m_lp_y2;
+        m_lp_x2 = m_lp_x1; m_lp_x1 = x;
+        m_lp_y2 = m_lp_y1; m_lp_y1 = lp_out;
 
-        // Clamp to prevent overflow
-        if (dc_free > 32767.0f) dc_free = 32767.0f;
-        else if (dc_free < -32768.0f) dc_free = -32768.0f;
+        // DC Blocker (High-pass ~20Hz)
+        float y = lp_out - m_lastX + 0.995f * m_lastY;
+        m_lastX = lp_out;
+        m_lastY = y;
 
-        m_frameBuffer[i] = (int16_t)dc_free;
+        // Clamp and output
+        if (y > 32767.0f) y = 32767.0f;
+        else if (y < -32768.0f) y = -32768.0f;
+
+        // Use += to preserve PolyBLEP corrections that may have been added already
+        m_frameBuffer[i] += (int16_t)y;
     }
 }
 
