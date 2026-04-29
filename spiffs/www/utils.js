@@ -9,7 +9,8 @@
     RESET:     '/api/reset',
     SNAPSHOTS: '/api/snapshots',
     TAPES:     '/api/tapes',
-    TAPE_CMD:  '/api/tape'
+    TAPE_CMD:  '/api/tape',
+    MODEL:     '/api/model'
   };
 
   window.ZX_UTILS = { esc, API };

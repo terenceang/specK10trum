@@ -9,12 +9,15 @@
 #include <esp_timer.h>
 #include <esp_wifi.h>
 #include <esp_netif.h>
+#include <nvs_flash.h>
 
 #include "display/Display.h"
 #include "instrumentation/Instrumentation.h"
 #include "expander/Expander.h"
 #include "audio/Audio.h"
 #include "spectrum/Tape.h"
+#include "spectrum/Spectrum48K.h"
+#include "spectrum/Spectrum128K.h"
 #include "input/Input.h"
 #include "wifi_prov/wifi_prov.h"
 #include "webserver/Webserver.h"
@@ -22,26 +25,50 @@
 
 static const char* TAG = "Main";
 
-// ============================================
-// SELECT YOUR MODEL HERE
-// ============================================
-#define SPECTRUM_MODEL_48K
-//#define SPECTRUM_MODEL_128K
-// ============================================
+// Get the stored model preference from NVS, default to 48K
+static bool getStoredModelPreference(const char*& modelName, const char*& romFile) {
+    nvs_handle_t nvs_h;
+    esp_err_t ret = nvs_open("spectrum_config", NVS_READONLY, &nvs_h);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "NVS open failed, defaulting to 48K model");
+        modelName = "48K";
+        romFile = "/spiffs/48k.rom";
+        return false;
+    }
 
-#if defined(SPECTRUM_MODEL_128K)
-    #include "spectrum/Spectrum128K.h"
-    #define MODEL_NAME "128K"
-    #define ROM_FILE "/spiffs/128k.rom"
-    typedef Spectrum128K SpectrumHardware;
-#elif defined(SPECTRUM_MODEL_48K)
-    #include "spectrum/Spectrum48K.h"
-    #define MODEL_NAME "48K"
-    #define ROM_FILE "/spiffs/48k.rom"
-    typedef Spectrum48K SpectrumHardware;
-#else
-    #error "Please define either SPECTRUM_MODEL_48K or SPECTRUM_MODEL_128K"
-#endif
+    char model[32];
+    size_t len = sizeof(model);
+    ret = nvs_get_str(nvs_h, "model", model, &len);
+    nvs_close(nvs_h);
+
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Model preference not found in NVS, defaulting to 48K");
+        modelName = "48K";
+        romFile = "/spiffs/48k.rom";
+        return false;
+    }
+
+    if (strcmp(model, "128k") == 0) {
+        modelName = "128K";
+        romFile = "/spiffs/128k.rom";
+        return true;
+    } else {
+        modelName = "48K";
+        romFile = "/spiffs/48k.rom";
+        return false;
+    }
+}
+
+// Create spectrum instance based on model preference
+static SpectrumBase* createSpectrumInstance(bool is128K) {
+    if (is128K) {
+        ESP_LOGI(TAG, "Creating Spectrum 128K instance");
+        return new Spectrum128K();
+    } else {
+        ESP_LOGI(TAG, "Creating Spectrum 48K instance");
+        return new Spectrum48K();
+    }
+}
 
 // Global state
 static SpectrumBase* spectrum = nullptr;
@@ -231,12 +258,17 @@ extern "C" void app_main(void) {
         }
     }
 
-    // 7. ROM check
-    log_ts(TAG, "=== STEP 7/16: ROM Check ===");
-    boot_printStatus(7, 16, "ROM Check", 0xFFFF);
+    // 7. Model selection and ROM check
+    log_ts(TAG, "=== STEP 7/16: Model & ROM Check ===");
+    boot_printStatus(7, 16, "Model Selection", 0xFFFF);
+    const char* modelName;
+    const char* romFile;
+    bool is128K = getStoredModelPreference(modelName, romFile);
+    ESP_LOGI(TAG, "Using Spectrum %s model", modelName);
+
     struct stat st;
-    if (stat(ROM_FILE, &st) != 0) {
-        ESP_LOGE(TAG, "ROM %s not found! Aborting.", ROM_FILE);
+    if (stat(romFile, &st) != 0) {
+        ESP_LOGE(TAG, "ROM %s not found! Aborting.", romFile);
         boot_printStatus(7, 16, "ROM MISSING!", 0xF800);
         return;
     }
@@ -244,7 +276,7 @@ extern "C" void app_main(void) {
     // 8. Spectrum CPU
     log_ts(TAG, "=== STEP 8/16: CPU Create ===");
     boot_printStatus(8, 16, "CPU Create", 0xFFFF);
-    spectrum = new SpectrumHardware();
+    spectrum = createSpectrumInstance(is128K);
     if (!spectrum) {
         ESP_LOGE(TAG, "Failed to create Spectrum hardware!");
         boot_printStatus(8, 16, "CPU CREATE FAILED", 0xF800);
@@ -254,7 +286,7 @@ extern "C" void app_main(void) {
     // 9. Load ROM + Reset
     log_ts(TAG, "=== STEP 9/16: Load ROM ===");
     boot_printStatus(9, 16, "Load ROM", 0xFFFF);
-    if (!spectrum->loadROM(ROM_FILE)) {
+    if (!spectrum->loadROM(romFile)) {
         ESP_LOGE(TAG, "ROM load failed. Aborting.");
         boot_printStatus(9, 16, "ROM LOAD FAILED", 0xF800);
         return;
@@ -262,7 +294,7 @@ extern "C" void app_main(void) {
     spectrum->reset();
 
 #if RUN_ALL_TESTS
-    run_all_tests(spectrum, MODEL_NAME);
+    run_all_tests(spectrum, modelName);
     spectrum->reset();
 #endif
 

@@ -2,9 +2,12 @@
 #include "webserver/index_html.h"
 #include "input/Input.h"
 #include "spectrum/Snapshot.h"
+#include "spectrum/Spectrum48K.h"
+#include "spectrum/Spectrum128K.h"
 #include "display/Display.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
+#include <nvs_flash.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +26,9 @@ static SpectrumBase* s_spectrum = NULL;
 static volatile bool s_pending_reset = false;
 static volatile bool s_pending_load  = false;
 static volatile bool s_pending_instant_load = false;
+static volatile bool s_pending_model_change = false;
 static char s_pending_load_path[512];
+static char s_pending_model[32] = "48k";
 
 static const char* mime_for(const char* path)
 {
@@ -162,9 +167,39 @@ static esp_err_t reset_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
-void webserver_apply_pending(SpectrumBase* spectrum)
+void webserver_apply_pending(SpectrumBase*& spectrum)
 {
     if (!spectrum) return;
+
+    if (s_pending_model_change) {
+        s_pending_model_change = false;
+        display_setOverlayText("CHANGING MODEL...", 0xFFFF);
+
+        bool is128K = strcmp(s_pending_model, "128k") == 0;
+        const char* romFile = is128K ? "/spiffs/128k.rom" : "/spiffs/48k.rom";
+
+        SpectrumBase* newSpectrum = is128K ? (SpectrumBase*)new Spectrum128K() : (SpectrumBase*)new Spectrum48K();
+        if (newSpectrum) {
+            if (newSpectrum->loadROM(romFile)) {
+                delete spectrum;
+                spectrum = newSpectrum;
+                display_pause_for_reset();
+                spectrum->reset();
+                display_resume_after_reset();
+                display_clearOverlay();
+                ESP_LOGI(TAG, "Model changed to %s", s_pending_model);
+            } else {
+                delete newSpectrum;
+                display_setOverlayText("ROM LOAD FAILED", 0xF800);
+                ESP_LOGE(TAG, "Failed to load ROM for model change");
+            }
+        } else {
+            display_setOverlayText("MODEL CHANGE FAILED", 0xF800);
+            ESP_LOGE(TAG, "Failed to create spectrum instance");
+        }
+        return;
+    }
+
     if (s_pending_load) {
         s_pending_load = false;
         display_setOverlayText("LOADING...", 0xFFFF);
@@ -212,6 +247,69 @@ static esp_err_t health_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     const char* response = "{\"status\":\"ok\",\"server\":\"running\"}";
+    return httpd_resp_sendstr(req, response);
+}
+
+static esp_err_t model_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+    char buf[256];
+    if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK) {
+        // GET current model
+        nvs_handle_t nvs_h;
+        esp_err_t ret = nvs_open("spectrum_config", NVS_READONLY, &nvs_h);
+        char model[32] = "48k";
+        if (ret == ESP_OK) {
+            size_t len = sizeof(model);
+            nvs_get_str(nvs_h, "model", model, &len);
+            nvs_close(nvs_h);
+        }
+        char response[100];
+        snprintf(response, sizeof(response), "{\"status\":\"ok\",\"model\":\"%s\"}", model);
+        return httpd_resp_sendstr(req, response);
+    }
+
+    // POST to change model
+    char model[32];
+    if (httpd_query_key_value(buf, "model", model, sizeof(model)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing model parameter");
+        return ESP_OK;
+    }
+
+    if (strcmp(model, "48k") != 0 && strcmp(model, "128k") != 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid model (must be 48k or 128k)");
+        return ESP_OK;
+    }
+
+    nvs_handle_t nvs_h;
+    esp_err_t ret = nvs_open("spectrum_config", NVS_READWRITE, &nvs_h);
+    if (ret != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS open failed");
+        return ESP_OK;
+    }
+
+    ret = nvs_set_str(nvs_h, "model", model);
+    if (ret != ESP_OK) {
+        nvs_close(nvs_h);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS write failed");
+        return ESP_OK;
+    }
+
+    ret = nvs_commit(nvs_h);
+    nvs_close(nvs_h);
+
+    if (ret != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "NVS commit failed");
+        return ESP_OK;
+    }
+
+    strcpy(s_pending_model, model);
+    s_pending_model_change = true;
+
+    char response[100];
+    snprintf(response, sizeof(response), "{\"status\":\"ok\",\"model\":\"%s\"}", model);
     return httpd_resp_sendstr(req, response);
 }
 
@@ -369,6 +467,7 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
         { "/api/load",      HTTP_GET, file_load_handler,  NULL, false, false, NULL },
         { "/api/reset",     HTTP_GET, reset_handler,     NULL, false, false, NULL },
         { "/api/tape",      HTTP_GET, tape_handler,      NULL, false, false, NULL },
+        { "/api/model",     HTTP_GET, model_handler,      NULL, false, false, NULL },
         { "/*",             HTTP_GET, file_get_handler,   NULL, false, false, NULL }
     };
 

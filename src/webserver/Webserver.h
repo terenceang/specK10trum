@@ -22,7 +22,8 @@ bool webserver_is_ws_client_connected(void);
 // Apply any pending reset/snapshot-load requested via the HTTP API.
 // Must be called from the emulator task between frames so spectrum state
 // is mutated without racing the running CPU.
-void webserver_apply_pending(SpectrumBase* spectrum);
+// spectrum is passed by reference so model changes can replace the instance.
+void webserver_apply_pending(SpectrumBase*& spectrum);
 
 #ifdef __cplusplus
 }

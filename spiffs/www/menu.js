@@ -4,14 +4,36 @@
   const esc = window.ZX_UTILS.esc;
 
   let allFiles = [];
+  let currentModel = "48k";
+
+  async function syncCurrentModel() {
+    try {
+      const res = await fetch(window.ZX_UTILS.API.MODEL);
+      const data = await res.json();
+      if (data.model) {
+        currentModel = data.model;
+        const radioBtn = document.getElementById(`model-${data.model}`);
+        if (radioBtn) {
+          radioBtn.checked = true;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to sync model:', e);
+    }
+  }
 
   function init() {
+    syncCurrentModel();
+
     const logo = document.getElementById('zx-logo');
     const menu = document.getElementById('zx-menu');
     const submenu = document.getElementById('zx-submenu');
     const sublist = document.getElementById('zx-submenu-list');
     const subclose = document.getElementById('zx-submenu-close');
     const fileFilter = document.getElementById('zx-file-filter');
+    const modelModal = document.getElementById('zx-model-modal');
+    const modelClose = document.getElementById('zx-model-close');
+    const modelConfirm = document.getElementById('zx-model-confirm');
 
     if (logo && menu) {
       logo.addEventListener('click', (e) => {
@@ -23,7 +45,7 @@
         menu.classList.remove('open');
       });
 
-      menu.addEventListener('click', (e) => {
+      menu.addEventListener('click', async (e) => {
         const action = e.target.dataset.action;
         if (!action) return;
         if (action === 'snapshot') {
@@ -31,10 +53,59 @@
         } else if (action === 'tape_player') {
           document.getElementById('zx-player').classList.add('open');
           if (window.ZX_TAPE) window.ZX_TAPE.updateUI();
+        } else if (action === 'model') {
+          try {
+            const res = await fetch(window.ZX_UTILS.API.MODEL);
+            const data = await res.json();
+            if (data.model) {
+              document.getElementById(`model-${data.model}`).checked = true;
+            }
+          } catch (e) {
+            console.error('Failed to fetch current model:', e);
+          }
+          modelModal.style.display = 'flex';
         } else if (action === 'reset') {
           fetch(window.ZX_UTILS.API.RESET).then(r => console.log('Reset:', r.status));
         }
         menu.classList.remove('open');
+      });
+    }
+
+    if (modelClose) {
+      modelClose.addEventListener('click', () => {
+        modelModal.style.display = 'none';
+      });
+    }
+
+    if (modelModal) {
+      modelModal.addEventListener('click', (e) => {
+        if (e.target === modelModal) {
+          modelModal.style.display = 'none';
+        }
+      });
+    }
+
+    if (modelConfirm) {
+      modelConfirm.addEventListener('click', async () => {
+        const selected = document.querySelector('input[name="model"]:checked');
+        if (!selected) {
+          alert('Please select a model');
+          return;
+        }
+        const model = selected.value;
+        try {
+          const res = await fetch(`${window.ZX_UTILS.API.MODEL}?model=${model}`);
+          const data = await res.json();
+          if (res.ok) {
+            modelModal.style.display = 'none';
+            alert(`Model changed to ${model.toUpperCase()} and emulator reset!`);
+            console.log('Model changed to:', model);
+          } else {
+            alert('Failed to change model: ' + (data.message || 'Unknown error'));
+          }
+        } catch (e) {
+          alert('Error connecting to server: ' + e.message);
+        }
       });
     }
 
