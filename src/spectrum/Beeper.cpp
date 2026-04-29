@@ -24,8 +24,10 @@ void Beeper::reset() {
     m_nextSampleCorrection = 0.0f;
     m_speakerLevel = 0;
     m_externalEar = false;
+    // DC blocker state (only lastX, lastY used now)
     m_lastX = 0;
     m_lastY = 0;
+    // Legacy LP filter state (kept for compatibility, not used)
     m_lp_x1 = 0; m_lp_x2 = 0;
     m_lp_y1 = 0; m_lp_y2 = 0;
     memset(m_frameBuffer, 0, sizeof(m_frameBuffer));
@@ -34,10 +36,10 @@ void Beeper::reset() {
 
 void Beeper::recordEvent(uint32_t tstates, uint8_t level) {
     if (level == m_speakerLevel) return;
-    
+
     // Render up to this event
     renderTo(tstates);
-    
+
     // Apply PolyBLEP transition at current T-state
     int i = (int)(((uint64_t)tstates * SAMPLES_PER_FRAME) / FRAME_T_STATES);
     if (i < SAMPLES_PER_FRAME) {
@@ -50,14 +52,21 @@ void Beeper::recordEvent(uint32_t tstates, uint8_t level) {
         float p = (float)(tstates - start_t) * (float)SAMPLES_PER_FRAME / (float)FRAME_T_STATES;
         if (p > 1.0f) p = 1.0f;
 
-        // Apply corrections to current and next sample
-        // If we are currently at i, we add directly to current_sample_correction logic
-        // But since we render sample by sample, we'll store it.
-        
-        // PolyBLEP residual
-        m_frameBuffer[i] += (int16_t)(h * (p - (p * p * 0.5f) - 0.5f));
+        // PolyBLEP first half-step (at current sample)
+        // Correction: h * (p - p^2/2 - 0.5)
+        float p_sq = p * p;
+        float correction_i = h * (p - p_sq * 0.5f - 0.5f);
+
+        // Apply to current sample (add, since sample may already be partially rendered)
+        int16_t current = m_frameBuffer[i];
+        int32_t corrected = (int32_t)current + (int32_t)correction_i;
+        if (corrected > 32767) corrected = 32767;
+        else if (corrected < -32768) corrected = -32768;
+        m_frameBuffer[i] = (int16_t)corrected;
+
+        // Store correction for next sample (h * p^2/2)
         if (i + 1 < SAMPLES_PER_FRAME) {
-            m_nextSampleCorrection += h * (p * p * 0.5f);
+            m_nextSampleCorrection = h * p_sq * 0.5f;
         }
     }
 
@@ -75,35 +84,27 @@ void Beeper::renderTo(uint32_t tstates) {
 }
 
 void Beeper::renderSamples(int start, int end) {
-    // Butterworth LPF coefficients (fs=44.1kHz, fc=8kHz)
-    const float b0 = 0.1804f, b1 = 0.3608f, b2 = 0.1804f;
-    const float a1 = -0.4932f, a2 = 0.2149f;
+    // Simplified approach: reduce filtering overhead
+    // DC blocker with faster response (1-pole HPF ~100Hz)
+    const float HPF_COEFF = 0.98f;  // Faster DC removal than 0.995f
+    int16_t speaker_value = m_speakerLevel ? AMPLITUDE : -AMPLITUDE;
 
     for (int i = start; i < end; ++i) {
-        float x = m_speakerLevel ? (float)AMPLITUDE : -(float)AMPLITUDE;
-        
-        // Add residual from previous event
-        x += m_nextSampleCorrection;
+        // Input: square wave + residual correction
+        float x = (float)speaker_value + m_nextSampleCorrection;
         m_nextSampleCorrection = 0.0f;
 
-        // --- Chain: Butterworth LPF -> DC Blocker ---
-        
-        // Butterworth IIR
-        float lp_out = b0 * x + b1 * m_lp_x1 + b2 * m_lp_x2 - a1 * m_lp_y1 - a2 * m_lp_y2;
-        m_lp_x2 = m_lp_x1; m_lp_x1 = x;
-        m_lp_y2 = m_lp_y1; m_lp_y1 = lp_out;
+        // Fast 1-pole high-pass for DC blocking
+        // y[n] = HPF_COEFF * y[n-1] + (1 - HPF_COEFF) * (x[n] - x[n-1])
+        float dc_free = HPF_COEFF * m_lastY + 0.02f * (x - m_lastX);
+        m_lastX = x;
+        m_lastY = dc_free;
 
-        // DC Blocker (High-pass ~20Hz)
-        float y = lp_out - m_lastX + 0.995f * m_lastY;
-        m_lastX = lp_out;
-        m_lastY = y;
+        // Clamp to prevent overflow
+        if (dc_free > 32767.0f) dc_free = 32767.0f;
+        else if (dc_free < -32768.0f) dc_free = -32768.0f;
 
-        // Clamp and output
-        if (y > 32767.0f) y = 32767.0f;
-        else if (y < -32768.0f) y = -32768.0f;
-        
-        // Note: we add to the buffer because recordEvent might have already added a partial correction
-        m_frameBuffer[i] += (int16_t)y;
+        m_frameBuffer[i] = (int16_t)dc_free;
     }
 }
 
