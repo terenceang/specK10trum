@@ -558,6 +558,6 @@ void Tape::instaload(SpectrumBase* spectrum) {
     if (hasCode) {
         cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = lastCodeStart;
     } else if (hasBasic) {
-        cpu->pc = 23755;
+        cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = 23755;
     }
 }
