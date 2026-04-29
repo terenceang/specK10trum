@@ -497,20 +497,33 @@ void Tape::instaload(SpectrumBase* spectrum) {
     uint16_t lastCodeStart = 0, totalProgLen = 0;
     bool hasCode = false, hasBasic = false;
 
-    for (int i = 0; i < m_num_blocks - 1; i++) {
+    int i = 0;
+    while (i < m_num_blocks - 1) {
         const uint8_t* hData; uint32_t hLen; uint8_t hFlag;
-        if (!getBlockContent(i, &hData, &hLen, &hFlag)) continue;
-        if (hLen != 17 || hFlag != 0x00) continue;
+        if (!getBlockContent(i, &hData, &hLen, &hFlag)) {
+            ++i;
+            continue;
+        }
+        if (hLen != 17 || hFlag != 0x00) {
+            ++i;
+            continue;
+        }
 
         uint8_t type = hData[0];
         uint16_t len = hData[11] | (hData[12] << 8);
         uint16_t start = hData[13] | (hData[14] << 8);
 
         // Validate header length is reasonable
-        if (len == 0 || len > 0x8000) continue;
+        if (len == 0 || len > 0x8000) {
+            ++i;
+            continue;
+        }
 
         const uint8_t* dData; uint32_t dLen;
-        if (!getBlockContent(i + 1, &dData, &dLen)) continue;
+        if (!getBlockContent(i + 1, &dData, &dLen)) {
+            ++i;
+            continue;
+        }
 
         // Clamp and validate data length
         if (dLen > len) dLen = len;
@@ -525,16 +538,26 @@ void Tape::instaload(SpectrumBase* spectrum) {
         } else if (type == 3) {
             // CODE block - validate address range
             // Reject display memory (0x4000-0x5AFF) which would corrupt screen
-            if (start >= 0x4000 && start <= 0x5AFF) continue;
+            if (start >= 0x4000 && start <= 0x5AFF) {
+                ++i;
+                continue;
+            }
             // Reject anything below 0x8000 (user program area)
-            if (start < 0x8000) continue;
+            if (start < 0x8000) {
+                ++i;
+                continue;
+            }
             // Reject if write would overflow 64K address space
-            if (start > (0x10000 - (uint16_t)dLen)) continue;
+            if (start > (0x10000 - (uint16_t)dLen)) {
+                ++i;
+                continue;
+            }
             addr = start;
             lastCodeStart = start;
             hasCode = true;
         } else {
             // Reject unknown program types
+            ++i;
             continue;
         }
 
@@ -542,7 +565,7 @@ void Tape::instaload(SpectrumBase* spectrum) {
         for (uint16_t j = 0; j < dLen; j++) {
             spectrum->write((uint16_t)(addr + j), dData[j]);
         }
-        i++; // Skip data block
+        i += 2; // Skip both header and data block
     }
 
     // Setup system variables for BASIC if loaded
