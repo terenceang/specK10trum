@@ -401,6 +401,8 @@ bool Tape::getBlockContent(int idx, const uint8_t** data, uint32_t* length, uint
                 checksum ^= b.data[i];
             }
             if (checksum != b.data[b.length - 1]) {
+                ESP_LOGD("Tape", "Block %d: checksum mismatch (calc=0x%02X, expected=0x%02X)",
+                         idx, checksum, b.data[b.length - 1]);
                 return false;
             }
         }
@@ -524,6 +526,7 @@ void Tape::instaload(SpectrumBase* spectrum) {
 
         const uint8_t* dData; uint32_t dLen;
         if (!getBlockContent(i + 1, &dData, &dLen)) {
+            ESP_LOGD("Tape", "  -> data block %d not found or invalid", i+1);
             ++i;
             continue;
         }
@@ -538,24 +541,29 @@ void Tape::instaload(SpectrumBase* spectrum) {
             addr = 23755;
             hasBasic = true;
             totalProgLen = (uint16_t)dLen;
+            ESP_LOGD("Tape", "  -> Loading BASIC, %d bytes to 0x%04X", dLen, addr);
         } else if (type == 3) {
             // CODE block - validate address range
             // Reject display memory (0x4000-0x57FF) which would corrupt screen
             // Allow everything else including workspace/BASIC areas for compatibility
             if (start >= 0x4000 && start <= 0x57FF) {
+                ESP_LOGD("Tape", "  -> Skipping CODE block (load addr 0x%04X in display)", start);
                 ++i;
                 continue;
             }
             // Reject if write would overflow 64K address space
             if (start > (0x10000 - (uint16_t)dLen)) {
+                ESP_LOGD("Tape", "  -> Skipping CODE block (would overflow at 0x%04X)", start);
                 ++i;
                 continue;
             }
             addr = start;
             lastCodeStart = start;
             hasCode = true;
+            ESP_LOGD("Tape", "  -> Loading CODE, %d bytes to 0x%04X", dLen, addr);
         } else {
             // Reject unknown program types
+            ESP_LOGD("Tape", "  -> Skipping unknown type %d", type);
             ++i;
             continue;
         }
