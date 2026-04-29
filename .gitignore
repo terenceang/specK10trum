@@ -33,4 +33,6 @@ spiffs/snapshots/
 spiffs/tapes/
 assets/
 !assets/baner.png
+!assets/Splash.png
+!assets/SpecK10trum_banner.png
 !assets/SpecK10trum Logo keybd.svg
