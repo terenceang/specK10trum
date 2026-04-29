@@ -8,6 +8,7 @@
 #include <esp_spiffs.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
+#include <esp_netif.h>
 
 #include "display/Display.h"
 #include "instrumentation/Instrumentation.h"
@@ -173,27 +174,44 @@ extern "C" void app_main(void) {
 
     // 6. Wi-Fi
     log_ts(TAG, "=== STEP 6/16: Wi-Fi Connect ===");
-    boot_printStatus(6, 16, "Wi-Fi Connect", 0xFFFF);
+
     bool wifi_connected = false;
     if (!wifi_prov_start()) {
         ESP_LOGW(TAG, "wifi_prov_start() failed");
     } else {
         ESP_LOGI(TAG, "Waiting for Wi-Fi connection (60s timeout)...");
-        if (wifi_prov_wait_for_ip(60000)) {
-            wifi_connected = true;
+        boot_printStatus(6, 16, "Wi-Fi Connect", 0xFFFF);
+        uint32_t elapsed = 0;
+        while (elapsed < 60000 && !wifi_connected) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            elapsed += 100;
+            if (wifi_prov_wait_for_ip(1)) {
+                wifi_connected = true;
+            }
+        }
+        if (wifi_connected) {
+            boot_printStatus(6, 16, "Wi-Fi ✓", 0x07E0);
             ESP_LOGI(TAG, "Wi-Fi connected!");
         } else {
             ESP_LOGW(TAG, "Wi-Fi connection timeout, starting BLE provisioning fallback...");
+            // Spinner for BLE provisioning
             boot_printStatus(61, 16, "BLE Prov", 0xFFE0);
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            boot_printStatus(62, 16, "Use BLE app to provision", 0xFFE0);
-            // Prevent repeated BLE provisioning attempts if already running
+            vTaskDelay(pdMS_TO_TICKS(500));
             static bool ble_prov_attempted = false;
             if (!ble_prov_attempted) {
                 ble_prov_attempted = true;
                 if (wifi_prov_start_ble_fallback()) {
-                    boot_printStatus(63, 16, "Waiting BLE", 0xFFE0);
-                    if (wifi_prov_wait_for_ip(UINT32_MAX)) {
+                    boot_printStatus(62, 16, "BLE Provisioning", 0xFFE0);
+                    bool ble_connected = false;
+                    uint32_t ble_elapsed = 0;
+                    while (!ble_connected && ble_elapsed < 120000) { // 2 min max for BLE
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        ble_elapsed += 100;
+                        if (wifi_prov_wait_for_ip(1)) {
+                            ble_connected = true;
+                        }
+                    }
+                    if (ble_connected) {
                         wifi_connected = true;
                         ESP_LOGI(TAG, "Wi-Fi connected after BLE provisioning!");
                         boot_printStatus(65, 16, "Wi-Fi provisioned!", 0x07E0);
@@ -273,15 +291,28 @@ extern "C" void app_main(void) {
 
     // 13. Keyboard Client
     log_ts(TAG, "=== STEP 13/16: Keyboard ===");
-    boot_printStatus(13, 16, "Keyboard", 0xFFFF);
     if (wifi_connected && webserver_is_running()) {
-        if (webserver_wait_for_ws_client(30000)) {
-            ESP_LOGI(TAG, "WebSocket keyboard client connected");
-        } else {
-            ESP_LOGW(TAG, "No WebSocket keyboard connected within timeout");
-            boot_printStatus(13, 16, "Connect virtual kbd", 0xFFE0);
-            vTaskDelay(pdMS_TO_TICKS(2000));
+        // Get the device IP address
+        esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        esp_netif_ip_info_t ip_info;
+        char ip_str[16] = "unknown";
+        if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
         }
+
+        char kb_msg[64];
+        snprintf(kb_msg, sizeof(kb_msg), "Go to http://%s", ip_str);
+        boot_printStatus(13, 16, kb_msg, 0xFFFF);
+
+        ESP_LOGI(TAG, "Waiting for WebSocket keyboard client at http://%s", ip_str);
+        while (!webserver_is_ws_client_connected()) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
+        boot_printStatus(13, 16, "Keyboard ✓", 0x07E0);
+        ESP_LOGI(TAG, "WebSocket keyboard client connected");
+    } else {
+        boot_printStatus(13, 16, "Keyboard (none)", 0xFFE0);
+        ESP_LOGW(TAG, "No keyboard available (Wi-Fi or webserver not running)");
     }
 
     // 14. Beep

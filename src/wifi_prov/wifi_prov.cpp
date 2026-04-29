@@ -121,61 +121,10 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
             esp_err_t conn_err = esp_wifi_connect();
             if (conn_err != ESP_OK) {
                 ESP_LOGE(TAG, "esp_wifi_connect() failed: %s", esp_err_to_name(conn_err));
-            } else {
-                ESP_LOGI(TAG, "esp_wifi_connect() initiated successfully");
-
-                // Start a quick WiFi scan to show what networks are available
-                ESP_LOGI(TAG, "Starting WiFi scan to diagnose available networks...");
-                wifi_scan_config_t scan_config = {
-                    .ssid = NULL,
-                    .bssid = NULL,
-                    .channel = 0,
-                    .show_hidden = true,
-                    .scan_type = WIFI_SCAN_TYPE_ACTIVE,
-                    .scan_time = {.active = {.min = 100, .max = 300}}
-                };
-                esp_wifi_scan_start(&scan_config, true);  // true = blocking scan
-
-                // Get scan results
-                uint16_t ap_count = 0;
-                esp_wifi_scan_get_ap_num(&ap_count);
-                if (ap_count > 0) {
-                    wifi_ap_record_t* ap_list = (wifi_ap_record_t*)malloc(ap_count * sizeof(wifi_ap_record_t));
-                    if (ap_list) {
-                        esp_wifi_scan_get_ap_records(&ap_count, ap_list);
-                        ESP_LOGI(TAG, "=== Available WiFi Networks ===");
-                        bool target_found = false;
-                        for (int i = 0; i < ap_count && i < 20; i++) {
-                            int rssi_bars = (ap_list[i].rssi + 100) / 10;  // Convert to rough bars
-                            if (rssi_bars < 0) rssi_bars = 0;
-                            if (rssi_bars > 10) rssi_bars = 10;
-
-                            ESP_LOGI(TAG, "[%2d] SSID: %-32s RSSI: %d dBm [%s] CH: %d Auth: %d",
-                                     i + 1, (const char*)ap_list[i].ssid, ap_list[i].rssi,
-                                     rssi_bars >= 7 ? "███████" : rssi_bars >= 4 ? "████" : "██",
-                                     ap_list[i].primary, ap_list[i].authmode);
-
-                            if (strcmp((const char*)ap_list[i].ssid, (const char*)conf.sta.ssid) == 0) {
-                                ESP_LOGI(TAG, "     ^ THIS IS YOUR TARGET SSID (signal: %d dBm)", ap_list[i].rssi);
-                                target_found = true;
-                            }
-                        }
-                        if (ap_count > 20) {
-                            ESP_LOGI(TAG, "... and %d more networks", ap_count - 20);
-                        }
-                        if (!target_found) {
-                            ESP_LOGW(TAG, "WARNING: Your target SSID '%s' is NOT in the scan results!", (const char*)conf.sta.ssid);
-                            ESP_LOGW(TAG, "Check that: AP is broadcasting the SSID, AP is on 2.4GHz, SSID name is correct");
-                        }
-                        free(ap_list);
-                    }
-                } else {
-                    ESP_LOGW(TAG, "WiFi scan found NO networks! Check that:");
-                    ESP_LOGW(TAG, "  - WiFi radio is working");
-                    ESP_LOGW(TAG, "  - Device isn't in a metal enclosure (blocking RF)");
-                    ESP_LOGW(TAG, "  - There are WiFi networks available in range");
-                }
             }
+            // Note: Removed blocking WiFi scan from event handler. The scan was blocking
+            // the entire event loop, preventing WIFI_EVENT_STA_CONNECTED from being processed.
+            // Diagnostic scanning can be done non-blocking or in a separate task if needed.
             break;
         }
         case WIFI_EVENT_STA_CONNECTED: {
@@ -553,26 +502,15 @@ bool wifi_prov_start()
             return false;
         }
 
-        wifi_mode_t current_mode;
-        if (esp_wifi_get_mode(&current_mode) == ESP_OK && current_mode == WIFI_MODE_STA) {
-            ESP_LOGI(TAG, "Wi-Fi already in STA mode; disconnecting and reconnecting");
-            esp_wifi_disconnect();
-            vTaskDelay(pdMS_TO_TICKS(100));
-            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                s_sta_started = true;
-                xSemaphoreGive(s_state_mutex);
-            }
-        } else {
-            ESP_LOGI(TAG, "Starting Wi-Fi in STA mode");
-            esp_err_t s_err = esp_wifi_start();
-            if (s_err != ESP_OK && s_err != ESP_ERR_WIFI_CONN) {
-                ESP_LOGE(TAG, "esp_wifi_start failed: %d", s_err);
-                return false;
-            }
-            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                s_sta_started = true;
-                xSemaphoreGive(s_state_mutex);
-            }
+        // Ensure WiFi radio is started after manager deinit
+        esp_err_t s_err = esp_wifi_start();
+        if (s_err != ESP_OK && s_err != ESP_ERR_WIFI_CONN) {
+            ESP_LOGE(TAG, "esp_wifi_start failed: %d", s_err);
+            return false;
+        }
+        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            s_sta_started = true;
+            xSemaphoreGive(s_state_mutex);
         }
 
         // Optimization: set fast reconnect mode to skip AP scanning for known networks

@@ -421,6 +421,20 @@ bool webserver_wait_for_ws_client(uint32_t timeout_ms)
     return false;
 }
 
+bool webserver_is_ws_client_connected(void)
+{
+    if (!s_server) return false;
+    size_t clients = 16;
+    int fds[16];
+    if (httpd_get_client_list(s_server, &clients, fds) == ESP_OK) {
+        for (size_t i = 0; i < clients; i++) {
+            if (httpd_ws_get_fd_info(s_server, fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET)
+                return true;
+        }
+    }
+    return false;
+}
+
 esp_err_t webserver_ensure_started(SpectrumBase* spectrum)
 {
     if (webserver_is_running()) {
