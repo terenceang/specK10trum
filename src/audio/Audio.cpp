@@ -36,7 +36,7 @@ static bool s_initialized = false;
 
 // Software volume control (0-100, stored as gain in 0.0-1.0 range)
 // Calibration: 25% is a more usable default than 5%
-static float s_volume_gain = 0.25f;  
+static float s_volume_gain = 0.40f;  
 static bool s_muted = false;
 
 // Mixer constants (scaled to provide headroom and prevent early clipping)

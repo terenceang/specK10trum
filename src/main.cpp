@@ -309,57 +309,47 @@ extern "C" void app_main(void) {
 
     bool wifi_connected = false;
     if (!wifi_prov_start()) {
-        ESP_LOGW(TAG, "wifi_prov_start() failed");
+        ESP_LOGE(TAG, "wifi_prov_start() failed");
+        boot_printStatus(6, 16, "Wi-Fi Init Failed!", 0xF800);
+        while(1) vTaskDelay(pdMS_TO_TICKS(1000));
     } else {
-        ESP_LOGI(TAG, "Waiting for Wi-Fi connection (60s timeout)...");
+        ESP_LOGI(TAG, "Waiting for Wi-Fi connection...");
         boot_printStatus(6, 16, "Wi-Fi Connect", 0xFFFF);
+        
         uint32_t elapsed = 0;
-        while (elapsed < 60000 && !wifi_connected) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            elapsed += 100;
-            if (wifi_prov_wait_for_ip(1)) {
+        bool ble_fallback_started = false;
+
+        while (!wifi_connected) {
+            if (wifi_prov_wait_for_ip(500)) {
                 wifi_connected = true;
+                break;
+            }
+            
+            elapsed += 500;
+            
+            // After 30 seconds of failing to connect with saved credentials, 
+            // ensure BLE provisioning is active if not already.
+            if (elapsed >= 30000 && !ble_fallback_started) {
+                ESP_LOGW(TAG, "Wi-Fi connection taking long, ensuring BLE provisioning is active...");
+                boot_printStatus(6, 16, "BLE Provisioning", 0xFFE0);
+                wifi_prov_start_ble_fallback();
+                ble_fallback_started = true;
+            }
+
+            // Optional: Provide some visual feedback every few seconds
+            if (elapsed % 5000 == 0) {
+                if (ble_fallback_started) {
+                    ESP_LOGI(TAG, "Still waiting for BLE provisioning... (%us)", (unsigned)(elapsed / 1000));
+                } else {
+                    ESP_LOGI(TAG, "Still trying saved Wi-Fi... (%us)", (unsigned)(elapsed / 1000));
+                }
             }
         }
+
         if (wifi_connected) {
             boot_printStatus(6, 16, "Wi-Fi ✓", 0x07E0);
             ESP_LOGI(TAG, "Wi-Fi connected!");
-        } else {
-            ESP_LOGW(TAG, "Wi-Fi connection timeout, starting BLE provisioning fallback...");
-            // Spinner for BLE provisioning
-            boot_printStatus(61, 16, "BLE Prov", 0xFFE0);
-            vTaskDelay(pdMS_TO_TICKS(500));
-            static bool ble_prov_attempted = false;
-            if (!ble_prov_attempted) {
-                ble_prov_attempted = true;
-                if (wifi_prov_start_ble_fallback()) {
-                    boot_printStatus(62, 16, "BLE Provisioning", 0xFFE0);
-                    bool ble_connected = false;
-                    uint32_t ble_elapsed = 0;
-                    while (!ble_connected && ble_elapsed < 120000) { // 2 min max for BLE
-                        vTaskDelay(pdMS_TO_TICKS(100));
-                        ble_elapsed += 100;
-                        if (wifi_prov_wait_for_ip(1)) {
-                            ble_connected = true;
-                        }
-                    }
-                    if (ble_connected) {
-                        wifi_connected = true;
-                        ESP_LOGI(TAG, "Wi-Fi connected after BLE provisioning!");
-                        boot_printStatus(65, 16, "Wi-Fi provisioned!", 0x07E0);
-                        vTaskDelay(pdMS_TO_TICKS(2000));
-                    } else {
-                        ESP_LOGE(TAG, "BLE provisioning failed or no IP obtained");
-                        boot_printStatus(6, 16, "Provisioning failed!", 0xF800);
-                        vTaskDelay(pdMS_TO_TICKS(2000));
-                        // Continue anyway, maybe we can run offline
-                    }
-                } else {
-                    ESP_LOGW(TAG, "BLE provisioning already running or failed to start");
-                }
-            } else {
-                ESP_LOGW(TAG, "BLE provisioning attempt already made, skipping repeat.");
-            }
+            vTaskDelay(pdMS_TO_TICKS(1000));
         }
     }
 
