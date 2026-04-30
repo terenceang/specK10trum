@@ -77,6 +77,10 @@ public:
     Z80* getCPU() { return &m_cpu; }
     Tape& tape() { return m_tape; }
 
+    // Unified tape start policy helpers (enforces compatibility and ROM state)
+    bool startTapePlayback();
+    bool startTapeInstaload();
+
     void flushTape();
     void logTapeTrap(const char* msg);
 

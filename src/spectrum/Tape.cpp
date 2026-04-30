@@ -493,10 +493,9 @@ bool Tape::canPlay(SpectrumBase* spectrum) const {
 void Tape::instaload(SpectrumBase* spectrum) {
     if (!m_enabled || m_num_blocks == 0) return;
 
-    if (!canPlay(spectrum)) {
-        ESP_LOGE("Tape", "instaload BLOCKED: 128K TAPE REQUIRES 128K MODEL");
-        return;
-    }
+    // Policy enforcement (canPlay/ROM check) is now handled in SpectrumBase::startTapeInstaload()
+    // and SpectrumBase::startTapePlayback(). 
+    // This low-level function focuses strictly on the memory injection.
 
     ESP_LOGI("Tape", "instaload: %d blocks in tape", m_num_blocks);
 

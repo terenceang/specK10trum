@@ -1,6 +1,7 @@
 #include "SpectrumBase.h"
 #include "Spectrum128K.h"
 #include "input/Input.h"
+#include "display/Display.h"
 #include <esp_log.h>
 #include <string.h>
 #include <cstdio>
@@ -151,6 +152,39 @@ void SpectrumBase::dumpMemoryMap() const {
     }
 }
 
+bool SpectrumBase::startTapePlayback() {
+    if (!m_tape.isLoaded()) return false;
+    
+    if (!m_tape.canPlay(this)) {
+        display_setOverlayText("128K TAPE REQUIRES 128K MODEL", 0xF800);
+        ESP_LOGW(TAG, "Tape playback blocked: 128K tape on 48K machine");
+        return false;
+    }
+    
+    if (is128k() && !isTapeRomActive()) {
+        display_setOverlayText("SWITCH TO 48K BASIC FOR TAPE", 0xF800);
+        ESP_LOGW(TAG, "Tape playback blocked: 128K machine not in Tape ROM mode");
+        return false;
+    }
+
+    m_tape.setMode(TapeMode::NORMAL);
+    m_tape.play();
+    return true;
+}
+
+bool SpectrumBase::startTapeInstaload() {
+    if (!m_tape.isLoaded()) return false;
+
+    if (!m_tape.canPlay(this)) {
+        display_setOverlayText("128K TAPE REQUIRES 128K MODEL", 0xF800);
+        ESP_LOGE(TAG, "Tape instaload blocked: 128K tape on 48K machine");
+        return false;
+    }
+
+    m_tape.instaload(this);
+    return true;
+}
+
 int SpectrumBase::step() {
     int tstates = z80_step(&m_cpu);
     m_pendingTapeTstates += tstates;
@@ -160,7 +194,8 @@ int SpectrumBase::step() {
     if (m_tape.getMode() == TapeMode::NORMAL && m_tape.isLoaded() && !m_tape.isPlaying()) {
         bool inLDBytes = (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
         if (!m_wasInLDBytes && inLDBytes) {
-            m_tape.play();
+            // Enforcement: verify compatibility and ROM state via centralized helper
+            startTapePlayback();
         }
         m_wasInLDBytes = inLDBytes;
     }

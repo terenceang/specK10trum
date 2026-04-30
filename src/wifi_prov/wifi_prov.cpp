@@ -468,7 +468,7 @@ bool wifi_prov_start()
         wifi_prov_mgr_deinit();
 
         const char* service_name = "PROV_speck10";
-        const char* pop = "12345678";
+        const char* pop = "abcd1234";
 
         err = esp_event_handler_instance_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID,
                                                   prov_event_cb, NULL, &s_prov_handler);

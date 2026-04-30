@@ -1,0 +1,56 @@
+// Backup of original wifi_prov.cpp before cleaning up comments.
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+// Queue for reconnect requests (holds retry count)
+static QueueHandle_t s_reconnect_queue = NULL;
+
+
+// ...existing code...
+
+
+// ...existing code...
+
+
+// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
+
+// ...existing code...
+
+
+
+// Reconnect task: waits for requests, handles backoff and reconnect outside event loop
+
+#include "wifi_prov/wifi_prov.h"
+#include <esp_log.h>
+
+static const char* TAG = "wifi_prov";
+
+#if defined(CONFIG_BT_ENABLED) && __has_include("wifi_provisioning/manager.h")
+
+#include <esp_err.h>
+#include "wifi_provisioning/manager.h"
+#include "wifi_provisioning/scheme_ble.h"
+#include "esp_wifi.h"
+#include "nvs_flash.h"
+#include "nvs.h"
+#include "esp_event.h"
+#include <esp_netif.h>
+#include <string.h>
+#include <stdlib.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+#include "display/Display.h"
+
+static SemaphoreHandle_t s_state_mutex = NULL;
+static bool s_provisioning_started = false;
+static bool s_watcher_started = false;
+static bool s_wifi_init_done = false;
+static bool s_sta_started = false;
+static bool s_ble_fallback_mode = false;
+static esp_event_handler_instance_t s_prov_handler = nullptr;
+static esp_event_handler_instance_t s_wifi_handler = nullptr;
+static esp_event_handler_instance_t s_ip_handler = nullptr;
+static SemaphoreHandle_t s_wifi_connected_sem = NULL;
+static char s_last_ip_str[32] = {0};
+
+// ...rest of the file remains unchanged...
