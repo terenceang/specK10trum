@@ -147,9 +147,9 @@ protected:
 
     uint8_t m_lastBorderColorForBuf[2] = {0xFF, 0xFF};
     size_t m_lastBorderEventCountForBuf[2] = {0xFFFFFFFF, 0xFFFFFFFF};
-    uint32_t m_lastBorderHashForBuf[2] = {0, 0};
+    uint32_t m_lastBorderHashForBuf[2] = {0xFFFFFFFF, 0xFFFFFFFF};
 
-    uint8_t m_dirtyBitsForBuf[2][96] = {{0xFF}, {0xFF}};
+    uint8_t m_dirtyBitsForBuf[2][96];
     uint8_t m_flashPhaseForBuf[2] = {0xFF, 0xFF};
 
     uint32_t m_ulaClocks;

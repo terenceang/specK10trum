@@ -46,6 +46,7 @@ SpectrumBase::SpectrumBase()
         m_memReadMap[i] = nullptr;
         m_memWriteMap[i] = nullptr;
     }
+    memset(m_dirtyBitsForBuf, 0xFF, sizeof(m_dirtyBitsForBuf));
     input_resetKeyboardRows();
 
     // Initialize CPU
@@ -90,6 +91,10 @@ void SpectrumBase::reset() {
     m_borderEventCount = 0;
     m_renderInitialBorderColor = 0;
     m_renderBorderEventCount = 0;
+    memset(m_dirtyBitsForBuf, 0xFF, sizeof(m_dirtyBitsForBuf));
+    m_lastBorderColorForBuf[0] = m_lastBorderColorForBuf[1] = 0xFF;
+    m_lastBorderEventCountForBuf[0] = m_lastBorderEventCountForBuf[1] = 0xFFFFFFFF;
+    m_lastBorderHashForBuf[0] = m_lastBorderHashForBuf[1] = 0xFFFFFFFF;
     input_resetKeyboardRows();
     m_ulaClocks = 0;
     m_ulaScanline = 0;
