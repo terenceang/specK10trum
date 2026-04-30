@@ -25,5 +25,5 @@ private:
 
     static void restoreCPUFromSnapshot(SpectrumBase* spectrum, const Z80SnapshotHeader& header, const uint8_t* filebuf, size_t got);
     static bool decompressZ80RLE(const uint8_t* src, size_t srclen, uint8_t* dest, size_t destlen, size_t offset);
-    static void loadCompressedMemPage(const uint8_t* src, size_t srclen, uint8_t* memPage, size_t memlen);
+    static bool loadCompressedMemPage(const uint8_t* src, size_t srclen, uint8_t* memPage, size_t memlen);
 };

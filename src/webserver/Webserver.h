@@ -3,6 +3,7 @@
 
 #include <esp_err.h>
 #include "spectrum/SpectrumBase.h"
+#include "command_queue.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,11 +20,8 @@ bool webserver_wait_for_ws_client(uint32_t timeout_ms);
 // Check if a WebSocket client is currently connected (non-blocking).
 bool webserver_is_ws_client_connected(void);
 
-// Apply any pending reset/snapshot-load requested via the HTTP API.
-// Must be called from the emulator task between frames so spectrum state
-// is mutated without racing the running CPU.
-// spectrum is passed by reference so model changes can replace the instance.
-void webserver_apply_pending(SpectrumBase*& spectrum);
+// Expose command queue accessor for use in main/emulator
+WebCommandQueue& webserver_get_command_queue();
 
 #ifdef __cplusplus
 }

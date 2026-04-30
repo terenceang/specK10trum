@@ -19,6 +19,13 @@ void input_setKeyboardRow(uint8_t row, uint8_t columns) {
     }
 }
 
+void input_update_key(uint8_t row, uint8_t bit, bool pressed) {
+    if (row < 8 && bit < 5) {
+        if (pressed) s_keyboardRows[row] &= ~(1u << bit); // Active low: 0 = pressed
+        else         s_keyboardRows[row] |=  (1u << bit);  // Active low: 1 = released
+    }
+}
+
 uint8_t input_getKeyboardRow(uint8_t row) {
     return s_keyboardRows[row & 0x07];
 }

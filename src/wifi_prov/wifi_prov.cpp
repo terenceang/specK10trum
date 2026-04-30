@@ -1,7 +1,33 @@
+// FreeRTOS includes must be in correct order!
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+// Queue for reconnect requests (holds retry count)
+static QueueHandle_t s_reconnect_queue = NULL;
+
+
+// ...existing code...
+
+
+// ...existing code...
+
+
+
+// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
+
+// ...existing code...
+
+
+
+
+// Reconnect task: waits for requests, handles backoff and reconnect outside event loop
+
 #include "wifi_prov/wifi_prov.h"
 #include <esp_log.h>
 
+
 static const char* TAG = "wifi_prov";
+
+
 
 #if defined(CONFIG_BT_ENABLED) && __has_include("wifi_provisioning/manager.h")
 
@@ -15,7 +41,6 @@ static const char* TAG = "wifi_prov";
 #include <esp_netif.h>
 #include <string.h>
 #include <stdlib.h>
-#include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include "display/Display.h"
@@ -73,6 +98,8 @@ static void nvs_watcher_task(void* pv)
     }
 }
 
+
+
 static int s_reconnect_retries = 0;
 static const int MAX_RECONNECT_RETRIES = 10;
 
@@ -83,6 +110,10 @@ static uint32_t get_reconnect_backoff_ms(int retry_count)
     uint32_t delay_s = 1 << (retry_count - 1);
     return (delay_s > 30 ? 30 : delay_s) * 1000;
 }
+
+#include "wifi_prov/wifi_reconnect_task.inc"
+
+// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max
 
 static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* data)
 {
@@ -176,26 +207,9 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
                 int current_retry = s_reconnect_retries;
                 xSemaphoreGive(s_state_mutex);
 
-                if (current_retry > MAX_RECONNECT_RETRIES) {
-                    ESP_LOGE(TAG, "Max retries reached (%d). Restarting BLE provisioning.", current_retry);
-                    display_setOverlayText("Wi-Fi Failed. Start BLE prov.", 0xF800);
-                    wifi_prov_stop();
-                    if (!wifi_prov_start()) {
-                        ESP_LOGE(TAG, "Failed to restart BLE provisioning");
-                    }
-                } else {
-                    char buf[64];
-                    snprintf(buf, sizeof(buf), "Wi-Fi Drop (R:%d) Retry %d/%d",
-                             disconnected->reason, current_retry, MAX_RECONNECT_RETRIES);
-                    display_setOverlayText(buf, 0xFFE0);
-
-                    uint32_t backoff_ms = get_reconnect_backoff_ms(current_retry);
-                    if (backoff_ms > 0) {
-                        ESP_LOGI(TAG, "Waiting %lu ms before retry %d", backoff_ms, current_retry);
-                        vTaskDelay(pdMS_TO_TICKS(backoff_ms));
-                    }
-                    ESP_LOGI(TAG, "Attempting WiFi reconnect (retry %d/%d)", current_retry, MAX_RECONNECT_RETRIES);
-                    esp_wifi_connect();
+                // Post reconnect request to the reconnect task (it handles both backoff AND max-retry fallback)
+                if (s_reconnect_queue) {
+                    xQueueSend(s_reconnect_queue, &current_retry, 0);
                 }
             }
             break;
@@ -351,6 +365,13 @@ static esp_err_t ensure_wifi_initialized()
 // Start BLE-based Wi-Fi provisioning, or connect to saved credentials if provisioned.
 bool wifi_prov_start()
 {
+    // Create reconnect queue and task if not already running
+    if (!s_reconnect_queue) {
+        s_reconnect_queue = xQueueCreate(2, sizeof(int));
+        if (s_reconnect_queue) {
+            xTaskCreate(wifi_reconnect_task, "wifi_reconnect", 3072, NULL, 4, NULL);
+        }
+    }
     if (!s_state_mutex) {
         s_state_mutex = xSemaphoreCreateMutex();
         if (!s_state_mutex) {

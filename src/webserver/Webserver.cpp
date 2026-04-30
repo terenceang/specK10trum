@@ -15,20 +15,12 @@
 #include <dirent.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include "webserver/command_queue.h"
 
 static const char* TAG = "Webserver";
 static const char* WWW_ROOT = "/spiffs/www";
 static const char* SPIFFS_ROOT = "/spiffs";
 static httpd_handle_t s_server = NULL;
-static SpectrumBase* s_spectrum = NULL;
-
-// Pending state changes posted by HTTP handlers
-static volatile bool s_pending_reset = false;
-static volatile bool s_pending_load  = false;
-static volatile bool s_pending_instant_load = false;
-static volatile bool s_pending_model_change = false;
-static char s_pending_load_path[512];
-static char s_pending_model[32] = "48k";
 
 static const char* mime_for(const char* path)
 {
@@ -154,94 +146,26 @@ static esp_err_t file_load_handler(httpd_req_t *req)
             filePath = "/spiffs/snapshots";
         }
     }
-    snprintf(s_pending_load_path, sizeof(s_pending_load_path), "%s/%s", filePath, filename);
-    s_pending_load = true;
+    
+    char fullPath[512];
+    snprintf(fullPath, sizeof(fullPath), "%s/%s", filePath, filename);
+
+    WebCommand command;
+    command.type = WebCommandType::LoadFile;
+    command.arg1 = fullPath;
+    webserver_get_command_queue().push(command);
+
     httpd_resp_sendstr(req, "OK");
     return ESP_OK;
 }
 
 static esp_err_t reset_handler(httpd_req_t *req)
 {
-    s_pending_reset = true;
-    // Stop tape on reset to prevent auto-play after cold boot
-    if (s_spectrum) s_spectrum->tape().stop();
+    WebCommand command;
+    command.type = WebCommandType::Reset;
+    webserver_get_command_queue().push(command);
     httpd_resp_sendstr(req, "OK");
     return ESP_OK;
-}
-
-void webserver_apply_pending(SpectrumBase*& spectrum)
-{
-    if (!spectrum) return;
-
-    if (s_pending_model_change) {
-        s_pending_model_change = false;
-        display_setOverlayText("CHANGING MODEL...", 0xFFFF);
-
-        bool is128K = strcmp(s_pending_model, "128k") == 0;
-        const char* romFile = is128K ? "/spiffs/128k.rom" : "/spiffs/48k.rom";
-
-        SpectrumBase* newSpectrum = is128K ? (SpectrumBase*)new Spectrum128K() : (SpectrumBase*)new Spectrum48K();
-        if (newSpectrum) {
-            if (newSpectrum->loadROM(romFile)) {
-                delete spectrum;
-                spectrum = newSpectrum;
-                display_pause_for_reset();
-                spectrum->reset();
-                display_resume_after_reset();
-                display_clearOverlay();
-                ESP_LOGI(TAG, "Model changed to %s", s_pending_model);
-            } else {
-                delete newSpectrum;
-                display_setOverlayText("ROM LOAD FAILED", 0xF800);
-                ESP_LOGE(TAG, "Failed to load ROM for model change");
-            }
-        } else {
-            display_setOverlayText("MODEL CHANGE FAILED", 0xF800);
-            ESP_LOGE(TAG, "Failed to create spectrum instance");
-        }
-        return;
-    }
-
-    if (s_pending_load) {
-        s_pending_load = false;
-        display_setOverlayText("LOADING...", 0xFFFF);
-        const char* ext = strrchr(s_pending_load_path, '.');
-        if (ext && (strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 || strcasecmp(ext, ".tsx") == 0)) {
-            if (!spectrum->tape().load(s_pending_load_path)) display_setOverlayText("TAPE LOAD FAILED", 0xF800);
-            else display_clearOverlay();
-        } else if (ext && strcasecmp(ext, ".rom") == 0) {
-            if (!spectrum->loadROM(s_pending_load_path)) display_setOverlayText("ROM LOAD FAILED", 0xF800);
-            else {
-                display_pause_for_reset();
-                spectrum->reset();
-                display_resume_after_reset();
-                display_clearOverlay();
-            }
-        } else {
-            spectrum->tape().stop();
-            if (!Snapshot::load(spectrum, s_pending_load_path)) display_setOverlayText("SNAPSHOT LOAD FAILED", 0xF800);
-            else display_clearOverlay();
-        }
-        s_pending_reset = false;
-        return;
-    }
-    if (s_pending_reset) {
-        s_pending_reset = false;
-        display_clearOverlay();
-        display_pause_for_reset();
-        spectrum->reset();
-        display_resume_after_reset();
-        if (s_pending_instant_load) {
-            Z80* cpu = spectrum->getCPU();
-            const int max_tstates = 8000000;
-            int spent = 0;
-            while (spent < max_tstates && cpu->pc != 0x12A9) { spent += spectrum->step(); }
-        }
-    }
-    if (s_pending_instant_load) {
-        s_pending_instant_load = false;
-        spectrum->tape().instaload(spectrum);
-    }
 }
 
 static esp_err_t health_handler(httpd_req_t *req)
@@ -307,8 +231,10 @@ static esp_err_t model_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    strcpy(s_pending_model, model);
-    s_pending_model_change = true;
+    WebCommand command;
+    command.type = WebCommandType::ChangeModel;
+    command.arg1 = model;
+    webserver_get_command_queue().push(command);
 
     char response[100];
     snprintf(response, sizeof(response), "{\"status\":\"ok\",\"model\":\"%s\"}", model);
@@ -320,25 +246,40 @@ static esp_err_t tape_handler(httpd_req_t *req)
     char buf[1024];
     if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
     char cmd[32];
+    WebCommand command;
     if (httpd_query_key_value(buf, "cmd", cmd, sizeof(cmd)) != ESP_OK) return ESP_FAIL;
     if (strcmp(cmd, "load") == 0) {
         char filename[256];
         if (httpd_query_key_value(buf, "file", filename, sizeof(filename)) == ESP_OK) {
             char path[512];
             snprintf(path, sizeof(path), "%s/%s", SPIFFS_ROOT, filename);
-            s_spectrum->tape().load(path);
+            command.type = WebCommandType::TapeCmd;
+            command.arg1 = "load";
+            command.arg2 = path;
         }
     } else if (strcmp(cmd, "play") == 0) {
-        s_spectrum->tape().setMode(TapeMode::NORMAL);
-        s_spectrum->tape().play();
-    } else if (strcmp(cmd, "stop") == 0) s_spectrum->tape().stop();
-    else if (strcmp(cmd, "rewind") == 0) s_spectrum->tape().rewind();
-    else if (strcmp(cmd, "ffwd") == 0) s_spectrum->tape().fastForward();
-    else if (strcmp(cmd, "pause") == 0) s_spectrum->tape().pause();
-    else if (strcmp(cmd, "eject") == 0) s_spectrum->tape().eject();
-    else if (strcmp(cmd, "instant_load") == 0) {
-        s_pending_reset = true;
-        s_pending_instant_load = true;
+        command.type = WebCommandType::TapeCmd;
+        command.arg1 = "play";
+    } else if (strcmp(cmd, "stop") == 0) {
+        command.type = WebCommandType::TapeCmd;
+        command.arg1 = "stop";
+    } else if (strcmp(cmd, "rewind") == 0) {
+        command.type = WebCommandType::TapeCmd;
+        command.arg1 = "rewind";
+    } else if (strcmp(cmd, "ffwd") == 0) {
+        command.type = WebCommandType::TapeCmd;
+        command.arg1 = "ffwd";
+    } else if (strcmp(cmd, "pause") == 0) {
+        command.type = WebCommandType::TapeCmd;
+        command.arg1 = "pause";
+    } else if (strcmp(cmd, "eject") == 0) {
+        command.type = WebCommandType::TapeCmd;
+        command.arg1 = "eject";
+    } else if (strcmp(cmd, "instant_load") == 0) {
+        command.type = WebCommandType::TapeInstantLoad;
+    }
+    if (command.type != WebCommandType::None) {
+        webserver_get_command_queue().push(command);
     }
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_sendstr(req, "OK");
@@ -363,33 +304,28 @@ static esp_err_t ws_handler(httpd_req_t *req)
         if (ret != ESP_OK) return ret;
         if (ws_pkt.type == HTTPD_WS_TYPE_BINARY && ws_pkt.len == 3) {
             uint8_t row = buffer[0], bit = buffer[1], pressed = buffer[2];
-            if (row == 0xFF) {
-                input_setJoystickBit(bit, pressed != 0);
-            } else if (row < 8 && bit < 5) {
-                uint8_t cur = input_getKeyboardRow(row);
-                if (pressed) cur &= ~(1 << bit); else cur |= (1 << bit);
-                input_setKeyboardRow(row, cur);
-
-                // Verification: Log key events and verify they were stored
-                uint8_t verified = input_getKeyboardRow(row);
-                if (row == 5 || row == 7 || verified != cur) {
-                    ESP_LOGI(TAG, "Key: row=%d bit=%d pressed=%d row_val=0x%02X verified=0x%02X",
-                             row, bit, pressed, cur, verified);
-                }
-            }
+            WebCommand command;
+            command.type = WebCommandType::KeyboardInput;
+            command.int_arg1 = row;
+            command.int_arg2 = (bit & 0xFF) | ((pressed & 0xFF) << 8);
+            webserver_get_command_queue().push(command);
         } else if (ws_pkt.type == HTTPD_WS_TYPE_TEXT) {
             buffer[ws_pkt.len] = '\0';
             const char* json = (const char*)buffer;
-            if (strstr(json, "\"cmd\":\"tape_play\"")) s_spectrum->tape().play();
-            else if (strstr(json, "\"cmd\":\"tape_stop\"")) s_spectrum->tape().stop();
-            else if (strstr(json, "\"cmd\":\"tape_rewind\"")) s_spectrum->tape().rewind();
-            else if (strstr(json, "\"cmd\":\"tape_ffwd\"")) s_spectrum->tape().fastForward();
-            else if (strstr(json, "\"cmd\":\"tape_pause\"")) s_spectrum->tape().pause();
-            else if (strstr(json, "\"cmd\":\"tape_eject\"")) s_spectrum->tape().eject();
-            else if (strstr(json, "\"cmd\":\"tape_instaload\"")) { s_pending_reset = true; s_pending_instant_load = true; }
-            else if (strstr(json, "\"cmd\":\"tape_mode_instaload\"")) s_spectrum->tape().setMode(TapeMode::INSTANT);
-            else if (strstr(json, "\"cmd\":\"tape_mode_normal\"")) s_spectrum->tape().setMode(TapeMode::NORMAL);
-            else if (strstr(json, "\"cmd\":\"tape_mode_player\"")) s_spectrum->tape().setMode(TapeMode::PLAYER);
+            WebCommand command;
+            if (strstr(json, "\"cmd\":\"tape_play\"")) { command.type = WebCommandType::TapeCmd; command.arg1 = "play"; }
+            else if (strstr(json, "\"cmd\":\"tape_stop\"")) { command.type = WebCommandType::TapeCmd; command.arg1 = "stop"; }
+            else if (strstr(json, "\"cmd\":\"tape_rewind\"")) { command.type = WebCommandType::TapeCmd; command.arg1 = "rewind"; }
+            else if (strstr(json, "\"cmd\":\"tape_ffwd\"")) { command.type = WebCommandType::TapeCmd; command.arg1 = "ffwd"; }
+            else if (strstr(json, "\"cmd\":\"tape_pause\"")) { command.type = WebCommandType::TapeCmd; command.arg1 = "pause"; }
+            else if (strstr(json, "\"cmd\":\"tape_eject\"")) { command.type = WebCommandType::TapeCmd; command.arg1 = "eject"; }
+            else if (strstr(json, "\"cmd\":\"tape_instaload\"")) { command.type = WebCommandType::TapeInstantLoad; }
+            else if (strstr(json, "\"cmd\":\"tape_mode_instaload\"")) { command.type = WebCommandType::TapeSetMode; command.int_arg1 = (int)TapeMode::INSTANT; }
+            else if (strstr(json, "\"cmd\":\"tape_mode_normal\"")) { command.type = WebCommandType::TapeSetMode; command.int_arg1 = (int)TapeMode::NORMAL; }
+            else if (strstr(json, "\"cmd\":\"tape_mode_player\"")) { command.type = WebCommandType::TapeSetMode; command.int_arg1 = (int)TapeMode::PLAYER; }
+            if (command.type != WebCommandType::None) {
+                webserver_get_command_queue().push(command);
+            }
         }
     }
     return ESP_OK;
@@ -430,8 +366,6 @@ static void ws_keepalive_task(void* arg)
 
 esp_err_t webserver_start(SpectrumBase* spectrum)
 {
-    s_spectrum = spectrum;
-
     // If server is already running, don't start again
     if (s_server) {
         ESP_LOGW(TAG, "Webserver already running, skipping restart");
@@ -455,8 +389,6 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
         return ret;
     }
 
-    // Start keepalive ping task to keep WebSocket connections alive
-    // Pinned to Core 0 to decouple network I/O from Core 1 display/audio pipeline
     static bool keepalive_started = false;
     if (!keepalive_started) {
         keepalive_started = true;
@@ -547,4 +479,12 @@ esp_err_t webserver_ensure_started(SpectrumBase* spectrum)
     }
     ESP_LOGI(TAG, "Webserver not running, starting now");
     return webserver_start(spectrum);
+}
+
+// Global command queue instance for HTTP/WebSocket to emulator communication
+static WebCommandQueue s_commandQueue;
+
+// Expose accessor for emulator task
+WebCommandQueue& webserver_get_command_queue() {
+    return s_commandQueue;
 }

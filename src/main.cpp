@@ -16,6 +16,7 @@
 #include "expander/Expander.h"
 #include "audio/Audio.h"
 #include "spectrum/Tape.h"
+#include "spectrum/Snapshot.h"
 #include "spectrum/Spectrum48K.h"
 #include "spectrum/Spectrum128K.h"
 #include "input/Input.h"
@@ -141,8 +142,104 @@ static void emulator_task(void* pvParameters) {
     const int T_STATES_PER_FRAME = 69888; // 3.5 MHz / 50.08 Hz
 
     while (true) {
-        // Apply any pending commands from the webserver (reset, snapshot load)
-        webserver_apply_pending(spectrum);
+        // Process all commands in the queue (replaces webserver_apply_pending)
+        WebCommand cmd;
+        auto& queue = webserver_get_command_queue();
+        while (queue.pop(cmd)) {
+            switch (cmd.type) {
+                case WebCommandType::Reset:
+                    display_clearOverlay();
+                    display_pause_for_reset();
+                    spectrum->reset();
+                    display_resume_after_reset();
+                    ESP_LOGI(TAG, "Spectrum Reset");
+                    break;
+                case WebCommandType::ChangeModel:
+                {
+                    display_setOverlayText("CHANGING MODEL...", 0xFFFF);
+                    bool is128K = (cmd.arg1 == "128k");
+                    const char* romFile = is128K ? "/spiffs/128k.rom" : "/spiffs/48k.rom";
+                    SpectrumBase* newSpectrum = createSpectrumInstance(is128K);
+                    if (newSpectrum) {
+                        if (newSpectrum->loadROM(romFile)) {
+                            delete spectrum;
+                            spectrum = newSpectrum;
+                            display_pause_for_reset();
+                            spectrum->reset();
+                            display_resume_after_reset();
+                            display_clearOverlay();
+                            ESP_LOGI(TAG, "Model changed to %s", cmd.arg1.c_str());
+                        } else {
+                            delete newSpectrum;
+                            display_setOverlayText("ROM LOAD FAILED", 0xF800);
+                            ESP_LOGE(TAG, "Failed to load ROM for model change");
+                        }
+                    }
+                    break;
+                }
+                case WebCommandType::LoadFile:
+                {
+                    const char* path = cmd.arg1.c_str();
+                    display_setOverlayText("LOADING...", 0xFFFF);
+                    const char* ext = strrchr(path, '.');
+                    if (ext && (strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 || strcasecmp(ext, ".tsx") == 0)) {
+                        if (!spectrum->tape().load(path)) display_setOverlayText("TAPE LOAD FAILED", 0xF800);
+                        else display_clearOverlay();
+                    } else if (ext && strcasecmp(ext, ".rom") == 0) {
+                        if (!spectrum->loadROM(path)) display_setOverlayText("ROM LOAD FAILED", 0xF800);
+                        else {
+                            display_pause_for_reset();
+                            spectrum->reset();
+                            display_resume_after_reset();
+                            display_clearOverlay();
+                        }
+                    } else {
+                        spectrum->tape().stop();
+                        if (!Snapshot::load(spectrum, path)) display_setOverlayText("SNAPSHOT LOAD FAILED", 0xF800);
+                        else display_clearOverlay();
+                    }
+                    break;
+                }
+                case WebCommandType::TapeCmd:
+                    if (cmd.arg1 == "load") {
+                        spectrum->tape().load(cmd.arg2.c_str());
+                    } else if (cmd.arg1 == "play") {
+                        spectrum->tape().setMode(TapeMode::NORMAL);
+                        spectrum->tape().play();
+                    } else if (cmd.arg1 == "stop") {
+                        spectrum->tape().stop();
+                    } else if (cmd.arg1 == "rewind") {
+                        spectrum->tape().rewind();
+                    } else if (cmd.arg1 == "ffwd") {
+                        spectrum->tape().fastForward();
+                    } else if (cmd.arg1 == "pause") {
+                        spectrum->tape().pause();
+                    } else if (cmd.arg1 == "eject") {
+                        spectrum->tape().eject();
+                    }
+                    break;
+                case WebCommandType::TapeInstantLoad:
+                    spectrum->tape().instaload(spectrum);
+                    break;
+                case WebCommandType::TapeSetMode:
+                    spectrum->tape().setMode(static_cast<TapeMode>(cmd.int_arg1));
+                    break;
+                case WebCommandType::KeyboardInput:
+                {
+                    uint8_t row = (uint8_t)cmd.int_arg1;
+                    uint8_t bit = (uint8_t)(cmd.int_arg2 & 0xFF);
+                    bool pressed = (bool)((cmd.int_arg2 >> 8) & 0xFF);
+                    if (row == 0xFF) {
+                        input_setJoystickBit(bit, pressed);
+                    } else {
+                        input_update_key(row, bit, pressed);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
 
         int tStates = 0;
         instr_cpu_start();

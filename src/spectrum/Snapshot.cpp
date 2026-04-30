@@ -19,8 +19,12 @@ bool Snapshot::load(SpectrumBase* spectrum, const char* filepath) {
 
     uint8_t* filebuf = (uint8_t*)spectrum->allocateMemory(got, "SnapshotFile");
     if (!filebuf) { fclose(f); return false; }
-    fread(filebuf, 1, got, f);
+    size_t read_bytes = fread(filebuf, 1, got, f);
     fclose(f);
+    if (read_bytes != got) {
+        free(filebuf);
+        return false;
+    }
 
     Z80SnapshotHeader header = {};
     memset(&header, 0, sizeof(header));
@@ -73,10 +77,20 @@ bool Snapshot::load(SpectrumBase* spectrum, const char* filepath) {
                     }
                 }
 
+                bool allPagesOk = true;
+                bool foundAnyPage = false;
                 while (pos + 3 <= got) {
                     uint16_t compLen = (uint16_t)filebuf[pos] | ((uint16_t)filebuf[pos + 1] << 8);
                     uint8_t pageId = filebuf[pos + 2];
                     pos += 3;
+                    
+                    size_t dataLen = (compLen == 0xFFFF) ? 0x4000 : compLen;
+                    if (pos + dataLen > got) {
+                        ESP_LOGE(TAG, "Snapshot truncated: pos=%u dataLen=%u got=%u", pos, dataLen, got);
+                        allPagesOk = false;
+                        break;
+                    }
+
                     uint8_t* dest = nullptr;
                     if (s128 && filebuf[34] >= 3 && pageId >= 3 && pageId < 11) {
                         // 128K snapshot loading into 128K machine
@@ -92,21 +106,34 @@ bool Snapshot::load(SpectrumBase* spectrum, const char* filepath) {
                     }
 
                     if (dest) {
+                        bool pageSuccess = false;
                         if (compLen == 0xFFFF) {
-                            if (pos + 0x4000 <= got) memcpy(dest, filebuf + pos, 0x4000);
+                            memcpy(dest, filebuf + pos, 0x4000);
+                            pageSuccess = true;
                         } else {
-                            loadCompressedMemPage(filebuf + pos, compLen, dest, 0x4000);
+                            pageSuccess = loadCompressedMemPage(filebuf + pos, compLen, dest, 0x4000);
                         }
+                        if (!pageSuccess) {
+                            ESP_LOGE(TAG, "Failed to decompress page %u", pageId);
+                            allPagesOk = false;
+                        }
+                        foundAnyPage = true;
+                    }
+                    pos += dataLen;
+                }
+                
+                if (allPagesOk && foundAnyPage) {
+                    if (s128 && filebuf[34] < 3) {
+                        // It was a 48K snapshot loaded directly into 128K machine, ensure paging is set to 48K state
+                        s128->writePort(0x7FFD, 0x30);
+                    }
+                    if (tmp48) {
+                        success = spectrum->applySnapshotData(tmp48, 49152);
+                    } else {
                         success = true;
                     }
-                    pos += (compLen == 0xFFFF) ? 0x4000 : compLen;
                 }
-                if (s128 && filebuf[34] < 3) {
-                    // It was a 48K snapshot loaded directly into 128K machine, ensure paging is set to 48K state
-                    s128->writePort(0x7FFD, 0x30);
-                }
-
-                if (tmp48) { if (success) spectrum->applySnapshotData(tmp48, 49152); free(tmp48); }
+                if (tmp48) free(tmp48);
             }
             free(tmpout);
         }
@@ -195,10 +222,10 @@ bool Snapshot::decompressZ80RLE(const uint8_t* src, size_t srclen, uint8_t* dest
             dest[outpos++] = src[inpos++];
         }
     }
-    return outpos > 0;
+    return outpos == destlen;
 }
 
-void Snapshot::loadCompressedMemPage(const uint8_t* src, size_t srclen, uint8_t* memPage, size_t memlen) {
+bool Snapshot::loadCompressedMemPage(const uint8_t* src, size_t srclen, uint8_t* memPage, size_t memlen) {
     size_t dataOff = 0;
     int ed_cnt = 0;
     size_t memidx = 0;
@@ -227,4 +254,5 @@ void Snapshot::loadCompressedMemPage(const uint8_t* src, size_t srclen, uint8_t*
     if (ed_cnt == 1 && memidx < memlen) {
         memPage[memidx++] = 0xED;
     }
+    return memidx == memlen;
 }
