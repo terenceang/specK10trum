@@ -7,8 +7,10 @@ static constexpr int FRAME_T_STATES = FRAME_LINES * T_STATES_PER_LINE;
 
 Beeper::Beeper()
     : m_renderedSamples(0)
-    , m_nextSampleCorrection(0.0f)
+    , m_speakerNextCorrection(0.0f)
+    , m_tapeNextCorrection(0.0f)
     , m_speakerLevel(0)
+    , m_tapeLevel(0)
     , m_externalEar(false)
 {
     memset(m_frameBuffer, 0, sizeof(m_frameBuffer));
@@ -17,50 +19,87 @@ Beeper::Beeper()
 
 void Beeper::reset() {
     m_renderedSamples = 0;
-    m_nextSampleCorrection = 0.0f;
+    m_speakerNextCorrection = 0.0f;
+    m_tapeNextCorrection = 0.0f;
     m_speakerLevel = 0;
+    m_tapeLevel = 0;
     m_externalEar = false;
     memset(m_frameBuffer, 0, sizeof(m_frameBuffer));
     memset(m_renderBuffer, 0, sizeof(m_renderBuffer));
 }
 
-void Beeper::recordEvent(uint32_t tstates, uint8_t level) {
+void Beeper::recordSpeakerEvent(uint32_t tstates, uint8_t level) {
     if (level == m_speakerLevel) return;
 
-    // Render up to this event
+    // Render up to this event using previous levels
     renderTo(tstates);
 
-    // Apply PolyBLEP transition at current T-state
+    // Apply PolyBLEP transition for speaker bit.
+    // Speaker is modeled as a bipolar waveform (-AMPLITUDE to +AMPLITUDE).
+    // Amplitude comes from speakerAmp() so this matches renderSamples().
     int i = (int)(((uint64_t)tstates * SAMPLES_PER_FRAME) / FRAME_T_STATES);
     if (i < SAMPLES_PER_FRAME) {
-        float old_v = m_speakerLevel ? (float)AMPLITUDE : -(float)AMPLITUDE;
-        float new_v = level ? (float)AMPLITUDE : -(float)AMPLITUDE;
+        const float vol_amp = speakerAmp();
+        float old_v = m_speakerLevel ? vol_amp : -vol_amp;
+        float new_v = level ? vol_amp : -vol_amp;
         float h = new_v - old_v;
 
-        // Fractional position p in [0, 1] relative to sample start
         uint32_t start_t = (uint32_t)(((uint64_t)i * FRAME_T_STATES) / SAMPLES_PER_FRAME);
         float p = (float)(tstates - start_t) * (float)SAMPLES_PER_FRAME / (float)FRAME_T_STATES;
         if (p > 1.0f) p = 1.0f;
 
-        // PolyBLEP first half-step (at current sample)
-        // Correction: h * (p - p^2/2 - 0.5)
         float p_sq = p * p;
         float correction_i = h * (p - p_sq * 0.5f - 0.5f);
 
-        // Apply to current sample (add, since sample may already be partially rendered)
         int16_t current = m_frameBuffer[i];
         int32_t corrected = (int32_t)current + (int32_t)correction_i;
         if (corrected > 32767) corrected = 32767;
         else if (corrected < -32768) corrected = -32768;
         m_frameBuffer[i] = (int16_t)corrected;
 
-        // Store correction for next sample (h * p^2/2)
         if (i + 1 < SAMPLES_PER_FRAME) {
-            m_nextSampleCorrection = h * p_sq * 0.5f;
+            m_speakerNextCorrection += h * p_sq * 0.5f;
         }
     }
 
     m_speakerLevel = level;
+}
+
+void Beeper::recordTapeEvent(uint32_t tstates, uint8_t level) {
+    if (level == m_tapeLevel) return;
+
+    // Render up to this event using previous levels
+    renderTo(tstates);
+
+    // Apply PolyBLEP transition for tape EAR bit.
+    // Tape is modeled as a smaller unipolar source (0 to tape_amp).
+    // Amplitude comes from tapeAmp() so this matches renderSamples().
+    int i = (int)(((uint64_t)tstates * SAMPLES_PER_FRAME) / FRAME_T_STATES);
+    if (i < SAMPLES_PER_FRAME) {
+        const float tape_amp = tapeAmp();
+        float old_v = m_tapeLevel ? tape_amp : 0.0f;
+        float new_v = level ? tape_amp : 0.0f;
+        float h = new_v - old_v;
+
+        uint32_t start_t = (uint32_t)(((uint64_t)i * FRAME_T_STATES) / SAMPLES_PER_FRAME);
+        float p = (float)(tstates - start_t) * (float)SAMPLES_PER_FRAME / (float)FRAME_T_STATES;
+        if (p > 1.0f) p = 1.0f;
+
+        float p_sq = p * p;
+        float correction_i = h * (p - p_sq * 0.5f - 0.5f);
+
+        int16_t current = m_frameBuffer[i];
+        int32_t corrected = (int32_t)current + (int32_t)correction_i;
+        if (corrected > 32767) corrected = 32767;
+        else if (corrected < -32768) corrected = -32768;
+        m_frameBuffer[i] = (int16_t)corrected;
+
+        if (i + 1 < SAMPLES_PER_FRAME) {
+            m_tapeNextCorrection += h * p_sq * 0.5f;
+        }
+    }
+
+    m_tapeLevel = level;
 }
 
 void Beeper::renderTo(uint32_t tstates) {
@@ -74,12 +113,22 @@ void Beeper::renderTo(uint32_t tstates) {
 }
 
 void Beeper::renderSamples(int start, int end) {
-    float volume_scale = m_volume * AMPLITUDE;
+    const float speaker_vol = speakerAmp();
+    const float tape_vol    = tapeAmp();
 
     for (int i = start; i < end; ++i) {
-        float y = m_speakerLevel ? volume_scale : -volume_scale;
-        y += m_nextSampleCorrection;
-        m_nextSampleCorrection = 0.0f;
+        // Speaker is bipolar (-AMP to +AMP)
+        float s_base = m_speakerLevel ? speaker_vol : -speaker_vol;
+        // Tape is unipolar (0 to tape_vol)
+        float t_base = m_tapeLevel ? tape_vol : 0.0f;
+        
+        float y = s_base + t_base;
+
+        // Apply independent correction tails
+        y += m_speakerNextCorrection;
+        y += m_tapeNextCorrection;
+        m_speakerNextCorrection = 0.0f;
+        m_tapeNextCorrection = 0.0f;
 
         if (y > 32767.0f) y = 32767.0f;
         else if (y < -32768.0f) y = -32768.0f;

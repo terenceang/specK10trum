@@ -18,7 +18,7 @@ void SpectrumBase::writePortFE(uint8_t value) {
 
     // Speaker (bit 4) handling: delegate to Beeper
     m_lastSpeakerBit = (value >> 4) & 0x01;
-    m_beeper.recordEvent(m_ulaClocks, m_lastSpeakerBit | (m_tape.getEar() ? 1 : 0));
+    m_beeper.recordSpeakerEvent(m_ulaClocks, m_lastSpeakerBit);
 }
 
 uint8_t SpectrumBase::readPortFE(uint16_t port) {
@@ -31,7 +31,7 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
     // Then, proactively advance by 11 T-states (the duration of the IN A, (n) instruction).
     // This allows sampling EAR at the exact machine cycle it is actually read.
     m_tape.advance(11, [&](uint32_t offset, bool ear) {
-        m_beeper.recordEvent(m_ulaClocks + offset, m_lastSpeakerBit);
+        m_beeper.recordTapeEvent(m_ulaClocks + offset, ear ? 1 : 0);
         m_lastTapeEar = ear;
     });
 

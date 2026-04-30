@@ -40,6 +40,7 @@ idf_component_register(SRCS
     "../test/test_runner.cpp"
     "../test/test_memory.cpp"
     "../test/test_128k_banking.cpp"
+    "../test/test_audio.cpp"
     "../test/z80_test.c"
     REQUIRES ${COMPONENT_REQS}
 )

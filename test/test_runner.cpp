@@ -1,5 +1,6 @@
 #include "test_memory.h"
 #include "test_128k_banking.h"
+#include "test_audio.h"
 #include "z80_test.h"
 #include "test_config.h"
 #include <esp_log.h>
@@ -30,21 +31,25 @@ public:
         if (strcmp(modelName, "128K") == 0) {
             bankingTestsPassed = BankingTest::runAllTests(spectrum);
         }
-        
+
+        // Audio/Beeper deterministic regression tests (model-independent)
+        bool audioTestsPassed = AudioTest::runAllTests();
+
         // Final summary
         printf("╔══════════════════════════════════════════════════╗\n");
         printf("║                  TEST SUMMARY                  ║\n");
         printf("╚══════════════════════════════════════════════════╝\n");
         printf("  CPU Core Tests:  %s\n", cpuTestsPassed ? "PASSED ✓" : "FAILED ✗");
         printf("  Memory Tests:    %s\n", memoryTestsPassed ? "PASSED ✓" : "FAILED ✗");
-        
+        printf("  Audio Tests:     %s\n", audioTestsPassed ? "PASSED ✓" : "FAILED ✗");
+
         if (strcmp(modelName, "128K") == 0) {
             printf("  Banking Tests:   %s\n", bankingTestsPassed ? "PASSED ✓" : "FAILED ✗");
         }
-        
+
         printf("\n");
-        
-        if (cpuTestsPassed && memoryTestsPassed && bankingTestsPassed) {
+
+        if (cpuTestsPassed && memoryTestsPassed && bankingTestsPassed && audioTestsPassed) {
             printf("✓ All tests passed! System is ready.\n");
         } else {
             printf("✗ Some tests failed. Check system configuration.\n");

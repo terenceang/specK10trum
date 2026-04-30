@@ -3,6 +3,7 @@
 #include <driver/i2s_common.h>
 #include <driver/i2s_std.h>
 #include <driver/gpio.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <string.h>
 #include "../../components/audio_stream/include/board_pins_config.h"
@@ -12,13 +13,35 @@ static const int SAMPLE_RATE = 44100;
 static const int I2S_PORT = I2S_NUM_0;
 #define SAMPLES_PER_FRAME SpectrumBase::SAMPLES_PER_FRAME
 
+// Audio diagnostics
+struct AudioStats {
+    uint32_t successful_writes;
+    uint32_t timeout_writes;
+    uint32_t error_writes;
+    uint32_t bytes_written;
+    uint32_t max_peak_sample;
+    uint32_t near_clip_frames;  // frames whose peak exceeded NEAR_CLIP_THRESHOLD
+    int64_t  last_log_ms;
+};
+static AudioStats s_stats = {0};
+
+// Frames hotter than this are considered "near clipping" and counted for
+// telemetry. Threshold is ~92% of int16 range, well above typical content
+// peaks but below the hard saturation point.
+static constexpr uint32_t NEAR_CLIP_THRESHOLD = 30000;
+
 // I2S handle
 static i2s_chan_handle_t s_tx_handle = NULL;
 static bool s_initialized = false;
 
 // Software volume control (0-100, stored as gain in 0.0-1.0 range)
-static float s_volume_gain = 0.05f;  // 5% default
+// Calibration: 25% is a more usable default than 5%
+static float s_volume_gain = 0.25f;  
 static bool s_muted = false;
+
+// Mixer constants (scaled to provide headroom and prevent early clipping)
+static constexpr float BEEPER_MIX_GAIN = 0.70f;
+static constexpr float PSG_MIX_GAIN    = 0.60f;
 
 // Static audio buffers to avoid large stack allocations
 static int16_t s_frame_buffer[SAMPLES_PER_FRAME * 2];  // Stereo interleaved
@@ -66,6 +89,12 @@ bool audio_init() {
         ESP_LOGW(TAG, "Audio already initialized");
         return true;
     }
+
+    // TODO: Board-specific power management.
+    // The Unihiker (NS4150 amplifier) may require explicit GPIO initialization 
+    // to enable the speaker or set the gain mode. On ESP32-S3 boards, this 
+    // is often GPIO 12 or 48. Since the exact pin for power-enable is not 
+    // confirmed in this codebase, we proceed with standard I2S init.
 
     // Configure I2S channel
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG((i2s_port_t)I2S_PORT, I2S_ROLE_MASTER);
@@ -159,10 +188,15 @@ void audio_play_frame(SpectrumBase* spectrum) {
 
     // Mix and duplicate mono to stereo
     for (int i = 0; i < SAMPLES_PER_FRAME; ++i) {
-        // Simple additive mixing with saturation
-        int32_t mixed = (int32_t)s_beeper_buf[i] + (int32_t)s_psg_buf[i];
-        if (mixed > 32767) mixed = 32767;
-        if (mixed < -32768) mixed = -32768;
+        // Scaled additive mixing to provide headroom and prevent early clipping.
+        // Formula: y = (Beeper * BEEPER_MIX_GAIN) + (PSG * PSG_MIX_GAIN)
+        float b = (float)s_beeper_buf[i] * BEEPER_MIX_GAIN;
+        float p = (float)s_psg_buf[i] * PSG_MIX_GAIN;
+        float mixed = b + p;
+
+        // Hard saturation to clamp final mix to 16-bit range
+        if (mixed > 32767.0f) mixed = 32767.0f;
+        else if (mixed < -32768.0f) mixed = -32768.0f;
 
         int16_t s16 = (int16_t)mixed;
         stereo_buf[i * 2 + 0] = s16;
@@ -179,20 +213,50 @@ void audio_play_frame(SpectrumBase* spectrum) {
         apply_volume_gain(stereo_buf, SAMPLES_PER_FRAME, s_volume_gain);
     }
 
+    // Diagnostic peak tracking: Measure the final output actually sent to I2S.
+    // Use 32-bit math to safely handle -32768.
+    uint32_t frame_max = 0;
+    for (int i = 0; i < SAMPLES_PER_FRAME * 2; i++) {
+        int32_t s32 = (int32_t)stereo_buf[i];
+        uint32_t abs_s = (s32 < 0) ? (uint32_t)-s32 : (uint32_t)s32;
+        if (abs_s > frame_max) frame_max = abs_s;
+    }
+    if (frame_max > s_stats.max_peak_sample) s_stats.max_peak_sample = frame_max;
+    if (frame_max > NEAR_CLIP_THRESHOLD) s_stats.near_clip_frames++;
+
     // Write to I2S with short timeout (non-blocking mode)
     size_t bytes_written = 0;
     esp_err_t ret = i2s_channel_write(s_tx_handle, stereo_buf,
                                       SAMPLES_PER_FRAME * 2 * sizeof(int16_t),
                                       &bytes_written, pdMS_TO_TICKS(10));
 
-    if (ret == ESP_OK && bytes_written > 0) {
-        s_consecutive_failures = 0;  // Reset failure counter on success
-    } else if (ret != ESP_ERR_TIMEOUT) {
-        // Log only real errors, not timeouts (timeout is normal if no codec)
-        s_consecutive_failures++;
-        if (s_consecutive_failures == 1) {  // Log only first occurrence
-            ESP_LOGW(TAG, "I2S write error: %s", esp_err_to_name(ret));
+    if (ret == ESP_OK) {
+        s_stats.successful_writes++;
+        s_stats.bytes_written += bytes_written;
+        s_consecutive_failures = 0;
+    } else {
+        if (ret == ESP_ERR_TIMEOUT) {
+            s_stats.timeout_writes++;
+        } else {
+            s_stats.error_writes++;
+            if (s_consecutive_failures == 0) {
+                ESP_LOGW(TAG, "I2S write error: %s", esp_err_to_name(ret));
+            }
         }
+        s_consecutive_failures++;
+    }
+
+    // Periodic diagnostics logging (every 5 seconds)
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    if (now_ms - s_stats.last_log_ms > 5000) {
+        if (s_stats.successful_writes > 0 || s_stats.timeout_writes > 0 || s_stats.error_writes > 0) {
+            ESP_LOGI(TAG, "Stats: OK:%u TO:%u ERR:%u Peak:%u NearClip:%u Bytes:%u",
+                     s_stats.successful_writes, s_stats.timeout_writes, s_stats.error_writes,
+                     s_stats.max_peak_sample, s_stats.near_clip_frames, s_stats.bytes_written);
+        }
+        s_stats.last_log_ms = now_ms;
+        s_stats.max_peak_sample = 0;
+        s_stats.near_clip_frames = 0;
     }
 }
 

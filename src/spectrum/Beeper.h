@@ -6,7 +6,11 @@ class Beeper {
 public:
     Beeper();
     void reset();
-    void recordEvent(uint32_t tstates, uint8_t level);
+    
+    // Record hardware state changes (speaker bit or tape EAR)
+    void recordSpeakerEvent(uint32_t tstates, uint8_t level);
+    void recordTapeEvent(uint32_t tstates, uint8_t level);
+
     // Render up to target T-state
     void renderTo(uint32_t tstates);
     // Called at frame boundary to finalize and swap buffers
@@ -23,17 +27,25 @@ public:
     float getVolume() const { return m_volume; }
     
     static constexpr int16_t AMPLITUDE = 3276; // ~10% of 32767
+    static constexpr float TAPE_GAIN = 0.35f;
     static constexpr int SAMPLES_PER_FRAME = 882;
 
 private:
     int16_t m_frameBuffer[SAMPLES_PER_FRAME];
     int16_t m_renderBuffer[SAMPLES_PER_FRAME];
     int m_renderedSamples;
-    float m_nextSampleCorrection;
+    float m_speakerNextCorrection;
+    float m_tapeNextCorrection;
 
     uint8_t m_speakerLevel;
+    uint8_t m_tapeLevel;
     bool m_externalEar;
     float m_volume = 1.0f;
+
+    // Single-source amplitude helpers. Used by both steady-state rendering
+    // and PolyBLEP transition math so the two paths cannot drift apart.
+    float speakerAmp() const { return m_volume * (float)AMPLITUDE; }
+    float tapeAmp()    const { return m_volume * (float)AMPLITUDE * TAPE_GAIN; }
 
     void renderSamples(int start, int end);
 };
