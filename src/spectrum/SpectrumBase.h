@@ -38,6 +38,9 @@ public:
         uint8_t* ptr = m_memWriteMap[addr >> 14];
         if (ptr) {
             ptr[addr & 0x3FFF] = value;
+            if (addr >= 0x4000 && addr < 0x5B00) {
+                markDirtyCells(addr);
+            }
         }
     }
 
@@ -91,11 +94,13 @@ public:
     inline uint8_t* getPagePtr(int block) { return m_memReadMap[block & 3]; }
     
     // Rendering
-    void renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight);
+    void renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight, int bufIndex = 0);
     // Allocate and populate all 128 attribute LUTs up front so the renderer
     // never calls heap_caps_malloc on the hot path. Safe to call repeatedly.
     void prewarmAttrLUTs();
     void renderBeeperAudio(int16_t* buffer, int num_samples) { m_beeper.getFrameBuffer(buffer, num_samples); }
+
+    void markDirtyCells(uint16_t addr);
     virtual void renderPSGAudio(int16_t* buffer, int num_samples) { 
         memset(buffer, 0, num_samples * sizeof(int16_t)); 
     }
@@ -111,7 +116,7 @@ protected:
 
     // Rendering sub-functions
     void renderBorder(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height);
-    void renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height);
+    void renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height, int bufIndex = 0);
     uint16_t* getOrBuildAttrLUT(int attr_index);
 
     Z80 m_cpu;
@@ -139,6 +144,13 @@ protected:
     size_t m_renderBorderEventCount;
     uint8_t m_renderInitialBorderColor;
     portMUX_TYPE m_borderMux;
+
+    uint8_t m_lastBorderColorForBuf[2] = {0xFF, 0xFF};
+    size_t m_lastBorderEventCountForBuf[2] = {0xFFFFFFFF, 0xFFFFFFFF};
+    uint32_t m_lastBorderHashForBuf[2] = {0, 0};
+
+    uint8_t m_dirtyBitsForBuf[2][96] = {{0xFF}, {0xFF}};
+    uint8_t m_flashPhaseForBuf[2] = {0xFF, 0xFF};
 
     uint32_t m_ulaClocks;
     uint16_t m_ulaScanline;

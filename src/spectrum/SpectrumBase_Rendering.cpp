@@ -125,16 +125,30 @@ void SpectrumBase::prewarmAttrLUTs() {
     }
 }
 
-void SpectrumBase::renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height) {
+void SpectrumBase::renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height, int bufIndex) {
     uint8_t* ramBank1 = m_videoPagePtr ? m_videoPagePtr : getPagePtr(1);
     if (!ramBank1) return;
+    if (bufIndex < 0 || bufIndex >= 2) bufIndex = 0;
+
+    uint8_t* dirtyBits = m_dirtyBitsForBuf[bufIndex];
 
     for (int y = 0; y < source_height; ++y) {
         uint16_t* linePtr = &buffer[(offset_y + y) * bufWidth + offset_x];
         uint16_t y_off = ((y & 0xC0) << 5) | ((y & 0x07) << 8) | ((y & 0x38) << 2);
         uint16_t attr_off = 0x1800 + ((y >> 3) * 32);
+        int cellY = y >> 3;
 
         for (int xByte = 0; xByte < 32; ++xByte) {
+            int bitIdx = cellY * 32 + xByte;
+            int byteIdx = bitIdx >> 3;
+            int bitMask = 1 << (bitIdx & 7);
+            bool isDirty = (dirtyBits[byteIdx] & bitMask) != 0;
+
+            if (!isDirty) {
+                linePtr += 8;
+                continue;
+            }
+
             uint8_t pixels = ramBank1[y_off | xByte];
             uint8_t attr = ramBank1[attr_off | xByte];
             uint16_t* lut = getOrBuildAttrLUT(attr & 0x7F);
@@ -158,12 +172,13 @@ void SpectrumBase::renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeigh
                     linePtr32[i] = paper32 ^ (mask & diff32);
                 }
             }
+            dirtyBits[byteIdx] &= ~bitMask;
             linePtr += 8;
         }
     }
 }
 
-void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight) {
+void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight, int bufIndex) {
     if (!buffer) return;
 
     const int source_width = 256;
@@ -171,8 +186,27 @@ void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight)
     const int offset_x = (bufWidth - source_width) / 2;
     const int offset_y = (bufHeight - source_height) / 2;
 
-    renderBorder(buffer, bufWidth, bufHeight, offset_x, offset_y, source_width, source_height);
-    renderActiveArea(buffer, bufWidth, bufHeight, offset_x, offset_y, source_width, source_height);
+    // Check if border is unchanged from last render of this buffer index
+    uint32_t borderHash = 0;
+    for (size_t i = 0; i < m_renderBorderEventCount; i++) {
+        borderHash ^= m_renderBorderEvents[i].tstates ^ (m_renderBorderEvents[i].color << 24);
+    }
+
+    bool borderUnchanged = (bufIndex >= 0 && bufIndex < 2) &&
+                           (m_lastBorderEventCountForBuf[bufIndex] == m_renderBorderEventCount) &&
+                           (m_lastBorderColorForBuf[bufIndex] == m_renderInitialBorderColor) &&
+                           (m_lastBorderHashForBuf[bufIndex] == borderHash);
+
+    if (!borderUnchanged) {
+        renderBorder(buffer, bufWidth, bufHeight, offset_x, offset_y, source_width, source_height);
+        if (bufIndex >= 0 && bufIndex < 2) {
+            m_lastBorderEventCountForBuf[bufIndex] = m_renderBorderEventCount;
+            m_lastBorderColorForBuf[bufIndex] = m_renderInitialBorderColor;
+            m_lastBorderHashForBuf[bufIndex] = borderHash;
+        }
+    }
+
+    renderActiveArea(buffer, bufWidth, bufHeight, offset_x, offset_y, source_width, source_height, bufIndex);
 
     m_lastRenderedBorderColor = m_borderColor;
 }

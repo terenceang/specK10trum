@@ -15,7 +15,7 @@
 #include "expander/Expander.h"
 #include "audio/Audio.h"
 
-#define SHOW_FPS_DEBUG 0
+#define SHOW_FPS_DEBUG 1
 
 static const char* TAG = "Display";
 
@@ -53,7 +53,7 @@ static const int NUM_STRIPS = 5;
 static uint16_t* s_stripBuffers[2] = { NULL, NULL };
 
 // Pre-allocated SPI transactions to avoid heap churn
-static const int MAX_TRANSACTIONS = 40; 
+static const int MAX_TRANSACTIONS = 60; 
 static spi_transaction_t* s_trans_pool = NULL;
 static int s_trans_count = 0;
 
@@ -154,8 +154,6 @@ static void video_task(void* pvParameters) {
                 instr_video_start();
                 display_renderSpectrum(s_pendingSpectrum);
                 display_present();
-                // Render and play audio on Core 1 (moved from emulator task)
-                audio_play_frame(s_pendingSpectrum);
                 instr_video_end();
                 // Signal emulator task that frame is complete
                 if (s_emulatorTaskHandle) {
@@ -355,7 +353,7 @@ uint16_t* display_getBackBuffer() { return s_frameBuffers[s_drawBuffer]; }
 
 void display_renderSpectrum(SpectrumBase* spectrum) {
     if (!spectrum) return;
-    spectrum->renderToRGB565(display_getBackBuffer(), s_lcdDisplayWidth, s_lcdDisplayHeight);
+    spectrum->renderToRGB565(display_getBackBuffer(), s_lcdDisplayWidth, s_lcdDisplayHeight, s_drawBuffer);
 }
 
 void display_present() {
@@ -428,19 +426,33 @@ void display_present() {
     }
 }
 
-// Drain N completed transactions from the SPI queue. Returns true if all N were
-// collected within the budget. Never zeroes s_trans_count on timeout — the SPI
-// driver still owns those transactions, so losing track of them corrupts the
-// pool/strip buffers on the next frame.
-static bool drain_spi_transactions(int count, TickType_t per_txn_timeout) {
+// Drain N completed transactions from the SPI queue with a total budget.
+// Returns true if all N were collected. Returns false on error or timeout,
+// but never zeroes s_trans_count — the SPI driver still owns those transactions.
+static bool drain_spi_transactions(int count, TickType_t total_timeout) {
     spi_transaction_t* rtrans;
+    int start_count = count;
+    int64_t deadline_ms = esp_timer_get_time() / 1000 + pdTICKS_TO_MS(total_timeout);
+
     for (int i = 0; i < count; i++) {
-        esp_err_t r = spi_device_get_trans_result(s_spi, &rtrans, per_txn_timeout);
+        int64_t now_ms = esp_timer_get_time() / 1000;
+        int64_t remaining_ms = deadline_ms - now_ms;
+        if (remaining_ms <= 0) {
+            ESP_LOGW(TAG, "SPI drain timeout: got %d/%d (budget)", start_count - count, start_count);
+            return false;
+        }
+
+        // Use 10ms per transaction (SPI completes 3ms/strip @ 80MHz; 10ms accounts for contention)
+        TickType_t timeout_ticks = pdMS_TO_TICKS(remaining_ms > 10 ? 10 : (remaining_ms > 0 ? remaining_ms : 1));
+        esp_err_t r = spi_device_get_trans_result(s_spi, &rtrans, timeout_ticks);
         if (r == ESP_OK) {
             s_trans_count--;
+        } else if (r == ESP_ERR_TIMEOUT) {
+            ESP_LOGW(TAG, "SPI drain timeout: got %d/%d (txn)", start_count - count, start_count);
+            return false;
         } else {
-            ESP_LOGE(TAG, "SPI drain failed (%d/%d, %d still pending): %s",
-                     i, count, s_trans_count, esp_err_to_name(r));
+            ESP_LOGE(TAG, "SPI drain error (%d/%d): %s",
+                     start_count - count, start_count, esp_err_to_name(r));
             return false;
         }
     }
@@ -450,12 +462,11 @@ static bool drain_spi_transactions(int count, TickType_t per_txn_timeout) {
 static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     if (!s_spi || !buffer || !s_stripBuffers[0] || !s_stripBuffers[1]) return;
 
-    // Drain everything from the previous frame before reusing the trans pool
-    // and strip buffers. If the bus is genuinely stuck we must NOT enqueue
-    // more — that path leads to spi_device_queue_trans deadlock.
+    // Drain everything from the previous frame before reusing the trans pool.
+    // Use 40ms budget: one complete frame (15ms SPI) + margin for PSRAM/Wi-Fi jitter.
     if (s_trans_count > 0) {
-        if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(500))) {
-            ESP_LOGW(TAG, "SPI bus stuck; skipping frame");
+        if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(40))) {
+            ESP_LOGW(TAG, "SPI backlog (%d pending); skipping frame", s_trans_count);
             return;
         }
     }
@@ -471,9 +482,10 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
         // Ensure the strip buffer we're about to reuse is free (its 6 txns
         // have completed). With NUM_STRIPS=5 and 2 strip buffers, strips 2-4
         // alias strips 0-2; strip i must wait for strip (i-2)'s 6 txns.
+        // Use 80ms budget (one full frame transfer = 15ms, plus 5× margin for setup/overhead).
         if (i >= 2) {
-            if (!drain_spi_transactions(6, pdMS_TO_TICKS(500))) {
-                ESP_LOGW(TAG, "SPI strip %d drain timeout; aborting frame", i);
+            if (!drain_spi_transactions(6, pdMS_TO_TICKS(80))) {
+                ESP_LOGW(TAG, "SPI strip %d backlog; abort", i);
                 return;
             }
         }
@@ -511,7 +523,7 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
             // Drain whatever we've enqueued so the next frame starts clean.
             // If even this drain fails, leave s_trans_count alone — the next
             // frame's drain will handle it.
-            drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(500));
+            drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(40));
             return;
         }
         pool_idx += 6;
@@ -693,18 +705,16 @@ void display_pause_for_reset() {
 
     s_pause_video = true;
     xTaskNotifyGive(s_videoTaskHandle);
-    // Wait long enough for the video task to ack and any in-flight strip to
-    // finish. With 5 strips at ~30 KB each over 80 MHz SPI a frame takes a
-    // few ms, but PSRAM contention or Wi-Fi traffic can stretch that.
-    if (xSemaphoreTake(s_video_pause_semaphore, pdMS_TO_TICKS(2000)) != pdTRUE) {
-        ESP_LOGW(TAG, "Video task did not ack pause within 2s");
+    // Wait for the video task to ack. One frame = 20ms, plus some margin for PSRAM/Wi-Fi contention.
+    if (xSemaphoreTake(s_video_pause_semaphore, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Video task did not ack pause");
     }
     // Drain any transactions still owned by the SPI driver. NEVER zero
     // s_trans_count without collecting them — the driver still has the
     // transaction structs and DMA may still be reading the strip buffers.
     if (s_trans_count > 0) {
-        if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(500))) {
-            ESP_LOGE(TAG, "SPI drain stuck during pause (%d pending)", s_trans_count);
+        if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(100))) {
+            ESP_LOGE(TAG, "SPI drain timeout during pause (%d pending)", s_trans_count);
         }
     }
     ESP_LOGD(TAG, "Display paused for reset");

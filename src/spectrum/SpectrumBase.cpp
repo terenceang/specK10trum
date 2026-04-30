@@ -114,6 +114,33 @@ void SpectrumBase::reset() {
     m_wasInLDBytes = false;
 }
 
+void SpectrumBase::markDirtyCells(uint16_t addr) {
+    if (addr >= 0x4000 && addr < 0x5800) {
+        uint16_t offset = addr - 0x4000;
+        uint16_t line_y = (offset >> 8) & 0x07;
+        uint16_t fine_y = (offset >> 5) & 0x07;
+        uint16_t double_y = (offset >> 13) & 0x03;
+        uint8_t cell_y = (double_y << 3) | fine_y;
+        uint8_t cell_x = offset & 0x1F;
+        if (cell_y < 24) {
+            int bitIdx = cell_y * 32 + cell_x;
+            for (int buf = 0; buf < 2; buf++) {
+                m_dirtyBitsForBuf[buf][bitIdx >> 3] |= (1 << (bitIdx & 7));
+            }
+        }
+    } else if (addr >= 0x5800 && addr < 0x5B00) {
+        uint16_t offset = addr - 0x5800;
+        uint8_t cell_y = offset / 32;
+        uint8_t cell_x = offset % 32;
+        if (cell_y < 24) {
+            int bitIdx = cell_y * 32 + cell_x;
+            for (int buf = 0; buf < 2; buf++) {
+                m_dirtyBitsForBuf[buf][bitIdx >> 3] |= (1 << (bitIdx & 7));
+            }
+        }
+    }
+}
+
 void SpectrumBase::dumpMemory(uint16_t start, uint16_t end) {
     ESP_LOGI(TAG, "Memory Dump (0x%04X - 0x%04X)", start, end);
     char line[128];
