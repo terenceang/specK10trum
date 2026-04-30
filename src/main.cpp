@@ -204,6 +204,17 @@ static void emulator_task(void* pvParameters) {
                     if (cmd.arg1 == "load") {
                         spectrum->tape().load(cmd.arg2.c_str());
                     } else if (cmd.arg1 == "play") {
+                        if (!spectrum->tape().canPlay(spectrum)) {
+                            display_setOverlayText("128K TAPE REQUIRES 128K MODEL", 0xF800);
+                            ESP_LOGE(TAG, "Tape playback blocked: 128K tape on 48K machine");
+                            break;
+                        }
+                        // On 128K machines, only allow auto-start if the 48K BASIC (tape) ROM is paged in.
+                        if (spectrum->is128k() && !spectrum->isTapeRomActive()) {
+                            display_setOverlayText("SWITCH TO 48K BASIC FOR TAPE", 0xF800);
+                            ESP_LOGW(TAG, "Tape playback blocked: 128K machine not in Tape ROM mode");
+                            break;
+                        }
                         spectrum->tape().setMode(TapeMode::NORMAL);
                         spectrum->tape().play();
                     } else if (cmd.arg1 == "stop") {

@@ -252,7 +252,7 @@ static esp_err_t tape_handler(httpd_req_t *req)
         char filename[256];
         if (httpd_query_key_value(buf, "file", filename, sizeof(filename)) == ESP_OK) {
             char path[512];
-            snprintf(path, sizeof(path), "%s/%s", SPIFFS_ROOT, filename);
+            snprintf(path, sizeof(path), "/spiffs/tapes/%s", filename);
             command.type = WebCommandType::TapeCmd;
             command.arg1 = "load";
             command.arg2 = path;

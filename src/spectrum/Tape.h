@@ -56,6 +56,9 @@ public:
     // Detect if tape appears to be 128K-only program
     bool looks128K() const;
 
+    // Check if tape is compatible with the current machine model
+    bool canPlay(SpectrumBase* spectrum) const;
+
     // Address of the 48K ROM LD-BYTES routine.
     static constexpr uint16_t LD_BYTES_ENTRY = 0x0556;
 

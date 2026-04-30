@@ -450,6 +450,10 @@ int Tape::serviceLoadTrap(SpectrumBase* spectrum) {
 bool Tape::looks128K() const {
     if (m_num_blocks < 3) return false;
 
+    // A program looks like 128K if it:
+    // 1. Has multiple blocks loading to the SAME address >= 0x8000 (bank switching used for data/code)
+    // 2. Or total code size exceeds 48K machine's available RAM (~42K after BASIC)
+    
     uint16_t prev_addr = 0;
     int duplicate_addr_count = 0;
     uint32_t total_code_size = 0;
@@ -458,41 +462,40 @@ bool Tape::looks128K() const {
         if (!isDataBlock(i)) continue;
 
         const TapeBlockInternal& b = m_blocks[i];
-        uint16_t addr = 0;
-
         if (b.type == 0x10 || b.type == 0x11) {
-            if (b.length >= 2) {
-                const uint8_t* data = b.data;
-                uint8_t flag = data[0];
-                uint16_t start = data[13] | (data[14] << 8);
-                addr = start;
+            if (b.length == 19 && b.data[0] == 0x00) { // Header block
+                uint8_t type = b.data[1];
+                uint16_t start = b.data[14] | (b.data[15] << 8);
+                if (type == 3 && start != 0) { // CODE block
+                    if (start == prev_addr && start >= 0x8000) {
+                        duplicate_addr_count++;
+                    }
+                    prev_addr = start;
+                }
+            } else if (b.data[0] >= 0x80) { // Data block (likely associated with previous header)
+                total_code_size += b.length;
             }
-        }
-
-        if (addr != 0) {
-            if (addr == prev_addr && addr >= 0x8000) {
-                duplicate_addr_count++;
-                if (duplicate_addr_count >= 1) return true;
-            }
-            prev_addr = addr;
-            total_code_size += b.length;
         }
     }
 
-    if (total_code_size > 49152) return true;
+    if (duplicate_addr_count >= 1) return true;
+    if (total_code_size > 42000) return true;
 
     return false;
+}
+
+bool Tape::canPlay(SpectrumBase* spectrum) const {
+    if (!m_enabled || !m_data) return true; // Nothing loaded is "compatible"
+    if (looks128K() && !spectrum->is128k()) return false;
+    return true;
 }
 
 void Tape::instaload(SpectrumBase* spectrum) {
     if (!m_enabled || m_num_blocks == 0) return;
 
-    bool is_128k_tape = looks128K();
-    bool is_128k_machine = spectrum->is128k();
-
-    if (is_128k_tape && !is_128k_machine) {
-        ESP_LOGW("Tape", "⚠️  WARNING: This tape appears to be 128K-only");
-        ESP_LOGW("Tape", "Program may crash or not work correctly on 48K");
+    if (!canPlay(spectrum)) {
+        ESP_LOGE("Tape", "instaload BLOCKED: 128K TAPE REQUIRES 128K MODEL");
+        return;
     }
 
     ESP_LOGI("Tape", "instaload: %d blocks in tape", m_num_blocks);
