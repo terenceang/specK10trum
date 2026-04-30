@@ -92,6 +92,9 @@ public:
     
     // Rendering
     void renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight);
+    // Allocate and populate all 128 attribute LUTs up front so the renderer
+    // never calls heap_caps_malloc on the hot path. Safe to call repeatedly.
+    void prewarmAttrLUTs();
     void renderBeeperAudio(int16_t* buffer, int num_samples) { m_beeper.getFrameBuffer(buffer, num_samples); }
     virtual void renderPSGAudio(int16_t* buffer, int num_samples) { 
         memset(buffer, 0, num_samples * sizeof(int16_t)); 
@@ -109,6 +112,7 @@ protected:
     // Rendering sub-functions
     void renderBorder(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height);
     void renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height);
+    uint16_t* getOrBuildAttrLUT(int attr_index);
 
     Z80 m_cpu;
 

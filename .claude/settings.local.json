@@ -40,7 +40,12 @@
       "Bash(python3 -m idf.py build)",
       "Bash(cmake --version)",
       "Bash(grep -E \"\\\\.\\(cpp|h\\)$\")",
-      "Bash(grep *)"
+      "Bash(grep *)",
+      "Bash(command -v platformio)",
+      "Bash(command -v pio)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(& \"$HOME\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run --environment unihiker_k10 2>&1 | Select-Object -Last 80)"
     ]
   }
 }

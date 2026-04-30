@@ -83,40 +83,49 @@ void SpectrumBase::renderBorder(uint16_t* buffer, int bufWidth, int bufHeight, i
     }
 }
 
-void SpectrumBase::renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height) {
-    static uint16_t* attr_lut[128] = { 0 };
+// Cached attribute LUTs, shared across renderActiveArea calls. Indexed by the
+// low 7 bits of the Spectrum attribute byte (FLASH bit ignored). Each entry is
+// 256 * 8 * 2 = 4 KiB; full table is 512 KiB when warm.
+static uint16_t* s_attr_lut[128] = { 0 };
 
-    auto get_lut = [&](int attr_index) -> uint16_t* {
-        if ((unsigned)attr_index >= 128) return nullptr;
-        uint16_t* table = attr_lut[attr_index];
-        if (table) return table;
+uint16_t* SpectrumBase::getOrBuildAttrLUT(int attr_index) {
+    if ((unsigned)attr_index >= 128) return nullptr;
+    uint16_t* table = s_attr_lut[attr_index];
+    if (table) return table;
 
-        size_t bytes = 256 * 8 * sizeof(uint16_t);
-        uint16_t* alloc = (uint16_t*)allocateMemory(bytes, "Attr LUT");
-        if (!alloc) return nullptr;
+    size_t bytes = 256 * 8 * sizeof(uint16_t);
+    uint16_t* alloc = (uint16_t*)allocateMemory(bytes, "Attr LUT");
+    if (!alloc) return nullptr;
 
-        bool bright = (attr_index & 0x40) != 0;
-        uint16_t ink = spectrum_palette(attr_index & 0x07, bright);
-        uint16_t paper = spectrum_palette((attr_index >> 3) & 0x07, bright);
+    bool bright = (attr_index & 0x40) != 0;
+    uint16_t ink = spectrum_palette(attr_index & 0x07, bright);
+    uint16_t paper = spectrum_palette((attr_index >> 3) & 0x07, bright);
 
-        uint32_t ink32 = (ink << 16) | ink;
-        uint32_t paper32 = (paper << 16) | paper;
-        uint32_t diff32 = ink32 ^ paper32;
+    uint32_t ink32 = (ink << 16) | ink;
+    uint32_t paper32 = (paper << 16) | paper;
+    uint32_t diff32 = ink32 ^ paper32;
 
-        for (int pix = 0; pix < 256; ++pix) {
-            uint32_t* out32 = (uint32_t*)&alloc[pix * 8];
-            for (int i = 0; i < 4; i++) {
-                uint8_t two_bits = (pix >> (6 - i * 2)) & 0x03;
-                uint32_t mask = (two_bits & 0x02) ? 0x0000FFFF : 0;
-                mask |= (two_bits & 0x01) ? 0xFFFF0000 : 0;
-                out32[i] = paper32 ^ (mask & diff32);
-            }
+    for (int pix = 0; pix < 256; ++pix) {
+        uint32_t* out32 = (uint32_t*)&alloc[pix * 8];
+        for (int i = 0; i < 4; i++) {
+            uint8_t two_bits = (pix >> (6 - i * 2)) & 0x03;
+            uint32_t mask = (two_bits & 0x02) ? 0x0000FFFF : 0;
+            mask |= (two_bits & 0x01) ? 0xFFFF0000 : 0;
+            out32[i] = paper32 ^ (mask & diff32);
         }
+    }
 
-        attr_lut[attr_index] = alloc;
-        return alloc;
-    };
+    s_attr_lut[attr_index] = alloc;
+    return alloc;
+}
 
+void SpectrumBase::prewarmAttrLUTs() {
+    for (int i = 0; i < 128; ++i) {
+        getOrBuildAttrLUT(i);
+    }
+}
+
+void SpectrumBase::renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeight, int offset_x, int offset_y, int source_width, int source_height) {
     uint8_t* ramBank1 = m_videoPagePtr ? m_videoPagePtr : getPagePtr(1);
     if (!ramBank1) return;
 
@@ -128,7 +137,7 @@ void SpectrumBase::renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeigh
         for (int xByte = 0; xByte < 32; ++xByte) {
             uint8_t pixels = ramBank1[y_off | xByte];
             uint8_t attr = ramBank1[attr_off | xByte];
-            uint16_t* lut = get_lut(attr & 0x7F);
+            uint16_t* lut = getOrBuildAttrLUT(attr & 0x7F);
             if (lut) {
                 uint64_t* src64 = (uint64_t*)&lut[pixels * 8];
                 uint64_t* dst64 = (uint64_t*)linePtr;

@@ -398,6 +398,10 @@ extern "C" void app_main(void) {
     }
     spectrum->reset();
 
+    // Pre-build all 128 attribute LUTs so the renderer never allocates on the
+    // hot path (avoids first-frame stalls when a snapshot exposes new attrs).
+    spectrum->prewarmAttrLUTs();
+
 #if RUN_ALL_TESTS
     run_all_tests(spectrum, modelName);
     spectrum->reset();

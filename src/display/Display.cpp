@@ -361,36 +361,34 @@ void display_renderSpectrum(SpectrumBase* spectrum) {
 void display_present() {
     int presentingIndex = s_drawBuffer;
     s_drawBuffer = 1 - s_drawBuffer;
-    
+
     uint16_t* buf = s_frameBuffers[presentingIndex];
-    
-    // Draw overlay text if present
+
+    // Snapshot overlay state under the mutex. The emulator task can call
+    // display_setOverlayText() concurrently and strncpy into s_overlayText
+    // is not atomic — reading without the lock can yield a torn string and
+    // a mismatched color.
+    char overlay_text[sizeof(s_overlayText)];
+    uint16_t overlay_color;
+    bool do_clear;
+    if (s_overlay_mutex) xSemaphoreTake(s_overlay_mutex, portMAX_DELAY);
+    memcpy(overlay_text, s_overlayText, sizeof(overlay_text));
+    overlay_color = s_overlayColor;
+    do_clear = (s_overlay_clear_frames > 0);
+    if (do_clear) s_overlay_clear_frames--;
+    if (s_overlay_mutex) xSemaphoreGive(s_overlay_mutex);
+
     int overlay_y = s_lcdDisplayHeight - 10;
-    // If we need to clear leftover overlay from the other framebuffer, wipe the strip.
-    // Only log and perform the more expensive clear when the overlay state is dirty
-    // or we explicitly need to clear frames; otherwise draw overlay quietly.
-    if (s_overlay_clear_frames > 0) {
+    if (do_clear) {
         for (int y = overlay_y; y < s_lcdDisplayHeight; y++) {
             for (int x = 0; x < s_lcdDisplayWidth; x++) {
                 buf[y * s_lcdDisplayWidth + x] = 0x0000;
             }
         }
-        s_overlay_clear_frames--;
     }
-    if (s_overlayText[0]) {
-        const char* text = s_overlayText;
+    if (overlay_text[0]) {
         int current_y = overlay_y;
-
-        // Count lines first
-        int line_count = 1;
-        const char* p = text;
-        while (*p) {
-            if (*p == '\n') line_count++;
-            p++;
-        }
-
-        // Draw each line centered
-        p = text;
+        const char* p = overlay_text;
         while (*p) {
             const char* line_end = p;
             while (*line_end && *line_end != '\n') line_end++;
@@ -400,7 +398,7 @@ void display_present() {
             int center_x = (s_lcdDisplayWidth - line_width) / 2;
 
             for (int i = 0; i < line_len; i++) {
-                drawChar(buf, center_x + i * 8, current_y, p[i], s_overlayColor);
+                drawChar(buf, center_x + i * 8, current_y, p[i], overlay_color);
             }
 
             if (*line_end == '\n') {
@@ -430,77 +428,59 @@ void display_present() {
     }
 }
 
+// Drain N completed transactions from the SPI queue. Returns true if all N were
+// collected within the budget. Never zeroes s_trans_count on timeout — the SPI
+// driver still owns those transactions, so losing track of them corrupts the
+// pool/strip buffers on the next frame.
+static bool drain_spi_transactions(int count, TickType_t per_txn_timeout) {
+    spi_transaction_t* rtrans;
+    for (int i = 0; i < count; i++) {
+        esp_err_t r = spi_device_get_trans_result(s_spi, &rtrans, per_txn_timeout);
+        if (r == ESP_OK) {
+            s_trans_count--;
+        } else {
+            ESP_LOGE(TAG, "SPI drain failed (%d/%d, %d still pending): %s",
+                     i, count, s_trans_count, esp_err_to_name(r));
+            return false;
+        }
+    }
+    return true;
+}
+
 static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     if (!s_spi || !buffer || !s_stripBuffers[0] || !s_stripBuffers[1]) return;
 
-    // Drain any remaining transactions from the previous frame to avoid overwriting spi_transaction_t structures
-    spi_transaction_t* rtrans;
-    int drain_timeout_count = 0;
-    while (s_trans_count > 0 && drain_timeout_count < 3) {
-        esp_err_t result = spi_device_get_trans_result(s_spi, &rtrans, pdMS_TO_TICKS(200));
-        if (result == ESP_OK) {
-            s_trans_count--;
-            drain_timeout_count = 0;  // Reset on success
-        } else if (result == ESP_ERR_TIMEOUT) {
-            drain_timeout_count++;
-            if (drain_timeout_count >= 3) {
-                ESP_LOGW(TAG, "SPI queue congestion: %d transactions pending, giving up", s_trans_count);
-                s_trans_count = 0;
-                break;
-            }
-        } else {
-            ESP_LOGE(TAG, "SPI error draining previous frame: %s", esp_err_to_name(result));
-            s_trans_count = 0;
-            break;
+    // Drain everything from the previous frame before reusing the trans pool
+    // and strip buffers. If the bus is genuinely stuck we must NOT enqueue
+    // more — that path leads to spi_device_queue_trans deadlock.
+    if (s_trans_count > 0) {
+        if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(500))) {
+            ESP_LOGW(TAG, "SPI bus stuck; skipping frame");
+            return;
         }
     }
 
     int linesPerStrip = s_lcdDisplayHeight / NUM_STRIPS;
     int pool_idx = 0;
-    s_trans_count = 0;
 
     for (int i = 0; i < NUM_STRIPS; i++) {
         int startY = i * linesPerStrip;
         int height = (i == NUM_STRIPS - 1) ? (s_lcdDisplayHeight - startY) : linesPerStrip;
         int bufIdx = i & 1;
 
-        // Drain any transactions that are already finished for this device (to avoid queue overflow)
-        while (spi_device_get_trans_result(s_spi, &rtrans, 0) == ESP_OK) {
-            s_trans_count--;
-        }
-
-        // Wait for the strip buffer we want to reuse (ping-pong)
-        // Strips 0-1 won't be reused immediately, but strips 2-4 will
+        // Ensure the strip buffer we're about to reuse is free (its 6 txns
+        // have completed). With NUM_STRIPS=5 and 2 strip buffers, strips 2-4
+        // alias strips 0-2; strip i must wait for strip (i-2)'s 6 txns.
         if (i >= 2) {
-            int wait_count = 0;
-            for (int j = 0; j < 6; j++) {
-                // Use longer timeout for buffer reuse (up to 200ms per transaction)
-                // to account for CPU load and SPI bus congestion
-                esp_err_t result = spi_device_get_trans_result(s_spi, &rtrans, pdMS_TO_TICKS(200));
-                if (result == ESP_OK) {
-                    s_trans_count--;
-                    wait_count = 0;  // Reset consecutive fail counter
-                } else if (result == ESP_ERR_TIMEOUT) {
-                    wait_count++;
-                    if (wait_count >= 2) {
-                        // After 2 consecutive timeouts, give up and reset queue
-                        // This prevents hanging but allows some tolerance
-                        ESP_LOGW(TAG, "SPI queue congestion: strip %d, resetting (%d/%d)", i, j, 6);
-                        s_trans_count = 0;
-                        break;
-                    }
-                    // Single timeout: continue waiting for next transaction
-                } else {
-                    ESP_LOGE(TAG, "SPI error waiting for strip: %s", esp_err_to_name(result));
-                    s_trans_count = 0;
-                    break;
-                }
+            if (!drain_spi_transactions(6, pdMS_TO_TICKS(500))) {
+                ESP_LOGW(TAG, "SPI strip %d drain timeout; aborting frame", i);
+                return;
             }
         }
 
         uint16_t* dst = s_stripBuffers[bufIdx];
         memcpy(dst, &buffer[startY * s_lcdDisplayWidth], s_lcdDisplayWidth * height * 2);
-        
+
         spi_transaction_t* t = &s_trans_pool[pool_idx];
         memset(t, 0, sizeof(spi_transaction_t) * 6);
 
@@ -514,8 +494,26 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
         t[4].length = 8; t[4].flags = SPI_TRANS_USE_TXDATA; t[4].tx_data[0] = 0x2C; t[4].user = (void*)0;
         t[5].length = s_lcdDisplayWidth * height * 16; t[5].tx_buffer = dst; t[5].user = (void*)1;
 
-        for (int j = 0; j < 6; j++) spi_device_queue_trans(s_spi, &t[j], portMAX_DELAY);
-        s_trans_count += 6;
+        // Bounded enqueue so a wedged driver can't hang us. The queue has
+        // depth 40 and we hold at most NUM_STRIPS*6=30 in flight, so a full
+        // queue here is a real fault, not normal back-pressure.
+        bool aborted = false;
+        for (int j = 0; j < 6; j++) {
+            esp_err_t r = spi_device_queue_trans(s_spi, &t[j], pdMS_TO_TICKS(100));
+            if (r != ESP_OK) {
+                ESP_LOGE(TAG, "spi_device_queue_trans strip %d/%d: %s", i, j, esp_err_to_name(r));
+                aborted = true;
+                break;
+            }
+            s_trans_count++;
+        }
+        if (aborted) {
+            // Drain whatever we've enqueued so the next frame starts clean.
+            // If even this drain fails, leave s_trans_count alone — the next
+            // frame's drain will handle it.
+            drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(500));
+            return;
+        }
         pool_idx += 6;
     }
 }
@@ -695,8 +693,20 @@ void display_pause_for_reset() {
 
     s_pause_video = true;
     xTaskNotifyGive(s_videoTaskHandle);
-    xSemaphoreTake(s_video_pause_semaphore, pdMS_TO_TICKS(500));
-    s_trans_count = 0;
+    // Wait long enough for the video task to ack and any in-flight strip to
+    // finish. With 5 strips at ~30 KB each over 80 MHz SPI a frame takes a
+    // few ms, but PSRAM contention or Wi-Fi traffic can stretch that.
+    if (xSemaphoreTake(s_video_pause_semaphore, pdMS_TO_TICKS(2000)) != pdTRUE) {
+        ESP_LOGW(TAG, "Video task did not ack pause within 2s");
+    }
+    // Drain any transactions still owned by the SPI driver. NEVER zero
+    // s_trans_count without collecting them — the driver still has the
+    // transaction structs and DMA may still be reading the strip buffers.
+    if (s_trans_count > 0) {
+        if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(500))) {
+            ESP_LOGE(TAG, "SPI drain stuck during pause (%d pending)", s_trans_count);
+        }
+    }
     ESP_LOGD(TAG, "Display paused for reset");
 }
 
