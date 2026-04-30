@@ -133,6 +133,7 @@
           window.ZX_LAYOUT = window.ZX_LAYOUT_VARIANTS[layoutName];
           const kbContainer = document.getElementById('zx-kb');
           if (kbContainer && window.ZX_KB) {
+            if (window.ZX_KB.releaseAll) window.ZX_KB.releaseAll();
             window.ZX_KB.render(kbContainer);
           }
           layoutModal.style.display = 'none';
@@ -152,6 +153,7 @@
           window.ZX_LAYOUT = window.ZX_LAYOUT_VARIANTS[savedLayout];
           const kbContainer = document.getElementById('zx-kb');
           if (kbContainer && window.ZX_KB) {
+            if (window.ZX_KB.releaseAll) window.ZX_KB.releaseAll();
             window.ZX_KB.render(kbContainer);
           }
         }

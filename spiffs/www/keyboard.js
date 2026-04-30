@@ -14,7 +14,9 @@
 
   const toggles = { caps: false, symbol: false };
   const active = new Map();
+  const pressState = new Map();
   const sendBuf = new Uint8Array(3);
+  const SAFE_COLOR = /^#[0-9a-f]{3,8}$/i;
   let txCount = 0;
   let onKeyCallback = null;
 
@@ -45,8 +47,8 @@
 
     let parts = '';
     if (k.stripeLabel) {
-      const col = (k.stripeColor && STRIPE[k.stripeColor])
-        ? ` style="color:${STRIPE[k.stripeColor]}"` : '';
+      const raw = k.stripeColor && STRIPE[k.stripeColor];
+      const col = raw && SAFE_COLOR.test(raw) ? ` style="color:${raw}"` : '';
       parts += `<div class="zx-lab zx-stripe"${col}>${esc(k.stripeLabel)}</div>`;
     }
     if (k.keywordAbove) parts += `<div class="zx-lab zx-above">${esc(k.keywordAbove)}</div>`;
@@ -83,13 +85,13 @@
           ['CAPS','Z','X','C','V','B','N','M','SYM','SPACE']
         ].map(r => r.map(m => ({ main: m })));
 
-    const ROW_OFFSET_EM = LAYOUT.OFFSETS || [0, 0.26, 0.52, 0];
+    const ROW_OFFSET_EM = (LAYOUT && LAYOUT.OFFSETS) || [0, 0.26, 0.52, 0];
 
     const rowsHtml = rows.map((r, i) => {
       const off = ROW_OFFSET_EM[i] || 0;
       const ml  = off ? ` style="margin-left:calc(var(--key-size) * ${off})"` : '';
       let html = `<div class="zx-row"${ml}>${r.map(k => keyHTML(k, STRIPE)).join('')}`;
-      if (i === 0 && !LAYOUT.HIDE_LEDS) {
+      if (i === 0 && !(LAYOUT && LAYOUT.HIDE_LEDS)) {
         html += `
           <div class="zx-kb-leds">
             <div class="zx-led" id="zx-led-caps"><span class="lamp"></span>CAPS</div>
@@ -104,7 +106,11 @@
     const stripesHtml = (LAYOUT && LAYOUT.STRIPE && !LAYOUT.HIDE_STRIPE)
       ? `<div class="zx-stripebar">${
           ['red','yellow','green','cyan']
-            .map(c => `<div style="background:${STRIPE[c] || '#fff'}"></div>`)
+            .map(c => {
+              const raw = STRIPE[c];
+              const safe = raw && SAFE_COLOR.test(raw) ? raw : '#fff';
+              return `<div style="background:${safe}"></div>`;
+            })
             .join('')
         }</div>`
       : '';
@@ -115,8 +121,8 @@
 
   function sendKey(r, b, pressed, label) {
     sendBuf[0] = r; sendBuf[1] = b; sendBuf[2] = pressed ? 1 : 0;
-    txCount++;
-    if (window.ZX_WS) window.ZX_WS.send(sendBuf);
+    const ok = window.ZX_WS ? window.ZX_WS.send(sendBuf) : false;
+    if (ok) txCount++;
     if (onKeyCallback) onKeyCallback(label || `${r},${b}`, pressed, txCount);
   }
 
@@ -131,23 +137,41 @@
 
   function getKeysFromEl(el) {
     const keys = [];
-    if (el.dataset.r !== undefined) keys.push({ r: +el.dataset.r, b: +el.dataset.b });
-    if (el.dataset.r2 !== undefined) keys.push({ r: +el.dataset.r2, b: +el.dataset.b2 });
-    if (el.dataset.r3 !== undefined) keys.push({ r: +el.dataset.r3, b: +el.dataset.b3 });
+    for (let i = 0; ; i++) {
+      const suf = i === 0 ? '' : String(i + 1);
+      const r = el.dataset['r' + suf];
+      if (r === undefined) break;
+      keys.push({ r: +r, b: +el.dataset['b' + suf] });
+    }
     return keys;
+  }
+
+  function isLatchedToggle(r, b) {
+    const caps = KEY_MAP.CAPS, sym = KEY_MAP.SYM;
+    if (toggles.caps && caps && r === caps[0] && b === caps[1]) return true;
+    if (toggles.symbol && sym && r === sym[0] && b === sym[1]) return true;
+    return false;
   }
 
   function pressMomentary(el) {
     if (el.classList.contains('pressed')) return;
     el.classList.add('pressed');
-    const keys = getKeysFromEl(el);
-    keys.forEach(k => sendKey(k.r, k.b, true, el.dataset.lbl));
+    const held = [];
+    for (const k of getKeysFromEl(el)) {
+      if (isLatchedToggle(k.r, k.b)) continue;
+      sendKey(k.r, k.b, true, el.dataset.lbl);
+      held.push(k);
+    }
+    pressState.set(el, held);
   }
   function releaseMomentary(el) {
     if (!el.classList.contains('pressed')) return;
     el.classList.remove('pressed');
-    const keys = getKeysFromEl(el);
-    keys.reverse().forEach(k => sendKey(k.r, k.b, false, el.dataset.lbl));
+    const held = pressState.get(el) || [];
+    pressState.delete(el);
+    for (let i = held.length - 1; i >= 0; i--) {
+      sendKey(held[i].r, held[i].b, false, el.dataset.lbl);
+    }
   }
 
   function isToggle(el) {
@@ -252,5 +276,8 @@
   window.addEventListener('resize', () => {
     active.forEach((entry) => { entry.rect = entry.el.getBoundingClientRect(); });
   });
+  if (window.ZX_WS && typeof window.ZX_WS.onStatus === 'function') {
+    window.ZX_WS.onStatus((status) => { if (status !== 'connected') releaseAll(); });
+  }
 
 })(window);
