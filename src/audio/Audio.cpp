@@ -83,7 +83,7 @@ static void apply_master_filter(int16_t* stereo_buf, int samples) {
 }
 
 bool audio_init() {
-    ESP_LOGI(TAG, "Initializing ESP-IDF I2S DMA audio...");
+    ESP_LOGD(TAG, "Initializing ESP-IDF I2S DMA audio...");
 
     if (s_initialized) {
         ESP_LOGW(TAG, "Audio already initialized");
@@ -122,7 +122,7 @@ bool audio_init() {
         return false;
     }
 
-    ESP_LOGI(TAG, "I2S pins - MCLK:%d BCLK:%d WS:%d DOUT:%d",
+    ESP_LOGD(TAG, "I2S pins - MCLK:%d BCLK:%d WS:%d DOUT:%d",
              i2s_pins.mclk, i2s_pins.bclk, i2s_pins.ws, i2s_pins.dout);
 
     // Configure GPIO pins
@@ -159,11 +159,11 @@ bool audio_init() {
         s_tx_handle = NULL;
         return false;
     }
-    ESP_LOGI(TAG, "I2S channel enabled successfully");
+    ESP_LOGD(TAG, "I2S channel enabled successfully");
 
     s_initialized = true;
     reset_master_filter();
-    ESP_LOGI(TAG, "I2S DMA audio initialized at %d Hz, volume=%d%%, frame size=%d samples",
+    ESP_LOGD(TAG, "I2S DMA audio initialized at %d Hz, volume=%d%%, frame size=%d samples",
              SAMPLE_RATE, (int)(s_volume_gain * 100), SAMPLES_PER_FRAME);
     return true;
 }
@@ -246,11 +246,12 @@ void audio_play_frame(SpectrumBase* spectrum) {
         s_consecutive_failures++;
     }
 
+    /*
     // Periodic diagnostics logging (every 5 seconds)
     int64_t now_ms = esp_timer_get_time() / 1000;
     if (now_ms - s_stats.last_log_ms > 5000) {
         if (s_stats.successful_writes > 0 || s_stats.timeout_writes > 0 || s_stats.error_writes > 0) {
-            ESP_LOGI(TAG, "Stats: OK:%u TO:%u ERR:%u Peak:%u NearClip:%u Bytes:%u",
+            ESP_LOGD(TAG, "Stats: OK:%u TO:%u ERR:%u Peak:%u NearClip:%u Bytes:%u",
                      s_stats.successful_writes, s_stats.timeout_writes, s_stats.error_writes,
                      s_stats.max_peak_sample, s_stats.near_clip_frames, s_stats.bytes_written);
         }
@@ -258,6 +259,7 @@ void audio_play_frame(SpectrumBase* spectrum) {
         s_stats.max_peak_sample = 0;
         s_stats.near_clip_frames = 0;
     }
+    */
 }
 
 void audio_play_tone(int freq_hz, int duration_ms) {
@@ -330,7 +332,7 @@ void audio_set_volume(int volume) {
     if (volume > 100) volume = 100;
 
     s_volume_gain = volume / 100.0f;
-    ESP_LOGI(TAG, "Volume set to %d%%", volume);
+    ESP_LOGD(TAG, "Volume set to %d%%", volume);
 }
 
 int audio_get_volume() {
@@ -339,7 +341,7 @@ int audio_get_volume() {
 
 void audio_set_mute(bool mute) {
     s_muted = mute;
-    ESP_LOGI(TAG, "Audio %s", mute ? "muted" : "unmuted");
+    ESP_LOGD(TAG, "Audio %s", mute ? "muted" : "unmuted");
 }
 
 bool audio_get_mute() {
