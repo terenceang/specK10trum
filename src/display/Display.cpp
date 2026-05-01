@@ -53,9 +53,10 @@ static const int NUM_STRIPS = 5;
 static uint16_t* s_stripBuffers[2] = { NULL, NULL };
 
 // Pre-allocated SPI transactions to avoid heap churn
-static const int MAX_TRANSACTIONS = 60; 
+static const int MAX_TRANSACTIONS = 60;
 static spi_transaction_t* s_trans_pool = NULL;
 static int s_trans_count = 0;
+static int s_pool_offset = 0;  // Alternates 0-29 and 30-59 for pool alternation
 
 static void lcd_push_frame_async_pingpong(const uint16_t* buffer);
 
@@ -479,14 +480,15 @@ static bool drain_spi_transactions(int count, TickType_t total_timeout) {
 static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     if (!s_spi || !buffer || !s_stripBuffers[0] || !s_stripBuffers[1]) return;
 
-    // Drain everything from the previous frame before reusing the trans pool.
-    // Try fast non-blocking drain first (1ms timeout), then fallback to slow drain if needed.
+    // Pool alternation: use halves 0-29 and 30-59 to allow Frame N+1 to queue
+    // while Frame N's DMA is still running (different pool space = no collision).
+    // Drain the previous pool half's transactions before switching to this half.
     if (s_trans_count > 0) {
         int64_t t_drain_start = esp_timer_get_time();
 
-        // Fast attempt: try 1ms timeout (SPI usually finishes in 15ms)
+        // Fast attempt: try 1ms timeout (SPI usually finishes in ~15ms)
         if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(1))) {
-            // If fast drain failed, use full 40ms budget
+            // If fast drain failed, use full 40ms budget (one frame's worth of SPI time)
             if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(40))) {
                 ESP_LOGW(TAG, "SPI backlog (%d pending); skipping frame", s_trans_count);
                 return;
@@ -498,14 +500,15 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
         if (++drain_log_count >= 100) {
             int64_t drain_time = t_drain_end - t_drain_start;
             if (drain_time > 1000) {  // Log if > 1ms
-                ESP_LOGI(TAG, "SPI_DRAIN: %d txns took %.2fms", s_trans_count, drain_time / 1000.0);
+                ESP_LOGI(TAG, "SPI_DRAIN: %d txns from pool+%d took %.2fms",
+                         s_trans_count, (s_pool_offset ? 30 : 0), drain_time / 1000.0);
             }
             drain_log_count = 0;
         }
     }
 
     int linesPerStrip = s_lcdDisplayHeight / NUM_STRIPS;
-    int pool_idx = 0;
+    int pool_idx = s_pool_offset;  // Use current pool half offset (0 or 30)
 
     for (int i = 0; i < NUM_STRIPS; i++) {
         int startY = i * linesPerStrip;
@@ -561,6 +564,9 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
         }
         pool_idx += 6;
     }
+
+    // Alternate pool half for next frame (0-29 and 30-59)
+    s_pool_offset = (s_pool_offset == 0) ? 30 : 0;
 }
 
 
