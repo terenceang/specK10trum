@@ -51,6 +51,11 @@ static int16_t s_frame_buffer[SAMPLES_PER_FRAME * 2];  // Stereo interleaved
 static int16_t s_beeper_buf[SAMPLES_PER_FRAME];
 static int16_t s_psg_buf[SAMPLES_PER_FRAME];
 
+// Vectorized mixing buffers (float space for ESP-DSP operations)
+static float s_beeper_float[SAMPLES_PER_FRAME];
+static float s_psg_float[SAMPLES_PER_FRAME];
+static float s_mixed_float[SAMPLES_PER_FRAME];
+
 // I2S write statistics (errors only)
 static int s_consecutive_failures = 0;
 
@@ -180,12 +185,54 @@ bool audio_init() {
     return true;
 }
 
-static void apply_volume_gain(int16_t* stereo_buf, int samples, float gain) {
+static void mix_audio_vectorized(const int16_t* beeper, const int16_t* psg,
+                                 int16_t* out_mono, int samples) {
+    // Convert int16_t to float for vectorized processing
+    for (int i = 0; i < samples; ++i) {
+        s_beeper_float[i] = (float)beeper[i];
+        s_psg_float[i] = (float)psg[i];
+    }
+
+    // Scale beeper with ESP-DSP (in-place): beeper_float *= BEEPER_MIX_GAIN
+    dsps_mulc_f32_ae32(s_beeper_float, s_beeper_float, samples, BEEPER_MIX_GAIN, 1, 1);
+
+    // Scale PSG with ESP-DSP (in-place): psg_float *= PSG_MIX_GAIN
+    dsps_mulc_f32_ae32(s_psg_float, s_psg_float, samples, PSG_MIX_GAIN, 1, 1);
+
+    // Add scaled signals with ESP-DSP: mixed = beeper_float + psg_float
+    dsps_add_f32_ae32(s_beeper_float, s_psg_float, s_mixed_float, samples, 1, 1, 1);
+
+    // Convert back to int16_t with saturation
+    for (int i = 0; i < samples; ++i) {
+        float y = s_mixed_float[i];
+        if (y > 32767.0f) y = 32767.0f;
+        else if (y < -32768.0f) y = -32768.0f;
+        out_mono[i] = (int16_t)y;
+    }
+}
+
+static void apply_volume_gain_vectorized(int16_t* stereo_buf, int samples, float gain) {
     if (gain >= 0.99f) return;
 
-    for (int i = 0; i < samples * 2; ++i) {
-        int32_t s = (int32_t)(stereo_buf[i] * gain);
-        stereo_buf[i] = (int16_t)((s > 32767) ? 32767 : (s < -32768) ? -32768 : s);
+    int count = samples * 2;
+    static float fbuf[2 * 1024]; // Supports up to 1024 stereo frames
+    float* buf = fbuf;
+    if (count > 2 * 1024) return; // Safety check
+
+    // Convert int16_t to float
+    for (int i = 0; i < count; ++i) {
+        buf[i] = (float)stereo_buf[i];
+    }
+
+    // Vectorized multiply by constant: buf *= gain
+    dsps_mulc_f32_ae32(buf, buf, count, gain, 1, 1);
+
+    // Convert back to int16_t with saturation
+    for (int i = 0; i < count; ++i) {
+        float y = buf[i];
+        if (y > 32767.0f) y = 32767.0f;
+        else if (y < -32768.0f) y = -32768.0f;
+        stereo_buf[i] = (int16_t)y;
     }
 }
 
@@ -198,21 +245,15 @@ void audio_render_frame(SpectrumBase* spectrum) {
     spectrum->renderBeeperAudio(s_beeper_buf, SAMPLES_PER_FRAME);
     spectrum->renderPSGAudio(s_psg_buf, SAMPLES_PER_FRAME);
 
-    // Mix and duplicate mono to stereo
+    // Mix audio sources using vectorized ESP-DSP operations
+    // This replaces the scalar mixing loop with SIMD-optimized operations
+    int16_t mono_buf[SAMPLES_PER_FRAME];
+    mix_audio_vectorized(s_beeper_buf, s_psg_buf, mono_buf, SAMPLES_PER_FRAME);
+
+    // Duplicate mono to stereo
     for (int i = 0; i < SAMPLES_PER_FRAME; ++i) {
-        // Scaled additive mixing to provide headroom and prevent early clipping.
-        // Formula: y = (Beeper * BEEPER_MIX_GAIN) + (PSG * PSG_MIX_GAIN)
-        float b = (float)s_beeper_buf[i] * BEEPER_MIX_GAIN;
-        float p = (float)s_psg_buf[i] * PSG_MIX_GAIN;
-        float mixed = b + p;
-
-        // Hard saturation to clamp final mix to 16-bit range
-        if (mixed > 32767.0f) mixed = 32767.0f;
-        else if (mixed < -32768.0f) mixed = -32768.0f;
-
-        int16_t s16 = (int16_t)mixed;
-        stereo_buf[i * 2 + 0] = s16;
-        stereo_buf[i * 2 + 1] = s16;
+        stereo_buf[i * 2 + 0] = mono_buf[i];
+        stereo_buf[i * 2 + 1] = mono_buf[i];
     }
 
     // Apply master audio filter (LPF + DC blocker)
@@ -222,7 +263,7 @@ void audio_render_frame(SpectrumBase* spectrum) {
     if (s_muted) {
         memset(stereo_buf, 0, SAMPLES_PER_FRAME * 2 * sizeof(int16_t));
     } else {
-        apply_volume_gain(stereo_buf, SAMPLES_PER_FRAME, s_volume_gain);
+        apply_volume_gain_vectorized(stereo_buf, SAMPLES_PER_FRAME, s_volume_gain);
     }
 
     // Diagnostic peak tracking: Measure the final output actually sent to I2S.
@@ -340,7 +381,7 @@ void audio_play_tone(int freq_hz, int duration_ms) {
         apply_master_filter(stereo, n);
 
         // Apply volume gain to boot tone
-        apply_volume_gain(stereo, n, s_volume_gain);
+        apply_volume_gain_vectorized(stereo, n, s_volume_gain);
 
         size_t bytes_written = 0;
         i2s_channel_write(s_tx_handle, stereo, n * 2 * sizeof(int16_t),
