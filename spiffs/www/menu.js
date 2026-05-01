@@ -33,7 +33,6 @@
     const fileFilter = document.getElementById('zx-file-filter');
     const modelModal = document.getElementById('zx-model-modal');
     const modelClose = document.getElementById('zx-model-close');
-    const modelConfirm = document.getElementById('zx-model-confirm');
     
     const layoutModal = document.getElementById('zx-layout-modal');
     const layoutClose = document.getElementById('zx-layout-close');
@@ -91,31 +90,26 @@
           modelModal.style.display = 'none';
         }
       });
-    }
 
-    if (modelConfirm) {
-      modelConfirm.addEventListener('click', async () => {
-        const selected = document.querySelector('input[name="model"]:checked');
-        if (!selected) {
-          alert('Please select a model');
-          return;
-        }
+      modelModal.addEventListener('change', async (e) => {
+        const selected = e.target.closest('input[name="model"]');
+        if (!selected) return;
         const model = selected.value;
         try {
           const res = await fetch(`${window.ZX_UTILS.API.MODEL}?model=${model}`);
           const data = await res.json();
           if (res.ok) {
+            currentModel = model;
             modelModal.style.display = 'none';
             if (window.ZX_KB && window.ZX_KB.updateModelDisplay) {
               window.ZX_KB.updateModelDisplay(model);
             }
-            alert(`Model changed to ${model.toUpperCase()} and emulator reset!`);
             console.log('Model changed to:', model);
           } else {
             alert('Failed to change model: ' + (data.message || 'Unknown error'));
           }
-        } catch (e) {
-          alert('Error connecting to server: ' + e.message);
+        } catch (err) {
+          alert('Error connecting to server: ' + err.message);
         }
       });
     }
