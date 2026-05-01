@@ -95,6 +95,8 @@ bool Spectrum48K::applySnapshotData(const uint8_t* data, size_t len) {
         updateMap(2, m_ram + 0x4000, true);
         updateMap(3, m_ram + 0x8000, true);
         m_videoPagePtr = m_ram;
+        markAllDirtyCells();
+        invalidateBorderCache();
         ESP_LOGI(TAG, "Snapshot applied as raw RAM image (%zu bytes)", len);
         return true;
     }

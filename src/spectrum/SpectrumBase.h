@@ -101,6 +101,12 @@ public:
     void renderBeeperAudio(int16_t* buffer, int num_samples) { m_beeper.getFrameBuffer(buffer, num_samples); }
 
     void markDirtyCells(uint16_t addr);
+    void markAllDirtyCells() { memset(m_dirtyBitsForBuf, 0xFF, sizeof(m_dirtyBitsForBuf)); }
+    void invalidateBorderCache() {
+        m_lastBorderColorForBuf[0] = m_lastBorderColorForBuf[1] = 0xFF;
+        m_lastBorderEventCountForBuf[0] = m_lastBorderEventCountForBuf[1] = 0xFFFFFFFF;
+        m_lastBorderHashForBuf[0] = m_lastBorderHashForBuf[1] = 0xFFFFFFFF;
+    }
     virtual void renderPSGAudio(int16_t* buffer, int num_samples) { 
         memset(buffer, 0, num_samples * sizeof(int16_t)); 
     }
