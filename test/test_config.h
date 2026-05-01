@@ -10,7 +10,7 @@
 
 // Keyboard path diagnostics (WebSocket receive, queue dispatch, row updates).
 #ifndef KEYBOARD_DEBUG
-#define KEYBOARD_DEBUG 0
+#define KEYBOARD_DEBUG 1
 #endif
 
 // Display performance diagnostics (FPS + CPU/video timing log).

@@ -106,6 +106,9 @@
           const data = await res.json();
           if (res.ok) {
             modelModal.style.display = 'none';
+            if (window.ZX_KB && window.ZX_KB.updateModelDisplay) {
+              window.ZX_KB.updateModelDisplay(model);
+            }
             alert(`Model changed to ${model.toUpperCase()} and emulator reset!`);
             console.log('Model changed to:', model);
           } else {
