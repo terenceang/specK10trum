@@ -58,7 +58,7 @@
     if (k.keyword)      parts += `<div class="zx-lab zx-kw">${esc(k.keyword)}</div>`;
     if (k.commandBelow) parts += `<div class="zx-lab zx-below">${esc(k.commandBelow)}</div>`;
     if (k.eModeRed)     parts += `<div class="zx-lab zx-er">${esc(k.eModeRed)}</div>`;
-    if (k.eModeGreen)   parts += `<div class="zx-lab zx-eg">${esc(k.eModeGreen)}</div>`;
+    if (k.keywordBelow) parts += `<div class="zx-lab zx-eg">${esc(k.keywordBelow)}</div>`;
 
     let data = '';
     if (k.combo) {
@@ -95,7 +95,7 @@
       if (i === 0 && !(LAYOUT && LAYOUT.HIDE_LEDS)) {
         html += `
           <div class="zx-kb-model">
-            <div class="zx-model-label" id="zx-model-display">48K</div>
+            <div class="zx-model-label" id="zx-model-display">ZX 48K</div>
           </div>
         `;
       }
@@ -270,7 +270,8 @@
     currentModel = model;
     const display = document.getElementById('zx-model-display');
     if (display) {
-      display.textContent = (model || '48k').toUpperCase();
+      const modelName = (model || '48k').toUpperCase();
+      display.textContent = `ZX ${modelName}`;
     }
   }
 
