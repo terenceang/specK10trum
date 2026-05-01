@@ -16,6 +16,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "webserver/command_queue.h"
+#include "test_config.h"
 
 static const char* TAG = "Webserver";
 static const char* WWW_ROOT = "/spiffs/www";
@@ -304,6 +305,9 @@ static esp_err_t ws_handler(httpd_req_t *req)
         if (ret != ESP_OK) return ret;
         if (ws_pkt.type == HTTPD_WS_TYPE_BINARY && ws_pkt.len == 3) {
             uint8_t row = buffer[0], bit = buffer[1], pressed = buffer[2];
+#if KEYBOARD_DEBUG
+            ESP_LOGI(TAG, "KB WS RX row=%u bit=%u pressed=%u", (unsigned)row, (unsigned)bit, (unsigned)pressed);
+#endif
             WebCommand command;
             command.type = WebCommandType::KeyboardInput;
             command.int_arg1 = row;

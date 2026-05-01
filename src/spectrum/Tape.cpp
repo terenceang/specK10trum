@@ -1,4 +1,3 @@
-#define KEYBOARD_DEBUG 0
 #include "Tape.h"
 #include "SpectrumBase.h"
 

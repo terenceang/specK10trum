@@ -251,6 +251,9 @@ static void emulator_task(void* pvParameters) {
                     uint8_t row = (uint8_t)cmd.int_arg1;
                     uint8_t bit = (uint8_t)(cmd.int_arg2 & 0xFF);
                     bool pressed = (bool)((cmd.int_arg2 >> 8) & 0xFF);
+#if KEYBOARD_DEBUG
+                    ESP_LOGI(TAG, "KB CMD row=%u bit=%u pressed=%u", (unsigned)row, (unsigned)bit, (unsigned)pressed);
+#endif
                     if (row == 0xFF) {
                         input_setJoystickBit(bit, pressed);
                     } else {

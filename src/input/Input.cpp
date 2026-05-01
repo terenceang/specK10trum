@@ -5,6 +5,7 @@
 #include <freertos/task.h>
 #include <esp_log.h>
 #include <string.h>
+#include "test_config.h"
 
 // Keyboard rows (active-low; 0 = pressed)
 // Marked volatile as it's updated by Webserver task and read by Emulator task
@@ -23,6 +24,11 @@ void input_update_key(uint8_t row, uint8_t bit, bool pressed) {
     if (row < 8 && bit < 5) {
         if (pressed) s_keyboardRows[row] &= ~(1u << bit); // Active low: 0 = pressed
         else         s_keyboardRows[row] |=  (1u << bit);  // Active low: 1 = released
+#if KEYBOARD_DEBUG
+        ESP_LOGI("Input", "KB APPLY row=%u bit=%u pressed=%u row_state=0x%02X",
+                 (unsigned)row, (unsigned)bit, (unsigned)pressed,
+                 (unsigned)s_keyboardRows[row]);
+#endif
     }
 }
 
@@ -40,6 +46,10 @@ void input_setJoystickBit(uint8_t bit, bool pressed) {
     if (bit > 4) return;
     if (pressed) s_joystickState |=  (1u << bit);
     else         s_joystickState &= ~(1u << bit);
+#if KEYBOARD_DEBUG
+    ESP_LOGI("Input", "JOY APPLY bit=%u pressed=%u state=0x%02X",
+             (unsigned)bit, (unsigned)pressed, (unsigned)s_joystickState);
+#endif
 }
 
 uint8_t input_getJoystick(void) {

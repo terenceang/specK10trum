@@ -14,8 +14,7 @@
 #include "instrumentation/Instrumentation.h"
 #include "expander/Expander.h"
 #include "audio/Audio.h"
-
-#define SHOW_FPS_DEBUG 1
+#include "test_config.h"
 
 static const char* TAG = "Display";
 
@@ -403,10 +402,10 @@ void display_present() {
     if (now - last_time_us >= 5000000) { // Log every 5 seconds
         int64_t cpu_us = 0, video_us = 0; uint32_t cpu_frames = 0, video_frames = 0;
         instr_snapshot_and_reset(&cpu_us, &cpu_frames, &video_us, &video_frames);
-        #if SHOW_FPS_DEBUG
-        ESP_LOGI(TAG, "FPS: %.2f | CPU: %.3fms | Video: %.3fms", (double)frame_count * 1000000.0 / (double)(now - last_time_us), 
+#if DISPLAY_FPS_DEBUG
+        ESP_LOGI(TAG, "FPS: %.2f | CPU: %.3fms | Video: %.3fms", (double)frame_count * 1000000.0 / (double)(now - last_time_us),
                  cpu_frames ? (double)cpu_us / cpu_frames / 1000.0 : 0, video_frames ? (double)video_us / video_frames / 1000.0 : 0);
-        #endif
+#endif
         frame_count = 0; last_time_us = now;
     }
 }

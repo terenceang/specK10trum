@@ -10,6 +10,7 @@
 #include <cmath>
 #include "../../components/audio_stream/include/board_pins_config.h"
 #include "esp_dsp.h"
+#include "test_config.h"
 
 static const char* TAG = "Audio";
 static const int SAMPLE_RATE = 44100;
@@ -329,7 +330,7 @@ void audio_write_frame() {
         s_consecutive_failures++;
     }
 
-    /*
+#if AUDIO_DIAGNOSTICS_DEBUG
     // Periodic diagnostics logging (every 5 seconds)
     int64_t now_ms = esp_timer_get_time() / 1000;
     if (now_ms - s_stats.last_log_ms > 5000) {
@@ -342,7 +343,7 @@ void audio_write_frame() {
         s_stats.max_peak_sample = 0;
         s_stats.near_clip_frames = 0;
     }
-    */
+#endif
 }
 
 void audio_play_frame(SpectrumBase* spectrum) {
