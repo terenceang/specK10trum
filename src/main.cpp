@@ -26,6 +26,26 @@
 
 static const char* TAG = "Main";
 
+// Memory monitoring task: logs free heap and min free heap (internal & SPIRAM) every minute
+static void memory_monitor_task(void* pvParameters) {
+    (void)pvParameters;
+    while (1) {
+        size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        size_t min_free_internal = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+#if CONFIG_SPIRAM_SUPPORT
+        size_t free_spiram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        size_t min_free_spiram = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+#else
+        size_t free_spiram = 0;
+        size_t min_free_spiram = 0;
+#endif
+        ESP_LOGI("MemMon", "Heap (INTERNAL): free=%u, min=%u | Heap (SPIRAM): free=%u, min=%u",
+            (unsigned)free_internal, (unsigned)min_free_internal,
+            (unsigned)free_spiram, (unsigned)min_free_spiram);
+        vTaskDelay(pdMS_TO_TICKS(60000)); // 1 minute
+    }
+}
+
 // Get the stored model preference from NVS, default to 48K
 static bool getStoredModelPreference(const char*& modelName, const char*& romFile) {
     nvs_handle_t nvs_h;
@@ -452,6 +472,8 @@ extern "C" void app_main(void) {
     // 16. Idle
     log_ts(TAG, "=== STEP 16/16: Boot Done ===");
     log_ts(TAG, "Boot complete. Entering idle loop.");
+    // Start memory monitoring task
+    xTaskCreatePinnedToCore(memory_monitor_task, "mem_mon", 3072, NULL, 1, NULL, tskNO_AFFINITY);
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
