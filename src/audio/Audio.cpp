@@ -102,7 +102,6 @@ bool audio_init() {
         return true;
     }
 
-    // TODO: Board-specific power management.
     // The Unihiker (NS4150 amplifier) may require explicit GPIO initialization 
     // to enable the speaker or set the gain mode. On ESP32-S3 boards, this 
     // is often GPIO 12 or 48. Since the exact pin for power-enable is not 

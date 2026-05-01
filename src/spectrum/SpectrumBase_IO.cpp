@@ -3,9 +3,6 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 
-// static const char* TAG = "SpectrumBase"; // Unused
-// static uint16_t screenMemoryAddress(int line, int xByte) { ... } // Unused
-// static uint16_t attributeMemoryAddress(int line, int xByte) { ... } // Unused
 
 void SpectrumBase::writePortFE(uint8_t value) {
     uint8_t newColor = value & 0x07;

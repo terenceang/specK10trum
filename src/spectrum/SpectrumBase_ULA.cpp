@@ -1,7 +1,6 @@
 #include "SpectrumBase.h"
 #include <esp_log.h>
 
-// static const char* TAG = "SpectrumBase"; // Unused
 
 static constexpr int T_STATES_PER_LINE = 224;
 static constexpr int FRAME_LINES = 312;
