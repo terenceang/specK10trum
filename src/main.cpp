@@ -157,6 +157,8 @@ static void emulator_task(void* pvParameters) {
     ESP_LOGI(TAG, "Emulator task started on core %d", xPortGetCoreID());
 
     const int T_STATES_PER_FRAME = 69888; // 3.5 MHz / 50.08 Hz
+    TickType_t lastWake = xTaskGetTickCount();
+    const TickType_t frameTicks = pdMS_TO_TICKS(20);
 
     while (true) {
         // Process all commands in the queue (replaces webserver_apply_pending)
@@ -241,6 +243,9 @@ static void emulator_task(void* pvParameters) {
                 case WebCommandType::TapeSetMode:
                     spectrum->tape().setMode(static_cast<TapeMode>(cmd.int_arg1));
                     break;
+                case WebCommandType::TapeSetMonitor:
+                    spectrum->setTapeMonitorEnabled(cmd.int_arg1 != 0);
+                    break;
                 case WebCommandType::KeyboardInput:
                 {
                     uint8_t row = (uint8_t)cmd.int_arg1;
@@ -270,8 +275,8 @@ static void emulator_task(void* pvParameters) {
         // Render and play beeper audio for this frame.
         audio_play_frame(spectrum);
 
-        // Yield to allow other tasks (like Webserver) to run
-        vTaskDelay(1);
+        // Keep frame cadence near 50Hz and reduce scheduler-induced audio jitter.
+        vTaskDelayUntil(&lastWake, frameTicks);
     }
 }
 

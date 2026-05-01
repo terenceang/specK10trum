@@ -69,7 +69,8 @@
       "PowerShell(pio run *)",
       "PowerShell(python -m platformio run --environment unihiker_k10)",
       "PowerShell(python -m platformio run --environment unihiker_k10 2>&1 | Select-Object -Last 50)",
-      "PowerShell(python -m platformio run --environment unihiker_k10 2>&1 | Select-Object -Last 100)"
+      "PowerShell(python -m platformio run --environment unihiker_k10 2>&1 | Select-Object -Last 100)",
+      "Bash(git push *)"
     ]
   }
 }

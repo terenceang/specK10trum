@@ -323,6 +323,8 @@ static esp_err_t ws_handler(httpd_req_t *req)
             else if (strstr(json, "\"cmd\":\"tape_mode_instaload\"")) { command.type = WebCommandType::TapeSetMode; command.int_arg1 = (int)TapeMode::INSTANT; }
             else if (strstr(json, "\"cmd\":\"tape_mode_normal\"")) { command.type = WebCommandType::TapeSetMode; command.int_arg1 = (int)TapeMode::NORMAL; }
             else if (strstr(json, "\"cmd\":\"tape_mode_player\"")) { command.type = WebCommandType::TapeSetMode; command.int_arg1 = (int)TapeMode::PLAYER; }
+            else if (strstr(json, "\"cmd\":\"tape_monitor_on\"")) { command.type = WebCommandType::TapeSetMonitor; command.int_arg1 = 1; }
+            else if (strstr(json, "\"cmd\":\"tape_monitor_off\"")) { command.type = WebCommandType::TapeSetMonitor; command.int_arg1 = 0; }
             if (command.type != WebCommandType::None) {
                 webserver_get_command_queue().push(command);
             }

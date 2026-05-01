@@ -283,24 +283,48 @@ void audio_write_frame() {
 
     int16_t* stereo_buf = s_frame_buffer;
 
-    // Write to I2S with short timeout (non-blocking mode)
-    size_t bytes_written = 0;
-    esp_err_t ret = i2s_channel_write(s_tx_handle, stereo_buf,
-                                      SAMPLES_PER_FRAME * 2 * sizeof(int16_t),
-                                      &bytes_written, pdMS_TO_TICKS(10));
+    const size_t total_bytes = SAMPLES_PER_FRAME * 2 * sizeof(int16_t);
+    size_t offset = 0;
+    bool timed_out = false;
+    bool had_error = false;
 
-    if (ret == ESP_OK) {
-        s_stats.successful_writes++;
-        s_stats.bytes_written += bytes_written;
-        s_consecutive_failures = 0;
-    } else {
-        if (ret == ESP_ERR_TIMEOUT) {
-            s_stats.timeout_writes++;
+    // Drain the full frame to DMA; partial writes are retried so we do not
+    // drop tail samples under transient scheduler pressure.
+    while (offset < total_bytes) {
+        size_t chunk_written = 0;
+        esp_err_t ret = i2s_channel_write(
+            s_tx_handle,
+            ((const uint8_t*)stereo_buf) + offset,
+            total_bytes - offset,
+            &chunk_written,
+            pdMS_TO_TICKS(25));
+
+        if (ret == ESP_OK && chunk_written > 0) {
+            offset += chunk_written;
+            continue;
+        }
+
+        if (ret == ESP_ERR_TIMEOUT || chunk_written == 0) {
+            timed_out = true;
         } else {
-            s_stats.error_writes++;
+            had_error = true;
             if (s_consecutive_failures == 0) {
                 ESP_LOGW(TAG, "I2S write error: %s", esp_err_to_name(ret));
             }
+        }
+        break;
+    }
+
+    if (offset == total_bytes) {
+        s_stats.successful_writes++;
+        s_stats.bytes_written += (uint32_t)total_bytes;
+        s_consecutive_failures = 0;
+    } else {
+        if (timed_out) {
+            s_stats.timeout_writes++;
+        }
+        if (had_error) {
+            s_stats.error_writes++;
         }
         s_consecutive_failures++;
     }

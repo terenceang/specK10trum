@@ -15,6 +15,7 @@ enum class WebCommandType {
     TapeCmd,
     TapeInstantLoad,
     TapeSetMode,
+    TapeSetMonitor,
     KeyboardInput,
     // ... add more as needed
 };

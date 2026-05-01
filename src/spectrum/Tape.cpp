@@ -34,6 +34,116 @@ Tape::Tape()
     , m_is_tzx(false)
 {}
 
+// Skip non-audio/control TZX blocks so mixed-content tapes can still parse
+// and reach playable data blocks.
+static bool skip_tzx_block(uint8_t type, const uint8_t* data, size_t size, size_t& p) {
+    auto need = [&](size_t n) -> bool { return p + n <= size; };
+    switch (type) {
+        case 0x12: // Pure tone
+            if (!need(4)) return false;
+            p += 4;
+            return true;
+        case 0x13: { // Pulse sequence
+            if (!need(1)) return false;
+            uint8_t count = data[p++];
+            if (!need((size_t)count * 2)) return false;
+            p += (size_t)count * 2;
+            return true;
+        }
+        case 0x15: { // Direct recording
+            if (!need(8)) return false;
+            uint32_t len = (uint32_t)data[p + 5] | ((uint32_t)data[p + 6] << 8) | ((uint32_t)data[p + 7] << 16);
+            if (!need(8 + len)) return false;
+            p += 8 + len;
+            return true;
+        }
+        case 0x18: // CSW recording
+        case 0x19: // Generalized data
+        case 0x2B: { // Set signal level
+            if (!need(4)) return false;
+            uint32_t len = (uint32_t)data[p] | ((uint32_t)data[p + 1] << 8) | ((uint32_t)data[p + 2] << 16) | ((uint32_t)data[p + 3] << 24);
+            if (!need(4 + len)) return false;
+            p += 4 + len;
+            return true;
+        }
+        case 0x21: { // Group start
+            if (!need(1)) return false;
+            uint8_t len = data[p++];
+            if (!need(len)) return false;
+            p += len;
+            return true;
+        }
+        case 0x22: // Group end
+        case 0x25: // Loop end
+        case 0x27: // Return from sequence
+            return true;
+        case 0x23: // Jump
+        case 0x24: // Loop start
+            if (!need(2)) return false;
+            p += 2;
+            return true;
+        case 0x26: { // Call sequence
+            if (!need(2)) return false;
+            uint16_t n = (uint16_t)data[p] | ((uint16_t)data[p + 1] << 8);
+            if (!need(2 + (size_t)n * 2)) return false;
+            p += 2 + (size_t)n * 2;
+            return true;
+        }
+        case 0x28: { // Select block
+            if (!need(2)) return false;
+            uint16_t len = (uint16_t)data[p] | ((uint16_t)data[p + 1] << 8);
+            if (!need(2 + len)) return false;
+            p += 2 + len;
+            return true;
+        }
+        case 0x2A: // Stop tape if in 48K mode
+            if (!need(4)) return false;
+            p += 4;
+            return true;
+        case 0x30: { // Text description
+            if (!need(1)) return false;
+            uint8_t len = data[p++];
+            if (!need(len)) return false;
+            p += len;
+            return true;
+        }
+        case 0x31: { // Message block
+            if (!need(2)) return false;
+            uint8_t len = data[p + 1];
+            if (!need(2 + len)) return false;
+            p += 2 + len;
+            return true;
+        }
+        case 0x32: { // Archive info
+            if (!need(2)) return false;
+            uint16_t len = (uint16_t)data[p] | ((uint16_t)data[p + 1] << 8);
+            if (!need(2 + len)) return false;
+            p += 2 + len;
+            return true;
+        }
+        case 0x33: { // Hardware type
+            if (!need(1)) return false;
+            uint8_t n = data[p++];
+            if (!need((size_t)n * 3)) return false;
+            p += (size_t)n * 3;
+            return true;
+        }
+        case 0x35: { // Custom info block
+            if (!need(20)) return false;
+            uint32_t len = (uint32_t)data[p + 16] | ((uint32_t)data[p + 17] << 8) | ((uint32_t)data[p + 18] << 16) | ((uint32_t)data[p + 19] << 24);
+            if (!need(20 + len)) return false;
+            p += 20 + len;
+            return true;
+        }
+        case 0x5A: // Glue block
+            if (!need(9)) return false;
+            p += 9;
+            return true;
+        default:
+            return false;
+    }
+}
+
 Tape::~Tape() { unload(); }
 
 void Tape::setMode(TapeMode mode) {
@@ -257,7 +367,11 @@ void Tape::buildBlockList() {
                     break;
                 }
                 default:
-                    return;
+                    if (!skip_tzx_block(type, m_data, m_size, p)) {
+                        ESP_LOGW("Tape", "Unsupported or malformed TZX block 0x%02X at offset %u", type, (unsigned)(p - 1));
+                        return;
+                    }
+                    break;
             }
         }
     } else {

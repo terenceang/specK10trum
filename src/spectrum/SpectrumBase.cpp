@@ -38,6 +38,7 @@ SpectrumBase::SpectrumBase()
     , m_borderColor(0)
     , m_lastSpeakerBit(0)
     , m_lastTapeEar(false)
+    , m_tapeMonitorEnabled(false)
     , m_pendingTapeTstates(0)
     , m_wasInLDBytes(false)
 {
@@ -152,7 +153,19 @@ void SpectrumBase::dumpMemoryMap() const {
 }
 
 int SpectrumBase::step() {
-    int tstates = z80_step(&m_cpu);
+    int tstates = 0;
+
+    // In instant mode, service the ROM LD-BYTES entry directly so loading
+    // does not depend on pulse decoding timing.
+    if (m_tape.getMode() == TapeMode::INSTANT &&
+        m_tape.isLoaded() &&
+        isTapeRomActive() &&
+        m_cpu.pc == Tape::LD_BYTES_ENTRY) {
+        tstates = m_tape.serviceLoadTrap(this);
+    } else {
+        tstates = z80_step(&m_cpu);
+    }
+
     m_pendingTapeTstates += tstates;
     advanceULA(tstates);
 

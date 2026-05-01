@@ -5,6 +5,15 @@
 
   let currentTapeMode = (function() { try { return localStorage.getItem('zx_tape_mode') || 'normal'; } catch (_) { return 'normal'; } })();
   let lastTape = (function() { try { return localStorage.getItem('zx_last_tape') || null; } catch (_) { return null; } })();
+  let tapeMonitorEnabled = (function() {
+    try { return localStorage.getItem('zx_tape_monitor') === 'on'; }
+    catch (_) { return false; }
+  })();
+
+  function sendTapeMonitorState() {
+    if (!window.ZX_WS) return;
+    window.ZX_WS.send(JSON.stringify({ cmd: tapeMonitorEnabled ? 'tape_monitor_on' : 'tape_monitor_off' }));
+  }
 
   function stopTape() {
     if (window.ZX_WS) window.ZX_WS.send(JSON.stringify({ cmd: 'tape_stop' }));
@@ -12,6 +21,7 @@
 
   function init() {
     const autoPlayToggle = document.getElementById('zx-auto-play-toggle');
+    const tapeMonitorToggle = document.getElementById('zx-tape-monitor-toggle');
     const btnLoadTape = document.getElementById('zx-btn-load-tape');
     const btnInstaload = document.getElementById('zx-btn-instaload');
     const playerRefresh = document.getElementById('zx-player-refresh');
@@ -25,6 +35,15 @@
         try { localStorage.setItem('zx_tape_mode', currentTapeMode); } catch(_) {}
         if (window.ZX_WS) window.ZX_WS.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode }));
         updateUI();
+      });
+    }
+
+    if (tapeMonitorToggle) {
+      tapeMonitorToggle.checked = tapeMonitorEnabled;
+      tapeMonitorToggle.addEventListener('change', (e) => {
+        tapeMonitorEnabled = !!e.target.checked;
+        try { localStorage.setItem('zx_tape_monitor', tapeMonitorEnabled ? 'on' : 'off'); } catch(_) {}
+        sendTapeMonitorState();
       });
     }
 
@@ -94,6 +113,7 @@
     window.addEventListener('zx-ws-open', () => {
       if (window.ZX_WS && !document.hidden) {
         window.ZX_WS.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode }));
+        sendTapeMonitorState();
       }
     });
 

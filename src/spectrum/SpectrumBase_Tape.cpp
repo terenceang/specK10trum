@@ -13,31 +13,35 @@ void SpectrumBase::logTapeTrap(const char* msg) {
              msg, (int)m_tape.getMode(), (int)m_tape.isPlaying());
 }
 
-// Attenuation applied while tape is being advanced. Beeper::m_volume scales
-// BOTH the speaker base waveform AND the tape EAR overlay (see speakerAmp()
-// and tapeAmp() in Beeper.cpp), so this knob lowers the whole mix during
-// loading -- not just the speaker path. If a future change wants to attenuate
-// only one of those sources, Beeper would need separate gain controls; for
-// now keep this as a single tuning constant to preserve current behavior.
-static constexpr float TAPE_LOADING_MIX_GAIN = 0.3f;
-
 void SpectrumBase::flushTape() {
     if (m_pendingTapeTstates <= 0) return;
 
     uint32_t tstates = (uint32_t)m_pendingTapeTstates;
     m_pendingTapeTstates = 0;
 
-    // Attenuate the combined speaker+tape mix while loading is active.
-    float prev_volume = m_beeper.getVolume();
-    m_beeper.setVolume(TAPE_LOADING_MIX_GAIN);
+    // Player mode: keep mixed speaker+tape behavior.
+    // Normal mode + monitor ON: make monitor exclusive (EAR-only) only while
+    // the ROM loader routine is active, not for the whole tape playback.
+    bool audible_tape_monitor = false;
+    bool speaker_path_enabled = true;
+    if (m_tape.getMode() == TapeMode::PLAYER) {
+        audible_tape_monitor = true;
+        speaker_path_enabled = true;
+    } else if (m_tape.getMode() == TapeMode::NORMAL && m_tapeMonitorEnabled) {
+        audible_tape_monitor = true;
+        bool in_rom_loader = isTapeRomActive() && (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
+        speaker_path_enabled = !in_rom_loader;
+    }
 
-    // Advance the tape and record all EAR toggles for the beeper to hear them
+    m_beeper.setTapeMonitorEnabled(audible_tape_monitor);
+    m_beeper.setSpeakerPathEnabled(speaker_path_enabled);
+
+    // Advance the tape. Always update m_lastTapeEar for port FE sampling.
     uint32_t start_ula_clocks = m_ulaClocks - tstates;
     m_tape.advance(tstates, [&](uint32_t offset, bool ear) {
-        m_beeper.recordTapeEvent(start_ula_clocks + offset, ear ? 1 : 0);
+        if (audible_tape_monitor) {
+            m_beeper.recordTapeEvent(start_ula_clocks + offset, ear ? 1 : 0);
+        }
         m_lastTapeEar = ear;
     });
-
-    // Restore previous beeper volume
-    m_beeper.setVolume(prev_volume);
 }

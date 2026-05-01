@@ -76,6 +76,8 @@ public:
     
     Z80* getCPU() { return &m_cpu; }
     Tape& tape() { return m_tape; }
+    void setTapeMonitorEnabled(bool enabled) { m_tapeMonitorEnabled = enabled; }
+    bool isTapeMonitorEnabled() const { return m_tapeMonitorEnabled; }
 
     void flushTape();
     void logTapeTrap(const char* msg);
@@ -142,6 +144,7 @@ protected:
 
     Beeper m_beeper;
     Tape m_tape;
+    bool m_tapeMonitorEnabled = false;
     int32_t m_pendingTapeTstates;
     bool m_postTrapWatch = false;
     uint32_t m_postTrapSteps = 0;

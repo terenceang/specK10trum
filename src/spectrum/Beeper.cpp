@@ -24,6 +24,8 @@ void Beeper::reset() {
     m_speakerLevel = 0;
     m_tapeLevel = 0;
     m_externalEar = false;
+    m_tapeMonitorEnabled = true;
+    m_speakerPathEnabled = true;
     memset(m_frameBuffer, 0, sizeof(m_frameBuffer));
     memset(m_renderBuffer, 0, sizeof(m_renderBuffer));
 }
@@ -113,8 +115,8 @@ void Beeper::renderTo(uint32_t tstates) {
 }
 
 void Beeper::renderSamples(int start, int end) {
-    const float speaker_vol = speakerAmp();
-    const float tape_vol    = tapeAmp();
+    const float speaker_vol = m_speakerPathEnabled ? speakerAmp() : 0.0f;
+    const float tape_vol    = m_tapeMonitorEnabled ? tapeAmp() : 0.0f;
 
     for (int i = start; i < end; ++i) {
         // Speaker is bipolar (-AMP to +AMP)

@@ -25,18 +25,7 @@ uint8_t SpectrumBase::readPortFE(uint16_t port) {
     uint8_t val = 0xBF; // Bits 0-4 are columns (active low), Bit 6 (EAR) is 0 by default, others 1
 
     // Ensure tape is advanced to current CPU time before sampling EAR.
-    // First, flush any accumulated T-states from previous instructions.
     flushTape();
-
-    // Then, proactively advance by 11 T-states (the duration of the IN A, (n) instruction).
-    // This allows sampling EAR at the exact machine cycle it is actually read.
-    m_tape.advance(11, [&](uint32_t offset, bool ear) {
-        m_beeper.recordTapeEvent(m_ulaClocks + offset, ear ? 1 : 0);
-        m_lastTapeEar = ear;
-    });
-
-    // Compensate for the 11 states we just processed so they aren't counted twice.
-    m_pendingTapeTstates -= 11;
 
     // Standard Spectrum keyboard: Address bits A8-A15 select rows.
     uint8_t select = ~(port >> 8);

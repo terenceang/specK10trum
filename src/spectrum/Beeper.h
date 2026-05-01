@@ -21,6 +21,10 @@ public:
     void setExternalEar(bool high) { m_externalEar = high; }
     bool getExternalEar() const { return m_externalEar; }
     uint8_t currentSpeakerLevel() const { return m_speakerLevel; }
+    void setTapeMonitorEnabled(bool enabled) { m_tapeMonitorEnabled = enabled; }
+    bool isTapeMonitorEnabled() const { return m_tapeMonitorEnabled; }
+    void setSpeakerPathEnabled(bool enabled) { m_speakerPathEnabled = enabled; }
+    bool isSpeakerPathEnabled() const { return m_speakerPathEnabled; }
 
     // Volume control for loading (0.0-1.0)
     void setVolume(float vol) { m_volume = vol > 1.0f ? 1.0f : (vol < 0.0f ? 0.0f : vol); }
@@ -40,6 +44,8 @@ private:
     uint8_t m_speakerLevel;
     uint8_t m_tapeLevel;
     bool m_externalEar;
+    bool m_tapeMonitorEnabled = true;
+    bool m_speakerPathEnabled = true;
     float m_volume = 1.0f;
 
     // Single-source amplitude helpers. Used by both steady-state rendering
