@@ -479,19 +479,16 @@ static bool drain_spi_transactions(int count, TickType_t total_timeout) {
 static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     if (!s_spi || !buffer || !s_stripBuffers[0] || !s_stripBuffers[1]) return;
 
-    // Drain oldest strip (6 txns) from previous frame before reusing buffer pool.
-    // We only need the oldest 6 transactions to complete; don't wait for all 30.
-    // Strips are queued in order, so oldest strip completes ~3ms after queueing.
+    // Drain everything from the previous frame before reusing the trans pool.
+    // Try fast non-blocking drain first (1ms timeout), then fallback to slow drain if needed.
     if (s_trans_count > 0) {
         int64_t t_drain_start = esp_timer_get_time();
 
-        int to_drain = s_trans_count > 6 ? 6 : s_trans_count;
-
-        // Fast attempt: try 1ms timeout (oldest strip usually completes in ~3ms)
-        if (!drain_spi_transactions(to_drain, pdMS_TO_TICKS(1))) {
-            // If fast drain failed, use 20ms budget (enough for one strip's DMA at 80MHz)
-            if (!drain_spi_transactions(to_drain, pdMS_TO_TICKS(20))) {
-                ESP_LOGW(TAG, "SPI backlog (%d of %d pending); skipping frame", to_drain, s_trans_count);
+        // Fast attempt: try 1ms timeout (SPI usually finishes in 15ms)
+        if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(1))) {
+            // If fast drain failed, use full 40ms budget
+            if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(40))) {
+                ESP_LOGW(TAG, "SPI backlog (%d pending); skipping frame", s_trans_count);
                 return;
             }
         }
@@ -501,7 +498,7 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
         if (++drain_log_count >= 100) {
             int64_t drain_time = t_drain_end - t_drain_start;
             if (drain_time > 1000) {  // Log if > 1ms
-                ESP_LOGI(TAG, "SPI_DRAIN: %d of %d txns took %.2fms", to_drain, s_trans_count, drain_time / 1000.0);
+                ESP_LOGI(TAG, "SPI_DRAIN: %d txns took %.2fms", s_trans_count, drain_time / 1000.0);
             }
             drain_log_count = 0;
         }
