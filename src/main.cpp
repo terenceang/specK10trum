@@ -241,12 +241,19 @@ static void emulator_task(void* pvParameters) {
             }
         }
 
+        // Frame timing instrumentation
+        static int perf_frame_count = 0;
+        int64_t t_frame_start = esp_timer_get_time();
+        int64_t t_z80_start, t_z80_end, t_audio_render_end, t_audio_write_end, t_trigger_end, t_wait_end;
+
         int tStates = 0;
+        t_z80_start = esp_timer_get_time();
         instr_cpu_start();
         while (tStates < T_STATES_PER_FRAME) {
             tStates += spectrum->step();
         }
         instr_cpu_end();
+        t_z80_end = esp_timer_get_time();
 
         // Show tape status indicator
         if (spectrum->tape().isLoaded()) {
@@ -256,14 +263,40 @@ static void emulator_task(void* pvParameters) {
             display_clearOverlay();
         }
 
+        // Render video on Core 0 (load balancing: Core 1 will only do SPI push)
+        // This ensures both cores finish roughly at the same time
+        int64_t t_render_start = esp_timer_get_time();
+        spectrum->renderToRGB565(display_getBackBuffer(), 320, 240);
+        t_trigger_end = esp_timer_get_time();
+
+        // Trigger Core 1 to push the frame we just rendered via SPI
         display_trigger_frame(spectrum);
+        int64_t t_audio_start = esp_timer_get_time();
 
-        // Render and play audio for this frame on Core 0 (emulator task)
-        // This keeps the video task (Core 1) focused on rendering
-        audio_play_frame(spectrum);
+        // Render and write audio on Core 0 (overlaps I2S write with Core 1's SPI push)
+        audio_render_frame(spectrum);
+        t_audio_render_end = esp_timer_get_time();
 
-        // Wait for video task to complete frame (allows IDLE task to run and reset watchdog)
+        audio_write_frame();
+        t_audio_write_end = esp_timer_get_time();
+
+        // Wait for Core 1 to finish SPI push
         display_wait_frame();
+        t_wait_end = esp_timer_get_time();
+
+        // Log detailed frame timing every 100 frames
+        if (++perf_frame_count >= 100) {
+            int64_t t_z80 = t_z80_end - t_z80_start;
+            int64_t t_render = t_trigger_end - t_z80_end;
+            int64_t t_audio_render = t_audio_render_end - t_trigger_end;
+            int64_t t_audio_write = t_audio_write_end - t_audio_render_end;
+            int64_t t_wait = t_wait_end - t_audio_write_end;
+            int64_t t_total = t_wait_end - t_frame_start;
+            ESP_LOGI(TAG, "PERF: Z80=%.2fms render=%.2fms audio_render=%.2fms audio_write=%.2fms wait=%.2fms TOTAL=%.2fms",
+                     t_z80 / 1000.0, t_render / 1000.0, t_audio_render / 1000.0,
+                     t_audio_write / 1000.0, t_wait / 1000.0, t_total / 1000.0);
+            perf_frame_count = 0;
+        }
     }
 }
 

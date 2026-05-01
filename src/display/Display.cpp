@@ -144,6 +144,7 @@ static void IRAM_ATTR lcd_spi_pre_transfer_callback(spi_transaction_t *t) {
 
 static void video_task(void* pvParameters) {
     ESP_LOGI(TAG, "Video task started on core %d", xPortGetCoreID());
+    static int perf_frame_count = 0;
     while (1) {
         if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY)) {
             if (s_pause_video) {
@@ -151,10 +152,26 @@ static void video_task(void* pvParameters) {
                 continue;
             }
             if (s_pendingSpectrum) {
+                int64_t t_video_start = esp_timer_get_time();
                 instr_video_start();
-                display_renderSpectrum(s_pendingSpectrum);
+
+                // Only do SPI push (rendering is now on Core 0 for load balancing)
+                int64_t t_present_start = esp_timer_get_time();
                 display_present();
+                int64_t t_present_end = esp_timer_get_time();
+
                 instr_video_end();
+                int64_t t_video_end = esp_timer_get_time();
+
+                // Log video timing every 100 frames
+                if (++perf_frame_count >= 100) {
+                    int64_t t_present = t_present_end - t_present_start;
+                    int64_t t_video = t_video_end - t_video_start;
+                    ESP_LOGI(TAG, "VIDEO: present=%.2fms total=%.2fms",
+                             t_present / 1000.0, t_video / 1000.0);
+                    perf_frame_count = 0;
+                }
+
                 // Signal emulator task that frame is complete
                 if (s_emulatorTaskHandle) {
                     xTaskNotifyGive(s_emulatorTaskHandle);
@@ -463,11 +480,27 @@ static void lcd_push_frame_async_pingpong(const uint16_t* buffer) {
     if (!s_spi || !buffer || !s_stripBuffers[0] || !s_stripBuffers[1]) return;
 
     // Drain everything from the previous frame before reusing the trans pool.
-    // Use 40ms budget: one complete frame (15ms SPI) + margin for PSRAM/Wi-Fi jitter.
+    // Try fast non-blocking drain first (1ms timeout), then fallback to slow drain if needed.
     if (s_trans_count > 0) {
-        if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(40))) {
-            ESP_LOGW(TAG, "SPI backlog (%d pending); skipping frame", s_trans_count);
-            return;
+        int64_t t_drain_start = esp_timer_get_time();
+
+        // Fast attempt: try 1ms timeout (SPI usually finishes in 15ms)
+        if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(1))) {
+            // If fast drain failed, use full 40ms budget
+            if (!drain_spi_transactions(s_trans_count, pdMS_TO_TICKS(40))) {
+                ESP_LOGW(TAG, "SPI backlog (%d pending); skipping frame", s_trans_count);
+                return;
+            }
+        }
+
+        int64_t t_drain_end = esp_timer_get_time();
+        static int drain_log_count = 0;
+        if (++drain_log_count >= 100) {
+            int64_t drain_time = t_drain_end - t_drain_start;
+            if (drain_time > 1000) {  // Log if > 1ms
+                ESP_LOGI(TAG, "SPI_DRAIN: %d txns took %.2fms", s_trans_count, drain_time / 1000.0);
+            }
+            drain_log_count = 0;
         }
     }
 

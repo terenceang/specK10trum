@@ -4,7 +4,12 @@
 
 // Initialize audio subsystem (I2S)
 bool audio_init();
-// Render and play one frame of audio from the given Spectrum instance
+// Render one frame of audio from the given Spectrum instance (CPU-bound, ~5-7ms)
+// Stores result in internal buffer; call audio_write_frame() to send to I2S
+void audio_render_frame(SpectrumBase* spectrum);
+// Write previously rendered audio to I2S non-blocking (queues write, returns immediately)
+void audio_write_frame();
+// Legacy: render and play one frame (blocking). Kept for compatibility.
 void audio_play_frame(SpectrumBase* spectrum);
 // Play a simple square tone (blocking). Frequency in Hz, duration in ms.
 void audio_play_tone(int freq_hz, int duration_ms);

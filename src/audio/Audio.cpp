@@ -177,8 +177,8 @@ static void apply_volume_gain(int16_t* stereo_buf, int samples, float gain) {
     }
 }
 
-void audio_play_frame(SpectrumBase* spectrum) {
-    if (!spectrum || !s_tx_handle) return;
+void audio_render_frame(SpectrumBase* spectrum) {
+    if (!spectrum) return;
 
     int16_t* stereo_buf = s_frame_buffer;
 
@@ -223,6 +223,12 @@ void audio_play_frame(SpectrumBase* spectrum) {
     }
     if (frame_max > s_stats.max_peak_sample) s_stats.max_peak_sample = frame_max;
     if (frame_max > NEAR_CLIP_THRESHOLD) s_stats.near_clip_frames++;
+}
+
+void audio_write_frame() {
+    if (!s_tx_handle) return;
+
+    int16_t* stereo_buf = s_frame_buffer;
 
     // Write to I2S with short timeout (non-blocking mode)
     size_t bytes_written = 0;
@@ -260,6 +266,11 @@ void audio_play_frame(SpectrumBase* spectrum) {
         s_stats.near_clip_frames = 0;
     }
     */
+}
+
+void audio_play_frame(SpectrumBase* spectrum) {
+    audio_render_frame(spectrum);
+    audio_write_frame();
 }
 
 void audio_play_tone(int freq_hz, int duration_ms) {
