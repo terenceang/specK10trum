@@ -360,9 +360,9 @@ input:checked + .zx-slider:before { transform: translateX(14px); background-colo
 .zx-above { top: calc(var(--key-size) * -0.32); left: 0; right: 0; text-align: left; color: var(--green); }
 .zx-sym { top: 6%; right: 6%; font-size: max(9px, calc(var(--key-size) * 0.18)); font-weight: 900; color: var(--red); }
 .zx-kw { bottom: 8%; left: 0; right: 0; text-align: right;}
-.zx-below { bottom: calc(var(--key-size) * -0.26); left: 0; right: 0; text-align: left; color: var(--red); font-size: max(8px, calc(var(--key-size) * 0.13)); font-weight: 700; }
-.zx-er { bottom: calc(var(--key-size) * -0.26); left: 6%; color: var(--red); font-size: max(8px, calc(var(--key-size) * 0.13)); }
-.zx-eg { bottom: calc(var(--key-size) * -0.26); right: 6%; color: var(--green); font-size: max(8px, calc(var(--key-size) * 0.13)); }
+.zx-below { bottom: calc(var(--key-size) * -0.26); left: 0; right: 0; text-align: left; color: var(--red);font-weight: 700; }
+.zx-er { top: 8%; right: 6%; color: var(--red); text-align: right; }
+.zx-eg { bottom: calc(var(--key-size) * -0.26); right: 6%; color: var(--red);}
 
 .zx-stripebar { position: absolute; right: 0; top: 0; bottom: 0; width: var(--stripe-w); display: flex; flex-direction: column; pointer-events: none; }
 .zx-stripebar > div { flex: 1; }
