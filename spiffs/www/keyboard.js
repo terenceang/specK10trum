@@ -69,7 +69,7 @@
       const m = mapFor(k);
       if (m) data = ` data-r="${m[0]}" data-b="${m[1]}"`;
     }
-    
+
     const spc  = k.special ? ` data-special="${esc(k.special)}"` : '';
     const lbl  = ` data-lbl="${esc(shortLabel(k))}"`;
     return `<div class="zx-key${wideCls}"${data}${spc}${lbl}>${parts}</div>`;
