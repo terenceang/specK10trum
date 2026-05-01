@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Layout Editor - ZX Spectrum Keyboard</title>
+<link rel="stylesheet" href="/style.css?v=0.2.2" />
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+  }
+
+  .editor-container {
+    display: flex;
+    height: 100vh;
+    gap: 0;
+  }
+
+  .editor-panel {
+    flex: 0 0 50%;
+    display: flex;
+    flex-direction: column;
+    background: #1a1a1c;
+    border-right: 1px solid #333;
+    overflow: hidden;
+  }
+
+  .editor-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #333;
+    font-size: 12px;
+    font-weight: 600;
+    color: #aaa;
+    background: #0f0f10;
+  }
+
+  .editor-textarea {
+    flex: 1;
+    padding: 12px 16px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    background: #1a1a1c;
+    color: #e8e6df;
+    border: none;
+    resize: none;
+    overflow-y: auto;
+    white-space: pre;
+  }
+
+  .editor-textarea:focus {
+    outline: none;
+    background: #222;
+  }
+
+  .editor-error {
+    padding: 8px 16px;
+    background: #4d1a1a;
+    border-top: 1px solid #ff3b30;
+    font-size: 10px;
+    color: #ff9999;
+    max-height: 80px;
+    overflow-y: auto;
+  }
+
+  .preview-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    overflow: auto;
+    padding: 20px;
+  }
+
+  .preview-header {
+    padding: 0 0 12px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #aaa;
+    border-bottom: 1px solid #333;
+    margin-bottom: 20px;
+  }
+
+  #zx-kb {
+    margin: 0 auto;
+    max-width: 100%;
+  }
+
+  .zx-key {
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+
+  .zx-key:hover {
+    filter: brightness(1.2);
+  }
+</style>
+</head>
+<body>
+
+<div class="editor-container">
+  <div class="editor-panel">
+    <div class="editor-header">Layout Editor (ROW_1, ROW_2, ROW_3, ROW_4)</div>
+    <textarea id="editor-textarea" class="editor-textarea"></textarea>
+    <div id="editor-error" class="editor-error" style="display: none;"></div>
+  </div>
+
+  <div class="preview-panel">
+    <div class="preview-header">Preview</div>
+    <div class="zx-kbwrap">
+      <div class="zx-main-container">
+        <div id="zx-kb"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/utils.js?v=0.2.2"></script>
+<script src="/layout-48k.js?v=0.2.2"></script>
+<script src="/keyboard.js?v=0.2.2"></script>
+
+<script>
+(function() {
+  'use strict';
+
+  const textarea = document.getElementById('editor-textarea');
+  const errorDiv = document.getElementById('editor-error');
+  const kbContainer = document.getElementById('zx-kb');
+
+  let currentLayout = null;
+  let updateTimeout = null;
+
+  function loadLayoutData() {
+    if (window.ZX_LAYOUT_VARIANTS && window.ZX_LAYOUT_VARIANTS['48k']) {
+      const layout = window.ZX_LAYOUT_VARIANTS['48k'];
+      return {
+        ROW_1: layout.ROW_1,
+        ROW_2: layout.ROW_2,
+        ROW_3: layout.ROW_3,
+        ROW_4: layout.ROW_4
+      };
+    }
+    return null;
+  }
+
+  function formatLayoutData(data) {
+    return JSON.stringify(data, null, 2);
+  }
+
+  function updatePreview() {
+    clearTimeout(updateTimeout);
+    updateTimeout = setTimeout(() => {
+      try {
+        const layoutData = JSON.parse(textarea.value);
+
+        // Update the global layout
+        window.ZX_LAYOUT = {
+          ...layoutData,
+          STRIPE: window.ZX_LAYOUT_VARIANTS['48k'].STRIPE
+        };
+
+        // Re-render the keyboard
+        if (window.ZX_KB) {
+          if (window.ZX_KB.releaseAll) window.ZX_KB.releaseAll();
+          window.ZX_KB.render(kbContainer);
+        }
+
+        errorDiv.style.display = 'none';
+      } catch (e) {
+        errorDiv.style.display = 'block';
+        errorDiv.textContent = 'Parse Error: ' + e.message;
+      }
+    }, 300);
+  }
+
+  function init() {
+    const layoutData = loadLayoutData();
+    if (layoutData) {
+      textarea.value = formatLayoutData(layoutData);
+      currentLayout = layoutData;
+
+      // Set initial layout and render
+      window.ZX_LAYOUT = {
+        ...layoutData,
+        STRIPE: window.ZX_LAYOUT_VARIANTS['48k'].STRIPE
+      };
+
+      if (window.ZX_KB) {
+        window.ZX_KB.render(kbContainer);
+      }
+
+      // Add event listener for live preview
+      textarea.addEventListener('input', updatePreview);
+    }
+  }
+
+  // Wait for scripts to load
+  setTimeout(init, 100);
+
+})();
+</script>
+
+</body>
+</html>

@@ -52,7 +52,7 @@
   ];
 
   const ROW_4 = [
-    { main: "CAPS SHIFT",  code: "CAPS", wide: 1.55, special: "caps" },
+    { main: "CAPS SHIFT",  code: "CAPS", wide: 2.5, special: "caps" },
     { main: "Z", code: "Z", keywordAbove: "LN",       keyword: "COPY",   eModeRed: ":", keywordBelow: "BEEP" },
     { main: "X", code: "X", keywordAbove: "EXP",      keyword: "CLEAR",  eModeRed: "£", keywordBelow: "INK" },
     { main: "C", code: "C", keywordAbove: "LPRINT",  keyword: "CONT",   eModeRed: "?", keywordBelow: "PAPER" },

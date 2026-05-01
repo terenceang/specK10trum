@@ -38,6 +38,7 @@
 
   function keyHTML(k, STRIPE) {
     const wideCls =
+      k.wide >= 2.5 ? ' w250' :
       k.wide >= 1.85 ? ' w185' :
       k.wide >= 1.55 ? ' w155' :
       k.wide >= 1.35 ? ' w135' : '';

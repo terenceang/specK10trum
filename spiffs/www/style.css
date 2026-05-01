@@ -337,8 +337,8 @@ input:checked + .zx-slider:before { transform: translateX(14px); background-colo
   border: 2px solid var(--ink);
   position: relative;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  /*align-items: center;
+  justify-content: center; */
   cursor: pointer;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
@@ -348,6 +348,7 @@ input:checked + .zx-slider:before { transform: translateX(14px); background-colo
 .zx-key.w135 { width: calc(var(--key-size) * 1.6 * 1.35); }
 .zx-key.w155 { width: calc(var(--key-size) * 1.6 * 1.55); }
 .zx-key.w185 { width: calc(var(--key-size) * 1.6 * 1.85); }
+.zx-key.w250 { width: calc(var(--key-size) * 1.6 * 2.5); }
 .zx-key.pressed, .zx-key.toggled { background: var(--ink); color: #000; }
 .zx-key.toggled { box-shadow: 0 0 0 2px var(--amber) inset; }
 
