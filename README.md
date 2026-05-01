@@ -1,22 +1,18 @@
-
 # specK10trum
 
-## 0.2.1 (2026-04-29)
-Merged feature/joystick-testing:
-- Added joystick support (see spiffs/www/joystick.js)
-- New layouts: layout-48k.js, layout-plus.js
-- Web UI improvements: menu, style, keyboard updates
-- Input and Spectrum core enhancements
+**Status**: ✅ Working (tag: `working`)
 
+## Latest (Full Audio Vectorised - 5b6abb9)
+
+Stable release with vectorized audio processing and complete Spectrum emulation.
 
 <p align="center">
 	<img src="assets/baner.png" alt="SpecK10trum banner" />
 </p>
 
-Author: Terence Ang
-    <!-- The following image is not included in the repository. Place your own 'assets/baner.png' for the banner to appear. -->
-    <img src="assets/baner.png" alt="SpecK10trum banner (user-supplied)" />
-Overview
+**Author**: Terence Ang
+
+## Overview
 --------
 specK10trum is an ESP32-targeted project implementing a ZX Spectrum emulator and related tooling.
 
@@ -34,26 +30,6 @@ License
 -------
 This repository is licensed under the MIT License — see [LICENSE](LICENSE) for details.
 
-Gallery
--------
-
-<p align="center">
-
-Gallery
--------
-
-<p align="center">
-    <!-- The following images are not included in the repository. Place your own files in 'assets/' for them to appear. -->
-    <img src="assets/SpecK10trum Logo keybd.svg" alt="SpecK10trum logo (user-supplied)" width="320" style="margin-right:8px;" />
-    <img src="assets/baner.png" alt="SpecK10trum banner (user-supplied)" width="320" style="margin-right:8px;" />
-</p>
-	<img src="assets/SpecK10trum Logo keybd.svg" alt="SpecK10trum logo" width="320" style="margin-right:8px;" />
-	<img src="assets/baner.png" alt="SpecK10trum banner" width="320" style="margin-right:8px;" />
-</p>
-
-    <!-- Images below are not included in the repository. Place your own files in 'assets/' for them to appear. -->
-    <img src="assets/SpecK10trum Logo keybd.svg" alt="SpecK10trum logo (user-supplied)" width="320" style="margin-right:8px;" />
-    <img src="assets/baner.png" alt="SpecK10trum banner (user-supplied)" width="320" style="margin-right:8px;" />
 This project contains original code by Terence Ang and portions derived from ZOT (MIT). Unless otherwise noted in individual files, ZOT-derived code is distributed under the MIT license.
 
 Build
