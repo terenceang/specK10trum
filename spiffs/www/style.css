@@ -312,25 +312,22 @@ input:checked + .zx-slider:before { transform: translateX(14px); background-colo
   user-select: none;
 }
 
-.zx-kb-leds { display: flex; gap: 12px; align-items: center; margin-left: 32px; height: var(--key-size); }
+.zx-kb-model { display: flex; gap: 12px; align-items: center; margin-left: 32px; height: var(--key-size); }
 
-.zx-led {
+.zx-model-label {
   display: flex;
-  gap: 8px;
   align-items: center;
-  padding: 5px 12px;
-  border: 1px solid #222;
-  font-size: 10px;
-  font-weight: 800;
-  color: var(--dim);
+  padding: 8px 14px;
+  border: 1px solid #444;
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--ink);
   border-radius: 4px;
   background: #0c0c0d;
   transition: all .15s;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
-
-.zx-led .lamp { width: 6px; height: 6px; border-radius: 50%; background: #1a1a1c; transition: all .15s; }
-.zx-led.on { border-color: var(--amber); color: var(--amber); background: rgba(255, 204, 30, 0.08); }
-.zx-led.on .lamp { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
 
 .zx-row { display: flex; gap: var(--key-gap); }
 

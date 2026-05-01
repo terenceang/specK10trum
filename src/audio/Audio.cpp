@@ -10,7 +10,7 @@
 #include <cmath>
 #include "../../components/audio_stream/include/board_pins_config.h"
 #include "esp_dsp.h"
-#include "test_config.h"
+#include "../../test/test_config.h"
 
 static const char* TAG = "Audio";
 static const int SAMPLE_RATE = 44100;

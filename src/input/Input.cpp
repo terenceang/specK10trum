@@ -5,7 +5,7 @@
 #include <freertos/task.h>
 #include <esp_log.h>
 #include <string.h>
-#include "test_config.h"
+#include "../../test/test_config.h"
 
 // Keyboard rows (active-low; 0 = pressed)
 // Marked volatile as it's updated by Webserver task and read by Emulator task

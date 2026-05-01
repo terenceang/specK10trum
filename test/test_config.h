@@ -23,4 +23,9 @@
 #define AUDIO_DIAGNOSTICS_DEBUG 0
 #endif
 
+// Memory monitor diagnostics (MemMon task)
+#ifndef MEMMON_DEBUG
+#define MEMMON_DEBUG 0
+#endif
+
 #endif // TEST_CONFIG_H

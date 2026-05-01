@@ -22,11 +22,12 @@
 #include "input/Input.h"
 #include "wifi_prov/wifi_prov.h"
 #include "webserver/Webserver.h"
-#include "test_config.h"
+#include "../test/test_config.h"
 
 static const char* TAG = "Main";
 
 // Memory monitoring task: logs free heap and min free heap (internal & SPIRAM) every minute
+#if MEMMON_DEBUG
 static void memory_monitor_task(void* pvParameters) {
     (void)pvParameters;
     while (1) {
@@ -45,6 +46,7 @@ static void memory_monitor_task(void* pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(60000)); // 1 minute
     }
 }
+#endif
 
 // Get the stored model preference from NVS, default to 48K
 static bool getStoredModelPreference(const char*& modelName, const char*& romFile) {
@@ -481,7 +483,9 @@ extern "C" void app_main(void) {
     log_ts(TAG, "=== STEP 16/16: Boot Done ===");
     log_ts(TAG, "Boot complete. Entering idle loop.");
     // Start memory monitoring task
+#if MEMMON_DEBUG
     xTaskCreatePinnedToCore(memory_monitor_task, "mem_mon", 3072, NULL, 1, NULL, tskNO_AFFINITY);
+#endif
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }

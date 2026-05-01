@@ -14,7 +14,7 @@
 #include "instrumentation/Instrumentation.h"
 #include "expander/Expander.h"
 #include "audio/Audio.h"
-#include "test_config.h"
+#include "../../test/test_config.h"
 
 static const char* TAG = "Display";
 

@@ -16,7 +16,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "webserver/command_queue.h"
-#include "test_config.h"
+#include "../../test/test_config.h"
 
 static const char* TAG = "Webserver";
 static const char* WWW_ROOT = "/spiffs/www";

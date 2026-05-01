@@ -34,6 +34,7 @@
   }
 
   const esc = window.ZX_UTILS.esc;
+  let currentModel = '48k';
 
   function keyHTML(k, STRIPE) {
     const wideCls =
@@ -93,9 +94,8 @@
       let html = `<div class="zx-row"${ml}>${r.map(k => keyHTML(k, STRIPE)).join('')}`;
       if (i === 0 && !(LAYOUT && LAYOUT.HIDE_LEDS)) {
         html += `
-          <div class="zx-kb-leds">
-            <div class="zx-led" id="zx-led-caps"><span class="lamp"></span>CAPS</div>
-            <div class="zx-led" id="zx-led-sym"><span class="lamp"></span>SYM</div>
+          <div class="zx-kb-model">
+            <div class="zx-model-label" id="zx-model-display">48K</div>
           </div>
         `;
       }
@@ -117,6 +117,7 @@
 
     container.innerHTML = rowsHtml + stripesHtml;
     initEvents(container);
+    syncModelFromAPI();
   }
 
   function sendKey(r, b, pressed, label) {
@@ -265,10 +266,32 @@
     });
   }
 
+  function updateModelDisplay(model) {
+    currentModel = model;
+    const display = document.getElementById('zx-model-display');
+    if (display) {
+      display.textContent = (model || '48k').toUpperCase();
+    }
+  }
+
+  async function syncModelFromAPI() {
+    try {
+      const res = await fetch(window.ZX_UTILS && window.ZX_UTILS.API && window.ZX_UTILS.API.MODEL ? window.ZX_UTILS.API.MODEL : '/api/model');
+      const data = await res.json();
+      if (data.model) {
+        updateModelDisplay(data.model);
+      }
+    } catch (e) {
+      console.warn('Failed to sync model:', e);
+    }
+  }
+
   window.ZX_KB = {
     render,
     onKey: (cb) => { onKeyCallback = cb; },
-    releaseAll
+    releaseAll,
+    updateModelDisplay,
+    syncModelFromAPI
   };
 
   document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
@@ -277,7 +300,10 @@
     active.forEach((entry) => { entry.rect = entry.el.getBoundingClientRect(); });
   });
   if (window.ZX_WS && typeof window.ZX_WS.onStatus === 'function') {
-    window.ZX_WS.onStatus((status) => { if (status !== 'connected') releaseAll(); });
+    window.ZX_WS.onStatus((status) => {
+      if (status !== 'connected') releaseAll();
+      else syncModelFromAPI();
+    });
   }
 
 })(window);
