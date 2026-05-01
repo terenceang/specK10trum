@@ -20,21 +20,12 @@
 ## 2. Audio Pipeline (Beeper, PSG, I2S)
 
 **Current Architecture:**
-- Audio is processed at 44.1kHz stereo via ESP32 I2S DMA.
-- Features software-based mixing for Beeper and PSG, a 2nd-order Butterworth Low-Pass Filter (LPF) at 8kHz, and a DC blocker.
-- The audio buffer is synthesized in chunks inside Audio.cpp.
 
 **Reliability & Guards:**
-- The audio module tracks buffer underruns, consecutive I2S write failures, and near-clipping events via the AudioStats struct. This is robust.
-- The samples are hard-clipped safely.
 
 **Recommendations:**
-- **Optimization:** The apply_master_filter function executes per-sample floating-point math in a loop. This is computationally expensive on a standard FPU.
-- **Pros:** Offloads standard FPU processing to vector instructions.
-- **Cons:** Requires pulling in the espressif/esp-dsp component and refactoring Audio.cpp to use DSP types.
-- **User Impact:** Lower CPU utilization, allowing more headroom for complex 128K emulation or reducing thermal load.
 
-## 3. Core Usage & Parallelization
+ESP-DSP biquad cascade (DC blocker + LPF)
 
 **Current Architecture:**
 - **Core 0:** Runs the main emulator_task (Z80 execution, audio synthesis, snapshot/tape loading).
@@ -85,4 +76,4 @@ Currently, specK10trum performs audio mixing and filtering manually.
 
 - **Memory Placement:** The project correctly uses MALLOC_CAP_SPIRAM for large framebuffers and MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA for the I2S and SPI buffers. 
 - **Null Checks:** Most allocations appear to be checked, but ensure that any new operator calls on large emulator objects (like Spectrum128K) check for std::bad_alloc or null, especially since PSRAM fragmentation can cause allocation failures over time.
-- **Recommendation:** Implement a global memory monitoring task that logs free heap and minimum free heap (both internal and SPIRAM) every minute. This helps diagnose memory leaks during long gaming sessions.
+- **Recommendation:** Implement a global memory monitoring task that logs free heap and minimum free heap (both internal and SPIRAM) every minute. This helps diagnose memory leaks during long gaming sessions. done

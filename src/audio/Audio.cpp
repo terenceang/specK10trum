@@ -1,3 +1,4 @@
+
 #include "Audio.h"
 #include <esp_log.h>
 #include <driver/i2s_common.h>
@@ -6,7 +7,9 @@
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <string.h>
+#include <cmath>
 #include "../../components/audio_stream/include/board_pins_config.h"
+#include "esp_dsp.h"
 
 static const char* TAG = "Audio";
 static const int SAMPLE_RATE = 44100;
@@ -51,34 +54,37 @@ static int16_t s_psg_buf[SAMPLES_PER_FRAME];
 // I2S write statistics (errors only)
 static int s_consecutive_failures = 0;
 
-// Master audio filter state (Butterworth 2nd-order LPF @ 8kHz + DC blocker)
-static float s_lp_x1 = 0, s_lp_x2 = 0;
-static float s_lp_y1 = 0, s_lp_y2 = 0;
-static float s_dc_lastX = 0, s_dc_lastY = 0;
+
+// ESP-DSP biquad filter state and coefficients
+static float s_bq_coeffs_dc[5];
+static float s_bq_coeffs_lpf[5];
+static float s_bq_state_dc[4] = {0};
+static float s_bq_state_lpf[4] = {0};
 
 static void reset_master_filter(void) {
-    s_lp_x1 = s_lp_x2 = 0;
-    s_lp_y1 = s_lp_y2 = 0;
-    s_dc_lastX = s_dc_lastY = 0;
+    memset(s_bq_state_dc, 0, sizeof(s_bq_state_dc));
+    memset(s_bq_state_lpf, 0, sizeof(s_bq_state_lpf));
 }
 
 static void apply_master_filter(int16_t* stereo_buf, int samples) {
-    const float b0 = 0.1804f, b1 = 0.3608f, b2 = 0.1804f;
-    const float a1 = -0.4932f, a2 = 0.2149f;
+    // Convert int16_t to float
+    int count = samples * 2;
+    static float fbuf[2 * 1024]; // supports up to 1024 stereo frames
+    float* buf = fbuf;
+    if (count > 2 * 1024) return; // safety
+    for (int i = 0; i < count; ++i) buf[i] = (float)stereo_buf[i];
 
-    for (int i = 0; i < samples * 2; ++i) {
-        float x = stereo_buf[i];
-        float lp = b0 * x + b1 * s_lp_x1 + b2 * s_lp_x2 - a1 * s_lp_y1 - a2 * s_lp_y2;
-        s_lp_x2 = s_lp_x1;
-        s_lp_x1 = x;
-        s_lp_y2 = s_lp_y1;
-        s_lp_y1 = lp;
+    // DC blocker (high-pass ~15 Hz)
+    dsps_biquad_f32_ae32(buf, buf, count, s_bq_coeffs_dc, s_bq_state_dc);
+    // LPF (8 kHz)
+    dsps_biquad_f32_ae32(buf, buf, count, s_bq_coeffs_lpf, s_bq_state_lpf);
 
-        float y = lp - s_dc_lastX + 0.995f * s_dc_lastY;
-        s_dc_lastX = lp;
-        s_dc_lastY = y;
-
-        stereo_buf[i] = (int16_t)((y > 32767.0f) ? 32767 : (y < -32768.0f) ? -32768 : (int16_t)y);
+    // Convert back to int16_t with saturation
+    for (int i = 0; i < count; ++i) {
+        float y = buf[i];
+        if (y > 32767.0f) y = 32767.0f;
+        else if (y < -32768.0f) y = -32768.0f;
+        stereo_buf[i] = (int16_t)y;
     }
 }
 
@@ -108,6 +114,13 @@ bool audio_init() {
     }
 
     // Configure standard mode clock
+
+    // Initialize ESP-DSP biquad coefficients for DC blocker and LPF
+    // DC blocker: high-pass, cutoff ~15 Hz
+    dsps_biquad_gen_hpf_f32(s_bq_coeffs_dc, 15.0f / (float)SAMPLE_RATE, sqrtf(0.5f));
+    // LPF: cutoff 8 kHz
+    dsps_biquad_gen_lpf_f32(s_bq_coeffs_lpf, 8000.0f / (float)SAMPLE_RATE, sqrtf(0.5f));
+    reset_master_filter();
     i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE);
 
     // Configure standard mode slot (Philips/I2S format, stereo)
@@ -162,7 +175,6 @@ bool audio_init() {
     ESP_LOGD(TAG, "I2S channel enabled successfully");
 
     s_initialized = true;
-    reset_master_filter();
     ESP_LOGD(TAG, "I2S DMA audio initialized at %d Hz, volume=%d%%, frame size=%d samples",
              SAMPLE_RATE, (int)(s_volume_gain * 100), SAMPLES_PER_FRAME);
     return true;
