@@ -353,7 +353,7 @@ uint16_t* display_getBackBuffer() { return s_frameBuffers[s_drawBuffer]; }
 
 void display_renderSpectrum(SpectrumBase* spectrum) {
     if (!spectrum) return;
-    spectrum->renderToRGB565(display_getBackBuffer(), s_lcdDisplayWidth, s_lcdDisplayHeight, s_drawBuffer);
+    spectrum->renderToRGB565(display_getBackBuffer(), s_lcdDisplayWidth, s_lcdDisplayHeight);
 }
 
 void display_present() {

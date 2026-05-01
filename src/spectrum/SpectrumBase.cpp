@@ -1,7 +1,6 @@
 #include "SpectrumBase.h"
 #include "Spectrum128K.h"
 #include "input/Input.h"
-#include "display/Display.h"
 #include <esp_log.h>
 #include <string.h>
 #include <cstdio>
@@ -46,7 +45,6 @@ SpectrumBase::SpectrumBase()
         m_memReadMap[i] = nullptr;
         m_memWriteMap[i] = nullptr;
     }
-    memset(m_dirtyBitsForBuf, 0xFF, sizeof(m_dirtyBitsForBuf));
     input_resetKeyboardRows();
 
     // Initialize CPU
@@ -91,10 +89,6 @@ void SpectrumBase::reset() {
     m_borderEventCount = 0;
     m_renderInitialBorderColor = 0;
     m_renderBorderEventCount = 0;
-    memset(m_dirtyBitsForBuf, 0xFF, sizeof(m_dirtyBitsForBuf));
-    m_lastBorderColorForBuf[0] = m_lastBorderColorForBuf[1] = 0xFF;
-    m_lastBorderEventCountForBuf[0] = m_lastBorderEventCountForBuf[1] = 0xFFFFFFFF;
-    m_lastBorderHashForBuf[0] = m_lastBorderHashForBuf[1] = 0xFFFFFFFF;
     input_resetKeyboardRows();
     m_ulaClocks = 0;
     m_ulaScanline = 0;
@@ -117,33 +111,6 @@ void SpectrumBase::reset() {
     // Stop tape player
     m_tape.stop();
     m_wasInLDBytes = false;
-}
-
-void SpectrumBase::markDirtyCells(uint16_t addr) {
-    if (addr >= 0x4000 && addr < 0x5800) {
-        uint16_t offset = addr - 0x4000;
-        uint16_t line_y = (offset >> 8) & 0x07;
-        uint16_t fine_y = (offset >> 5) & 0x07;
-        uint16_t double_y = (offset >> 13) & 0x03;
-        uint8_t cell_y = (double_y << 3) | fine_y;
-        uint8_t cell_x = offset & 0x1F;
-        if (cell_y < 24) {
-            int bitIdx = cell_y * 32 + cell_x;
-            for (int buf = 0; buf < 2; buf++) {
-                m_dirtyBitsForBuf[buf][bitIdx >> 3] |= (1 << (bitIdx & 7));
-            }
-        }
-    } else if (addr >= 0x5800 && addr < 0x5B00) {
-        uint16_t offset = addr - 0x5800;
-        uint8_t cell_y = offset / 32;
-        uint8_t cell_x = offset % 32;
-        if (cell_y < 24) {
-            int bitIdx = cell_y * 32 + cell_x;
-            for (int buf = 0; buf < 2; buf++) {
-                m_dirtyBitsForBuf[buf][bitIdx >> 3] |= (1 << (bitIdx & 7));
-            }
-        }
-    }
 }
 
 void SpectrumBase::dumpMemory(uint16_t start, uint16_t end) {
@@ -184,39 +151,6 @@ void SpectrumBase::dumpMemoryMap() const {
     }
 }
 
-bool SpectrumBase::startTapePlayback() {
-    if (!m_tape.isLoaded()) return false;
-    
-    if (!m_tape.canPlay(this)) {
-        display_setOverlayText("128K TAPE REQUIRES 128K MODEL", 0xF800);
-        ESP_LOGW(TAG, "Tape playback blocked: 128K tape on 48K machine");
-        return false;
-    }
-    
-    if (is128k() && !isTapeRomActive()) {
-        display_setOverlayText("SWITCH TO 48K BASIC FOR TAPE", 0xF800);
-        ESP_LOGW(TAG, "Tape playback blocked: 128K machine not in Tape ROM mode");
-        return false;
-    }
-
-    m_tape.setMode(TapeMode::NORMAL);
-    m_tape.play();
-    return true;
-}
-
-bool SpectrumBase::startTapeInstaload() {
-    if (!m_tape.isLoaded()) return false;
-
-    if (!m_tape.canPlay(this)) {
-        display_setOverlayText("128K TAPE REQUIRES 128K MODEL", 0xF800);
-        ESP_LOGE(TAG, "Tape instaload blocked: 128K tape on 48K machine");
-        return false;
-    }
-
-    m_tape.instaload(this);
-    return true;
-}
-
 int SpectrumBase::step() {
     int tstates = z80_step(&m_cpu);
     m_pendingTapeTstates += tstates;
@@ -226,8 +160,7 @@ int SpectrumBase::step() {
     if (m_tape.getMode() == TapeMode::NORMAL && m_tape.isLoaded() && !m_tape.isPlaying()) {
         bool inLDBytes = (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
         if (!m_wasInLDBytes && inLDBytes) {
-            // Enforcement: verify compatibility and ROM state via centralized helper
-            startTapePlayback();
+            m_tape.play();
         }
         m_wasInLDBytes = inLDBytes;
     }

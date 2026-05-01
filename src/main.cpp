@@ -204,7 +204,7 @@ static void emulator_task(void* pvParameters) {
                     if (cmd.arg1 == "load") {
                         spectrum->tape().load(cmd.arg2.c_str());
                     } else if (cmd.arg1 == "play") {
-                        spectrum->startTapePlayback();
+                        spectrum->tape().play();
                     } else if (cmd.arg1 == "stop") {
                         spectrum->tape().stop();
                     } else if (cmd.arg1 == "rewind") {
@@ -218,7 +218,8 @@ static void emulator_task(void* pvParameters) {
                     }
                     break;
                 case WebCommandType::TapeInstantLoad:
-                    spectrum->startTapeInstaload();
+                    spectrum->tape().setMode(TapeMode::INSTANT);
+                    spectrum->tape().play();
                     break;
                 case WebCommandType::TapeSetMode:
                     spectrum->tape().setMode(static_cast<TapeMode>(cmd.int_arg1));
@@ -256,6 +257,10 @@ static void emulator_task(void* pvParameters) {
         }
 
         display_trigger_frame(spectrum);
+
+        // Render and play audio for this frame on Core 0 (emulator task)
+        // This keeps the video task (Core 1) focused on rendering
+        audio_play_frame(spectrum);
 
         // Wait for video task to complete frame (allows IDLE task to run and reset watchdog)
         display_wait_frame();
@@ -390,7 +395,7 @@ extern "C" void app_main(void) {
 
     // Pre-build all 128 attribute LUTs so the renderer never allocates on the
     // hot path (avoids first-frame stalls when a snapshot exposes new attrs).
-    spectrum->prewarmAttrLUTs();
+    // (Lazy-built in renderActiveArea via static cache instead)
 
 #if RUN_ALL_TESTS
     run_all_tests(spectrum, modelName);

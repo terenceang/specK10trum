@@ -45,7 +45,18 @@
       "Bash(command -v pio)",
       "PowerShell(Get-Command *)",
       "PowerShell(Test-Path *)",
-      "PowerShell(& \"$HOME\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run --environment unihiker_k10 2>&1 | Select-Object -Last 80)"
+      "PowerShell(& \"$HOME\\\\.platformio\\\\penv\\\\Scripts\\\\pio.exe\" run --environment unihiker_k10 2>&1 | Select-Object -Last 80)",
+      "Bash(python3 -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(git log *)",
+      "Bash(git -C \"C:/Users/teren/source/repos/terenceang/specK10trum\" branch -a)",
+      "Bash(git -C \"C:/Users/teren/source/repos/terenceang/specK10trum\" log --oneline fps1 fps2 fps3 main)",
+      "Bash(git -C \"C:/Users/teren/source/repos/terenceang/specK10trum\" diff main..fps1 -- src/display/Display.cpp)",
+      "Bash(git -C \"C:/Users/teren/source/repos/terenceang/specK10trum\" log --oneline fps1 ^main)",
+      "Bash(git -C \"C:/Users/teren/source/repos/terenceang/specK10trum\" log --oneline fps2 ^main)",
+      "Bash(git -C \"C:/Users/teren/source/repos/terenceang/specK10trum\" log --oneline fps3 ^main)",
+      "Bash(git -C \"C:/Users/teren/source/repos/terenceang/specK10trum\" log --oneline -10 fps1)",
+      "Bash(git -C \"C:/Users/teren/source/repos/terenceang/specK10trum\" log --oneline -10 fps2)",
+      "Bash(git -C \"C:/Users/teren/source/repos/terenceang/specK10trum\" log --oneline -10 fps3)"
     ]
   }
 }

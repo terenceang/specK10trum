@@ -143,9 +143,6 @@ bool Spectrum128K::applySnapshotData(const uint8_t* data, size_t len) {
         m_pagingLocked = true;
         updatePaging();
 
-        markAllDirtyCells();
-        invalidateBorderCache();
-
         ESP_LOGI(TAG, "48K snapshot applied to 128K system (%zu bytes)", len);
         return true;
     }
