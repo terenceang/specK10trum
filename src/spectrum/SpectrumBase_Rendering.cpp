@@ -181,6 +181,11 @@ void SpectrumBase::renderActiveArea(uint16_t* buffer, int bufWidth, int bufHeigh
 void SpectrumBase::renderToRGB565(uint16_t* buffer, int bufWidth, int bufHeight, int bufIndex) {
     if (!buffer) return;
 
+    if (m_forceFullRender) {
+        memset(m_dirtyBitsForBuf, 0xFF, sizeof(m_dirtyBitsForBuf));
+        m_forceFullRender = false;
+    }
+
     const int source_width = 256;
     const int source_height = 192;
     const int offset_x = (bufWidth - source_width) / 2;

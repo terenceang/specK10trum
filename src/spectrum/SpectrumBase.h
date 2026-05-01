@@ -101,7 +101,10 @@ public:
     void renderBeeperAudio(int16_t* buffer, int num_samples) { m_beeper.getFrameBuffer(buffer, num_samples); }
 
     void markDirtyCells(uint16_t addr);
-    void markAllDirtyCells() { memset(m_dirtyBitsForBuf, 0xFF, sizeof(m_dirtyBitsForBuf)); }
+    void markAllDirtyCells() {
+        memset(m_dirtyBitsForBuf, 0xFF, sizeof(m_dirtyBitsForBuf));
+        m_forceFullRender = true;
+    }
     void invalidateBorderCache() {
         m_lastBorderColorForBuf[0] = m_lastBorderColorForBuf[1] = 0xFF;
         m_lastBorderEventCountForBuf[0] = m_lastBorderEventCountForBuf[1] = 0xFFFFFFFF;
@@ -157,6 +160,7 @@ protected:
 
     uint8_t m_dirtyBitsForBuf[2][96];
     uint8_t m_flashPhaseForBuf[2] = {0xFF, 0xFF};
+    bool m_forceFullRender = true;
 
     uint32_t m_ulaClocks;
     uint16_t m_ulaScanline;
