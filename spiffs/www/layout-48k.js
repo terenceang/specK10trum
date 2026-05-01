@@ -58,10 +58,10 @@
     { main: "C", code: "C", keywordAbove: "LPRINT",  keyword: "CONT",   eModeRed: "?", keywordBelow: "PAPER" },
     { main: "V", code: "V", keywordAbove: "LLIST",   keyword: "CLS",    eModeRed: "/", keywordBelow: "FLASH" },
     { main: "B", code: "B", keywordAbove: "BIN",      keyword: "BORDER", eModeRed: "*", keywordBelow: "BRIGHT" },
-    { main: "N", code: "N", keywordAbove: "IN KEY $", keyword: "NEXT",   eModeRed: ",", keywordBelow: "OVER" },
+    { main: "N", code: "N", keywordAbove: "INKEY$", keyword: "NEXT",   eModeRed: ",", keywordBelow: "OVER" },
     { main: "M", code: "M", keywordAbove: "PI",       keyword: "PAUSE",  eModeRed: ".", keywordBelow: "INVERSE" },
-    { main: "SYMBOL SHIFT", code: "SYM", wide: 1.5, special: "symbol" },
-    { main: "BREAK SPACE",  code: "SPACE", wide: 1.85, special: "space" },
+    { main: "SYMBOL SHIFT", code: "SYM", wide: 1.25, special: "symbol" },
+    { main: "BREAK SPACE",  code: "SPACE", wide: 1.50, special: "space" },
   ];
 
   if (!window.ZX_LAYOUT_VARIANTS) window.ZX_LAYOUT_VARIANTS = {};

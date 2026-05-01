@@ -355,12 +355,12 @@ input:checked + .zx-slider:before { transform: translateX(14px); background-colo
 .zx-main { font-weight: 900; text-align: left; line-height: 1.02; font-size: max(19px, calc(var(--key-size) * 0.5)); padding-left: 6%; }
 .zx-main.sml { font-size: max(9px, calc(var(--key-size) * 0.14)); padding: 0 2px; letter-spacing: -.02em; }
 
-.zx-lab { position: absolute; white-space: nowrap; font-weight: 800; letter-spacing: -.02em; }
+.zx-lab { position: absolute; text-align: right; margin-right: 6; white-space: nowrap; font-weight: 800; letter-spacing: -.02em; }
 .zx-stripe { top: calc(var(--key-size) * -0.56); left: 0; right: 0; text-align: center; font-size: max(8px, calc(var(--key-size) * 0.13)); }
-.zx-above { top: calc(var(--key-size) * -0.32); left: 0; right: 0; text-align: center; font-size: max(8px, calc(var(--key-size) * 0.15)); }
+.zx-above { top: calc(var(--key-size) * -0.32); left: 0; right: 0; text-align: left; color: var(--green); }
 .zx-sym { top: 6%; right: 6%; font-size: max(9px, calc(var(--key-size) * 0.18)); font-weight: 900; color: var(--red); }
-.zx-kw { bottom: 8%; left: 0; right: 0; text-align: center; color: var(--green); font-size: max(8px, calc(var(--key-size) * 0.14)); }
-.zx-below { bottom: calc(var(--key-size) * -0.26); left: 0; right: 0; text-align: center; color: var(--green); font-size: max(8px, calc(var(--key-size) * 0.13)); font-weight: 700; }
+.zx-kw { bottom: 8%; left: 0; right: 0; text-align: right;}
+.zx-below { bottom: calc(var(--key-size) * -0.26); left: 0; right: 0; text-align: left; color: var(--red); font-size: max(8px, calc(var(--key-size) * 0.13)); font-weight: 700; }
 .zx-er { bottom: calc(var(--key-size) * -0.26); left: 6%; color: var(--red); font-size: max(8px, calc(var(--key-size) * 0.13)); }
 .zx-eg { bottom: calc(var(--key-size) * -0.26); right: 6%; color: var(--green); font-size: max(8px, calc(var(--key-size) * 0.13)); }
 
