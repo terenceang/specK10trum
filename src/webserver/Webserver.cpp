@@ -258,6 +258,7 @@ static esp_err_t tape_handler(httpd_req_t *req)
         int currentBlock = 0;
         int totalBlocks = 0;
         const char* modeName = "unknown";
+        const char* instaloadDiag = "idle";
         if (s_spectrum) {
             auto& tape = s_spectrum->tape();
             loaded = tape.isLoaded() ? 1 : 0;
@@ -265,15 +266,16 @@ static esp_err_t tape_handler(httpd_req_t *req)
             paused = tape.isPaused() ? 1 : 0;
             currentBlock = tape.totalBlocks() > 0 ? tape.currentBlockIndex() + 1 : 0;
             totalBlocks = tape.totalBlocks();
+            instaloadDiag = tape.lastInstaloadDiag();
             switch (tape.getMode()) {
                 case TapeMode::INSTANT: modeName = "instant"; break;
                 case TapeMode::NORMAL: modeName = "normal"; break;
                 case TapeMode::PLAYER: modeName = "player"; break;
             }
         }
-        char response[256];
-        int len = snprintf(response, sizeof(response), "{\"loaded\":%d,\"playing\":%d,\"paused\":%d,\"mode\":\"%s\",\"currentBlock\":%d,\"totalBlocks\":%d}",
-            loaded, playing, paused, modeName, currentBlock, totalBlocks);
+        char response[384];
+        snprintf(response, sizeof(response), "{\"loaded\":%d,\"playing\":%d,\"paused\":%d,\"mode\":\"%s\",\"currentBlock\":%d,\"totalBlocks\":%d,\"instaloadDiag\":\"%s\"}",
+            loaded, playing, paused, modeName, currentBlock, totalBlocks, instaloadDiag);
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
         httpd_resp_sendstr(req, response);

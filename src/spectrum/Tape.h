@@ -35,6 +35,7 @@ public:
     bool isLoaded() const { return m_data != nullptr; }
     bool isPlaying() const { return m_playing && !m_paused; }
     bool isPaused() const { return m_paused; }
+    const char* lastInstaloadDiag() const { return m_lastInstaloadDiag; }
 
     size_t totalSize() const { return m_size; }
     int currentBlockIndex() const { return m_current_block_idx; }
@@ -51,7 +52,8 @@ public:
     int serviceLoadTrap(SpectrumBase* spectrum);
 
     // Direct memory injection for standard tapes (Header + Data)
-    void instaload(SpectrumBase* spectrum);
+    // Returns true when a BASIC or CODE entry point was installed and selected.
+    bool instaload(SpectrumBase* spectrum);
 
     // Detect if tape appears to be 128K-only program
     bool looks128K() const;
@@ -83,10 +85,12 @@ private:
     // Data extraction helpers
     bool isDataBlock(int idx) const;
     bool getBlockContent(int idx, const uint8_t** data, uint32_t* length, uint8_t* flag = nullptr) const;
+    void setInstaloadDiag(const char* fmt, ...);
 
     uint8_t* m_data;
     size_t   m_size;
     bool     m_enabled;
+    char     m_lastInstaloadDiag[96];
 
     TapeMode m_mode;
     bool m_playing;

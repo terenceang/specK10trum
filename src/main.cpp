@@ -267,8 +267,16 @@ static void emulator_task(void* pvParameters) {
                     }
                     break;
                 case WebCommandType::TapeInstantLoad:
-                    spectrum->tape().setMode(TapeMode::INSTANT);
-                    spectrum->tape().play();
+                    if (!spectrum->tape().isLoaded()) {
+                        display_setOverlayText("NO TAPE LOADED", 0xF800);
+                        break;
+                    }
+                    spectrum->tape().stop();
+                    if (spectrum->tape().instaload(spectrum)) {
+                        display_clearOverlay();
+                    } else {
+                        display_setOverlayText("INSTALOAD FAILED", 0xF800);
+                    }
                     break;
                 case WebCommandType::TapeSetMode:
                     spectrum->tape().setMode(static_cast<TapeMode>(cmd.int_arg1));

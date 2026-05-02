@@ -5,6 +5,7 @@
 #include <esp_heap_caps.h>
 #include <esp_psram.h>
 #include <esp_timer.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +18,7 @@ Tape::Tape()
     : m_data(nullptr)
     , m_size(0)
     , m_enabled(false)
+    , m_lastInstaloadDiag{"idle"}
     , m_mode(TapeMode::INSTANT)
     , m_playing(false)
     , m_paused(false)
@@ -31,6 +33,13 @@ Tape::Tape()
     , m_data_bit_idx(0)
     , m_is_tzx(false)
 {}
+
+void Tape::setInstaloadDiag(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(m_lastInstaloadDiag, sizeof(m_lastInstaloadDiag), fmt, args);
+    va_end(args);
+}
 
 // Skip non-audio/control TZX blocks so mixed-content tapes can still parse
 // and reach playable data blocks.
@@ -197,6 +206,7 @@ bool Tape::load(const char* filepath) {
 
     buildBlockList();
     resetPlaybackState();
+    setInstaloadDiag("loaded blocks=%d", m_num_blocks);
     return true;
 }
 
@@ -209,6 +219,7 @@ void Tape::unload() {
     m_size = 0;
     m_enabled = false;
     m_num_blocks = 0;
+    setInstaloadDiag("no_tape");
 }
 
 void Tape::play() {
@@ -602,8 +613,11 @@ bool Tape::canPlay(SpectrumBase* spectrum) const {
     return true;
 }
 
-void Tape::instaload(SpectrumBase* spectrum) {
-    if (!m_enabled || m_num_blocks == 0) return;
+bool Tape::instaload(SpectrumBase* spectrum) {
+    if (!m_enabled || m_num_blocks == 0) {
+        setInstaloadDiag("failed no_tape");
+        return false;
+    }
 
     // Policy enforcement (canPlay/ROM check) is now handled in SpectrumBase::startTapeInstaload()
     // and SpectrumBase::startTapePlayback(). 
@@ -614,15 +628,19 @@ void Tape::instaload(SpectrumBase* spectrum) {
     Z80* cpu = spectrum->getCPU();
     uint16_t lastCodeStart = 0, totalProgLen = 0;
     bool hasCode = false, hasBasic = false;
+    int basicBlocks = 0, codeBlocks = 0, skippedBlocks = 0;
+    uint32_t bytesLoaded = 0;
 
     int i = 0;
     while (i < m_num_blocks - 1) {
         const uint8_t* hData; uint32_t hLen; uint8_t hFlag;
         if (!getBlockContent(i, &hData, &hLen, &hFlag)) {
+            skippedBlocks++;
             ++i;
             continue;
         }
         if (hLen != 17 || hFlag != 0x00) {
+            skippedBlocks++;
             ++i;
             continue;
         }
@@ -634,6 +652,7 @@ void Tape::instaload(SpectrumBase* spectrum) {
 
         // Validate header length is reasonable
         if (len == 0 || len > 0x8000) {
+            skippedBlocks++;
             ++i;
             continue;
         }
@@ -641,6 +660,7 @@ void Tape::instaload(SpectrumBase* spectrum) {
         const uint8_t* dData; uint32_t dLen;
         if (!getBlockContent(i + 1, &dData, &dLen)) {
             ESP_LOGD("Tape", "  -> data block %d not found or invalid", i+1);
+            skippedBlocks++;
             ++i;
             continue;
         }
@@ -654,6 +674,7 @@ void Tape::instaload(SpectrumBase* spectrum) {
             // BASIC program - always loads at 23755
             addr = 23755;
             hasBasic = true;
+            basicBlocks++;
             totalProgLen = (uint16_t)dLen;
             ESP_LOGD("Tape", "  -> Loading BASIC, %d bytes to 0x%04X", dLen, addr);
         } else if (type == 3) {
@@ -662,22 +683,26 @@ void Tape::instaload(SpectrumBase* spectrum) {
             // Allow everything else including workspace/BASIC areas for compatibility
             if (start >= 0x4000 && start <= 0x57FF) {
                 ESP_LOGD("Tape", "  -> Skipping CODE block (load addr 0x%04X in display)", start);
+                skippedBlocks++;
                 ++i;
                 continue;
             }
             // Reject if write would overflow 64K address space
             if (start > (0x10000 - (uint16_t)dLen)) {
                 ESP_LOGD("Tape", "  -> Skipping CODE block (would overflow at 0x%04X)", start);
+                skippedBlocks++;
                 ++i;
                 continue;
             }
             addr = start;
             lastCodeStart = start;
             hasCode = true;
+            codeBlocks++;
             ESP_LOGD("Tape", "  -> Loading CODE, %d bytes to 0x%04X", dLen, addr);
         } else {
             // Reject unknown program types
             ESP_LOGD("Tape", "  -> Skipping unknown type %d", type);
+            skippedBlocks++;
             ++i;
             continue;
         }
@@ -686,6 +711,7 @@ void Tape::instaload(SpectrumBase* spectrum) {
         for (uint16_t j = 0; j < dLen; j++) {
             spectrum->write((uint16_t)(addr + j), dData[j]);
         }
+        bytesLoaded += dLen;
         i += 2; // Skip both header and data block
     }
 
@@ -698,16 +724,27 @@ void Tape::instaload(SpectrumBase* spectrum) {
         spectrum->write(23645, eLine & 0xFF); spectrum->write(23646, eLine >> 8);
         spectrum->write(23647, eLine & 0xFF); spectrum->write(23648, eLine >> 8);
     }
-    // Setup CPU state for loaded program
-    if (hasCode) {
-        ESP_LOGI("Tape", "instaload: executing CODE at 0x%04X", lastCodeStart);
-        cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = lastCodeStart;
-    } else if (hasBasic) {
+    // Setup CPU state for loaded program.
+    // Prefer BASIC entry when present; many tapes include CODE assets (e.g. screens)
+    // that are data, not executable entry points.
+    if (hasBasic) {
+        setInstaloadDiag("ok basic len=%u code=%d skip=%d bytes=%lu", totalProgLen, codeBlocks, skippedBlocks, (unsigned long)bytesLoaded);
+        ESP_LOGI("Tape", "instaload summary: %s", m_lastInstaloadDiag);
         ESP_LOGI("Tape", "instaload: executing BASIC at 23755");
         cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = 23755;
+        return true;
+    } else if (hasCode) {
+        setInstaloadDiag("ok code start=%04X code=%d skip=%d bytes=%lu", lastCodeStart, codeBlocks, skippedBlocks, (unsigned long)bytesLoaded);
+        ESP_LOGI("Tape", "instaload summary: %s", m_lastInstaloadDiag);
+        ESP_LOGI("Tape", "instaload: executing CODE at 0x%04X", lastCodeStart);
+        cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = lastCodeStart;
+        return true;
     } else {
+        setInstaloadDiag("failed basic=%d code=%d skip=%d bytes=%lu", basicBlocks, codeBlocks, skippedBlocks, (unsigned long)bytesLoaded);
+        ESP_LOGW("Tape", "instaload summary: %s", m_lastInstaloadDiag);
         ESP_LOGW("Tape", "instaload: no valid program blocks found!");
         // No valid blocks loaded - leave CPU at LD-BYTES for manual loading or show error
         // Don't change CPU state to avoid jumping to garbage address
+        return false;
     }
 }
