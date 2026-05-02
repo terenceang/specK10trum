@@ -140,7 +140,17 @@
 
           <div style="display:flex; gap:6px;">
             <button class="zx-player-btn" id="zx-btn-load-tape" style="flex:2">LOAD TAPE</button>
-            <button class="zx-player-btn" id="zx-btn-instaload" style="flex:1">INSTALOAD</button>
+            <button class="zx-player-btn" id="zx-btn-instaload" style="flex:1">RUN NOW</button>
+          </div>
+
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:4px 0 2px 0;">
+            <span style="font-size:10px; font-weight:bold; color:var(--dim);">MODE</span>
+          </div>
+
+          <div class="zx-player-controls" id="zx-tape-mode-selector">
+            <div class="zx-player-btn" data-tape-mode="manual">MANUAL</div>
+            <div class="zx-player-btn" data-tape-mode="auto">AUTO</div>
+            <div class="zx-player-btn" data-tape-mode="instant">INSTANT</div>
           </div>
 
           <div id="zx-cassette-deck">
@@ -158,14 +168,6 @@
             <div class="zx-player-btn" data-tape="tape_rewind">REW</div>
             <div class="zx-player-btn" data-tape="tape_ffwd">FFWD</div>
             <div class="zx-player-btn" data-tape="tape_eject">EJECT</div>
-          </div>
-
-          <div style="display:flex; align-items:center; justify-content:space-between; padding:4px 0;">
-            <span style="font-size:10px; font-weight:bold; color:var(--dim);">AUTO PLAY</span>
-            <label class="zx-switch">
-              <input type="checkbox" id="zx-auto-play-toggle">
-              <span class="zx-slider"></span>
-            </label>
           </div>
 
           <div style="display:flex; align-items:center; justify-content:space-between; padding:4px 0;">

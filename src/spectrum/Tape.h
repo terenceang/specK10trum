@@ -7,9 +7,20 @@ class SpectrumBase;
 
 enum class TapeMode {
     INSTANT = 0,
-    NORMAL = 1,
-    PLAYER = 2
+    AUTO = 1,
+    MANUAL = 2
 };
+
+struct TapeModeProfile {
+    const char* name;
+    bool loadsInstantly;
+    bool autoStartsPlayback;
+    bool audibleTransport;
+    bool exclusiveMonitorDuringRomLoad;
+};
+
+const TapeModeProfile& tapeModeProfile(TapeMode mode);
+bool tapeModeFromName(const char* name, TapeMode* modeOut);
 
 class Tape {
 public:

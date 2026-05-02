@@ -13,6 +13,81 @@
 
 // Arbitrary sanity cap (1 MiB). Real tapes are typically ~50 KiB.
 static constexpr size_t TAPE_MAX_BYTES = 1024 * 1024;
+static constexpr uint16_t ROM_LINE_NEW = 0x1B9E;
+
+static constexpr uint8_t ZX_TOKEN_USR = 192;
+
+static constexpr TapeModeProfile TAPE_MODE_PROFILES[] = {
+    {"instant", true, false, false, false},
+    {"auto", false, true, true, true},
+    {"manual", false, false, true, false},
+};
+
+const TapeModeProfile& tapeModeProfile(TapeMode mode) {
+    switch (mode) {
+        case TapeMode::INSTANT:
+            return TAPE_MODE_PROFILES[0];
+        case TapeMode::AUTO:
+            return TAPE_MODE_PROFILES[1];
+        case TapeMode::MANUAL:
+        default:
+            return TAPE_MODE_PROFILES[2];
+    }
+}
+
+bool tapeModeFromName(const char* name, TapeMode* modeOut) {
+    if (!name || !modeOut) return false;
+    if (strcmp(name, "instant") == 0 || strcmp(name, "instaload") == 0) {
+        *modeOut = TapeMode::INSTANT;
+        return true;
+    }
+    if (strcmp(name, "auto") == 0 || strcmp(name, "normal") == 0) {
+        *modeOut = TapeMode::AUTO;
+        return true;
+    }
+    if (strcmp(name, "manual") == 0 || strcmp(name, "player") == 0) {
+        *modeOut = TapeMode::MANUAL;
+        return true;
+    }
+    return false;
+}
+
+static bool parse_basic_usr_entry(const uint8_t* program, uint16_t length, uint16_t* entry) {
+    if (!program || !entry) return false;
+
+    uint32_t pos = 0;
+    while (pos + 4 <= length) {
+        uint16_t lineLen = (uint16_t)program[pos + 2] | ((uint16_t)program[pos + 3] << 8);
+        uint32_t lineStart = pos + 4;
+        uint32_t lineEnd = lineStart + lineLen;
+        if (lineLen == 0 || lineEnd > length) return false;
+
+        for (uint32_t i = lineStart; i < lineEnd; ++i) {
+            if (program[i] != ZX_TOKEN_USR) continue;
+
+            uint32_t j = i + 1;
+            while (j < lineEnd && program[j] == ' ') ++j;
+
+            uint32_t value = 0;
+            bool foundDigit = false;
+            while (j < lineEnd && program[j] >= '0' && program[j] <= '9') {
+                foundDigit = true;
+                value = (value * 10u) + (uint32_t)(program[j] - '0');
+                if (value > 65535u) return false;
+                ++j;
+            }
+
+            if (foundDigit) {
+                *entry = (uint16_t)value;
+                return true;
+            }
+        }
+
+        pos = lineEnd;
+    }
+
+    return false;
+}
 
 Tape::Tape()
     : m_data(nullptr)
@@ -627,7 +702,12 @@ bool Tape::instaload(SpectrumBase* spectrum) {
 
     Z80* cpu = spectrum->getCPU();
     uint16_t lastCodeStart = 0, totalProgLen = 0;
+    uint16_t basicAutoStart = 0x8000;
+    uint16_t basicVarsOffset = 0;
+    uint16_t basicUsrEntry = 0;
+    const uint8_t* basicProgramData = nullptr;
     bool hasCode = false, hasBasic = false;
+    bool hasBasicUsrEntry = false;
     int basicBlocks = 0, codeBlocks = 0, skippedBlocks = 0;
     uint32_t bytesLoaded = 0;
 
@@ -676,6 +756,9 @@ bool Tape::instaload(SpectrumBase* spectrum) {
             hasBasic = true;
             basicBlocks++;
             totalProgLen = (uint16_t)dLen;
+            basicAutoStart = start;
+            basicVarsOffset = hData[15] | (hData[16] << 8);
+            basicProgramData = dData;
             ESP_LOGD("Tape", "  -> Loading BASIC, %d bytes to 0x%04X", dLen, addr);
         } else if (type == 3) {
             // CODE block - validate address range
@@ -715,23 +798,61 @@ bool Tape::instaload(SpectrumBase* spectrum) {
         i += 2; // Skip both header and data block
     }
 
+    if (hasBasic && basicProgramData) {
+        hasBasicUsrEntry = parse_basic_usr_entry(basicProgramData, totalProgLen, &basicUsrEntry);
+    }
+
     // Setup system variables for BASIC if loaded
     if (hasBasic) {
-        uint16_t vars = (uint16_t)(23755 + totalProgLen), eLine = (uint16_t)(vars + 1);
+        uint16_t vars = (uint16_t)(23755 + (basicVarsOffset <= totalProgLen ? basicVarsOffset : totalProgLen));
+        uint16_t eLine = (uint16_t)(23755 + totalProgLen);
+        uint16_t worksp = (uint16_t)(eLine + 1);
         spectrum->write(23635, 23755 & 0xFF); spectrum->write(23636, 23755 >> 8);
+        spectrum->write(23637, vars & 0xFF);  spectrum->write(23638, vars >> 8);
+        spectrum->write(23618, basicAutoStart & 0xFF); spectrum->write(23619, basicAutoStart >> 8);
+        spectrum->write(23620, 0);
+        spectrum->write(23621, basicAutoStart & 0xFF); spectrum->write(23622, basicAutoStart >> 8);
+        spectrum->write(23623, 0);
+        spectrum->write(23625, basicAutoStart & 0xFF); spectrum->write(23626, basicAutoStart >> 8);
         spectrum->write(23627, vars & 0xFF);  spectrum->write(23628, vars >> 8);
         spectrum->write(23641, eLine & 0xFF); spectrum->write(23642, eLine >> 8);
-        spectrum->write(23645, eLine & 0xFF); spectrum->write(23646, eLine >> 8);
-        spectrum->write(23647, eLine & 0xFF); spectrum->write(23648, eLine >> 8);
+        if (eLine < 0xFFFF) {
+            spectrum->write(eLine, 0x80);
+        }
+        spectrum->write(23649, worksp & 0xFF); spectrum->write(23650, worksp >> 8);
+        spectrum->write(23651, worksp & 0xFF); spectrum->write(23652, worksp >> 8);
+        spectrum->write(23653, worksp & 0xFF); spectrum->write(23654, worksp >> 8);
     }
     // Setup CPU state for loaded program.
-    // Prefer BASIC entry when present; many tapes include CODE assets (e.g. screens)
-    // that are data, not executable entry points.
+    // Prefer the BASIC autorun line when available because many loader programs
+    // perform setup work before reaching a USR call. Direct USR execution is a
+    // fallback for tapes without a valid autorun line.
     if (hasBasic) {
-        setInstaloadDiag("ok basic len=%u code=%d skip=%d bytes=%lu", totalProgLen, codeBlocks, skippedBlocks, (unsigned long)bytesLoaded);
+        setInstaloadDiag("ok basic auto=%u usr=%u code=%d skip=%d", basicAutoStart, hasBasicUsrEntry ? basicUsrEntry : 0, codeBlocks, skippedBlocks);
         ESP_LOGI("Tape", "instaload summary: %s", m_lastInstaloadDiag);
-        ESP_LOGI("Tape", "instaload: executing BASIC at 23755");
-        cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = 23755;
+        if (basicAutoStart < 32768) {
+            uint8_t flags = spectrum->read(23611);
+            spectrum->write(23610, 0xFF);
+            spectrum->write(23620, 0);
+            spectrum->write(23611, (uint8_t)(flags | 0x80));
+            ESP_LOGI("Tape", "instaload: starting BASIC line %u via ROM LINE-NEW", basicAutoStart);
+            cpu->sp = 0xFFFE;
+            cpu->iff1 = cpu->iff2 = 1;
+            cpu->im = 1;
+            cpu->halted = 0;
+            cpu->h = (uint8_t)(basicAutoStart >> 8);
+            cpu->l = (uint8_t)(basicAutoStart & 0xFF);
+            cpu->pc = ROM_LINE_NEW;
+        } else if (hasBasicUsrEntry) {
+            ESP_LOGI("Tape", "instaload: executing BASIC loader USR %u directly", basicUsrEntry);
+            cpu->sp = 0xFFFE;
+            cpu->iff1 = cpu->iff2 = 1;
+            cpu->im = 1;
+            cpu->halted = 0;
+            cpu->pc = basicUsrEntry;
+        } else {
+            ESP_LOGI("Tape", "instaload: BASIC loaded at 23755, no autostart line");
+        }
         return true;
     } else if (hasCode) {
         setInstaloadDiag("ok code start=%04X code=%d skip=%d bytes=%lu", lastCodeStart, codeBlocks, skippedBlocks, (unsigned long)bytesLoaded);

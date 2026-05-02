@@ -2,8 +2,32 @@
   'use strict';
 
   const esc = window.ZX_UTILS.esc;
+  const TAPE_MODES = {
+    manual: { showDeck: true },
+    auto: { showDeck: false },
+    instant: { showDeck: false },
+  };
 
-  let currentTapeMode = (function() { try { return localStorage.getItem('zx_tape_mode') || 'normal'; } catch (_) { return 'normal'; } })();
+  function normalizeTapeMode(mode) {
+    if (mode === 'normal') return 'auto';
+    if (mode === 'player') return 'manual';
+    return mode || 'auto';
+  }
+
+  function isKnownTapeMode(mode) {
+    return Object.prototype.hasOwnProperty.call(TAPE_MODES, mode);
+  }
+
+  let preferredTapeMode = (function() {
+    try {
+      const normalized = normalizeTapeMode(localStorage.getItem('zx_tape_mode'));
+      localStorage.setItem('zx_tape_mode', normalized);
+      return normalized;
+    } catch (_) {
+      return 'auto';
+    }
+  })();
+  let activeTapeMode = preferredTapeMode;
   let lastTape = (function() { try { return localStorage.getItem('zx_last_tape') || null; } catch (_) { return null; } })();
   let tapeMonitorEnabled = (function() {
     try { return localStorage.getItem('zx_tape_monitor') === 'on'; }
@@ -15,6 +39,23 @@
   let statusInterval = null;
   let awaitingInstaloadDiag = false;
 
+  function setPreferredTapeMode(mode) {
+    preferredTapeMode = normalizeTapeMode(mode);
+    try { localStorage.setItem('zx_tape_mode', preferredTapeMode); } catch(_) {}
+  }
+
+  function setActiveTapeMode(mode) {
+    const normalized = normalizeTapeMode(mode);
+    if (!isKnownTapeMode(normalized)) return;
+    activeTapeMode = normalized;
+    updateUI();
+  }
+
+  function sendTapeMode(mode) {
+    if (!window.ZX_WS) return;
+    window.ZX_WS.send(JSON.stringify({ cmd: 'tape_mode_' + normalizeTapeMode(mode) }));
+  }
+
   function sendTapeMonitorState() {
     if (!window.ZX_WS) return;
     window.ZX_WS.send(JSON.stringify({ cmd: tapeMonitorEnabled ? 'tape_monitor_on' : 'tape_monitor_off' }));
@@ -25,23 +66,22 @@
   }
 
   function init() {
-    const autoPlayToggle = document.getElementById('zx-auto-play-toggle');
     const tapeMonitorToggle = document.getElementById('zx-tape-monitor-toggle');
     const btnLoadTape = document.getElementById('zx-btn-load-tape');
     const btnInstaload = document.getElementById('zx-btn-instaload');
     const playerRefresh = document.getElementById('zx-player-refresh');
     const btnPlayerClose = document.getElementById('zx-player-close');
     const tapePlayer = document.getElementById('zx-player');
+    const modeButtons = document.querySelectorAll('[data-tape-mode]');
 
-    if (autoPlayToggle) {
-      autoPlayToggle.checked = (currentTapeMode === 'normal');
-      autoPlayToggle.addEventListener('change', (e) => {
-        currentTapeMode = e.target.checked ? 'normal' : 'player';
-        try { localStorage.setItem('zx_tape_mode', currentTapeMode); } catch(_) {}
-        if (window.ZX_WS) window.ZX_WS.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode }));
-        updateUI();
+    modeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const mode = normalizeTapeMode(button.dataset.tapeMode);
+        setPreferredTapeMode(mode);
+        setActiveTapeMode(mode);
+        sendTapeMode(mode);
       });
-    }
+    });
 
     if (tapeMonitorToggle) {
       tapeMonitorToggle.checked = tapeMonitorEnabled;
@@ -132,7 +172,7 @@
     // Handle WS open - only sync mode if page was already visible
     window.addEventListener('zx-ws-open', () => {
       if (window.ZX_WS && !document.hidden) {
-        window.ZX_WS.send(JSON.stringify({ cmd: 'tape_mode_' + currentTapeMode }));
+        sendTapeMode(preferredTapeMode);
         sendTapeMonitorState();
       }
     });
@@ -149,9 +189,16 @@
 
   function updateUI() {
     const cassetteDeck = document.getElementById('zx-cassette-deck');
+    const modeButtons = document.querySelectorAll('[data-tape-mode]');
+    const modeConfig = TAPE_MODES[activeTapeMode] || TAPE_MODES.auto;
+
     if (cassetteDeck) {
-      cassetteDeck.style.display = (currentTapeMode === 'normal') ? 'none' : 'block';
+      cassetteDeck.style.display = modeConfig.showDeck ? 'block' : 'none';
     }
+
+    modeButtons.forEach((button) => {
+      button.classList.toggle('active', normalizeTapeMode(button.dataset.tapeMode) === activeTapeMode);
+    });
   }
 
   function setPlayButtonActive(active) {
@@ -170,6 +217,9 @@
       const res = await fetch(`${window.ZX_UTILS.API.TAPE_CMD}?cmd=status`);
       if (!res.ok) return;
       const status = await res.json();
+      if (status.mode && isKnownTapeMode(normalizeTapeMode(status.mode))) {
+        setActiveTapeMode(status.mode);
+      }
       setPlayButtonActive(status.loaded && status.playing && !status.paused);
       updateTapeCounter(status.currentBlock, status.totalBlocks);
       const label = document.getElementById('zx-player-label');
@@ -233,8 +283,7 @@
         onTapeLoaded(file);
         
         try {
-          const res = await fetch(`${window.ZX_UTILS.API.LOAD}?file=${encodeURIComponent(file)}`);
-          if (res.ok && window.ZX_WS) window.ZX_WS.send(JSON.stringify({ cmd: 'tape_play' }));
+          await fetch(`${window.ZX_UTILS.API.LOAD}?file=${encodeURIComponent(file)}`);
         } catch (e) {}
       });
     });

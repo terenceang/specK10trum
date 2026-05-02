@@ -154,14 +154,20 @@ void SpectrumBase::dumpMemoryMap() const {
 
 int SpectrumBase::step() {
     int tstates = 0;
+    const TapeModeProfile& mode = tapeModeProfile(m_tape.getMode());
 
-    // In instant mode, service the ROM LD-BYTES entry directly so loading
-    // does not depend on pulse decoding timing.
-    if (m_tape.getMode() == TapeMode::INSTANT &&
+    // In instant mode, bypass tape playback entirely and inject the loaded
+    // program into memory as soon as ROM tape loading begins.
+    if (mode.loadsInstantly &&
         m_tape.isLoaded() &&
         isTapeRomActive() &&
         m_cpu.pc == Tape::LD_BYTES_ENTRY) {
-        tstates = m_tape.serviceLoadTrap(this);
+        m_tape.stop();
+        if (m_tape.instaload(this)) {
+            tstates = 11;
+        } else {
+            tstates = z80_step(&m_cpu);
+        }
     } else {
         tstates = z80_step(&m_cpu);
     }
@@ -169,13 +175,14 @@ int SpectrumBase::step() {
     m_pendingTapeTstates += tstates;
     advanceULA(tstates);
 
-    // Auto-start tape when entering LD-BYTES in NORMAL mode
-    if (m_tape.getMode() == TapeMode::NORMAL && m_tape.isLoaded() && !m_tape.isPlaying()) {
+    if (mode.autoStartsPlayback && m_tape.isLoaded() && !m_tape.isPlaying()) {
         bool inLDBytes = (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
         if (!m_wasInLDBytes && inLDBytes) {
             m_tape.play();
         }
         m_wasInLDBytes = inLDBytes;
+    } else {
+        m_wasInLDBytes = false;
     }
 
     return tstates;

@@ -145,6 +145,13 @@ static void updateTapeOverlay() {
     }
 }
 
+static void handleLoadedTape(SpectrumBase* spectrum) {
+    auto& tape = spectrum->tape();
+    (void)spectrum;
+    tape.stop();
+    display_clearOverlay();
+}
+
 // Test runner declaration
 #if RUN_ALL_TESTS
 extern "C" void run_all_tests(IMemoryBus* spectrum, const char* modelName);
@@ -232,8 +239,11 @@ static void emulator_task(void* pvParameters) {
                     display_setOverlayText("LOADING...", 0xFFFF);
                     const char* ext = strrchr(path, '.');
                     if (ext && (strcasecmp(ext, ".tap") == 0 || strcasecmp(ext, ".tzx") == 0 || strcasecmp(ext, ".tsx") == 0)) {
-                        if (!spectrum->tape().load(path)) display_setOverlayText("TAPE LOAD FAILED", 0xF800);
-                        else display_clearOverlay();
+                        if (!spectrum->tape().load(path)) {
+                            display_setOverlayText("TAPE LOAD FAILED", 0xF800);
+                        } else {
+                            handleLoadedTape(spectrum);
+                        }
                     } else if (ext && strcasecmp(ext, ".rom") == 0) {
                         if (!spectrum->loadROM(path)) display_setOverlayText("ROM LOAD FAILED", 0xF800);
                         else {
@@ -251,7 +261,11 @@ static void emulator_task(void* pvParameters) {
                 }
                 case WebCommandType::TapeCmd:
                     if (cmd.arg1 == "load") {
-                        spectrum->tape().load(cmd.arg2.c_str());
+                        if (spectrum->tape().load(cmd.arg2.c_str())) {
+                            handleLoadedTape(spectrum);
+                        } else {
+                            display_setOverlayText("TAPE LOAD FAILED", 0xF800);
+                        }
                     } else if (cmd.arg1 == "play") {
                         spectrum->tape().play();
                     } else if (cmd.arg1 == "stop") {

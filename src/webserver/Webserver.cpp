@@ -24,6 +24,25 @@ static const char* SPIFFS_ROOT = "/spiffs";
 static httpd_handle_t s_server = NULL;
 static SpectrumBase* s_spectrum = NULL;
 
+static bool parse_tape_mode_command(const char* json, TapeMode* modeOut)
+{
+    const char* prefix = "\"cmd\":\"tape_mode_";
+    const char* start = strstr(json, prefix);
+    if (!start) return false;
+
+    start += strlen(prefix);
+    const char* end = strchr(start, '"');
+    if (!end || end <= start) return false;
+
+    char modeName[32];
+    size_t length = (size_t)(end - start);
+    if (length >= sizeof(modeName)) return false;
+
+    memcpy(modeName, start, length);
+    modeName[length] = '\0';
+    return tapeModeFromName(modeName, modeOut);
+}
+
 static const char* mime_for(const char* path)
 {
     const char* ext = strrchr(path, '.');
@@ -261,17 +280,14 @@ static esp_err_t tape_handler(httpd_req_t *req)
         const char* instaloadDiag = "idle";
         if (s_spectrum) {
             auto& tape = s_spectrum->tape();
+            const TapeModeProfile& mode = tapeModeProfile(tape.getMode());
             loaded = tape.isLoaded() ? 1 : 0;
             playing = tape.isPlaying() ? 1 : 0;
             paused = tape.isPaused() ? 1 : 0;
             currentBlock = tape.totalBlocks() > 0 ? tape.currentBlockIndex() + 1 : 0;
             totalBlocks = tape.totalBlocks();
             instaloadDiag = tape.lastInstaloadDiag();
-            switch (tape.getMode()) {
-                case TapeMode::INSTANT: modeName = "instant"; break;
-                case TapeMode::NORMAL: modeName = "normal"; break;
-                case TapeMode::PLAYER: modeName = "player"; break;
-            }
+            modeName = mode.name;
         }
         char response[384];
         snprintf(response, sizeof(response), "{\"loaded\":%d,\"playing\":%d,\"paused\":%d,\"mode\":\"%s\",\"currentBlock\":%d,\"totalBlocks\":%d,\"instaloadDiag\":\"%s\"}",
@@ -357,11 +373,15 @@ static esp_err_t ws_handler(httpd_req_t *req)
             else if (strstr(json, "\"cmd\":\"tape_pause\"")) { command.type = WebCommandType::TapeCmd; command.arg1 = "pause"; }
             else if (strstr(json, "\"cmd\":\"tape_eject\"")) { command.type = WebCommandType::TapeCmd; command.arg1 = "eject"; }
             else if (strstr(json, "\"cmd\":\"tape_instaload\"")) { command.type = WebCommandType::TapeInstantLoad; }
-            else if (strstr(json, "\"cmd\":\"tape_mode_instaload\"")) { command.type = WebCommandType::TapeSetMode; command.int_arg1 = (int)TapeMode::INSTANT; }
-            else if (strstr(json, "\"cmd\":\"tape_mode_normal\"")) { command.type = WebCommandType::TapeSetMode; command.int_arg1 = (int)TapeMode::NORMAL; }
-            else if (strstr(json, "\"cmd\":\"tape_mode_player\"")) { command.type = WebCommandType::TapeSetMode; command.int_arg1 = (int)TapeMode::PLAYER; }
             else if (strstr(json, "\"cmd\":\"tape_monitor_on\"")) { command.type = WebCommandType::TapeSetMonitor; command.int_arg1 = 1; }
             else if (strstr(json, "\"cmd\":\"tape_monitor_off\"")) { command.type = WebCommandType::TapeSetMonitor; command.int_arg1 = 0; }
+            else {
+                TapeMode parsedMode;
+                if (parse_tape_mode_command(json, &parsedMode)) {
+                    command.type = WebCommandType::TapeSetMode;
+                    command.int_arg1 = (int)parsedMode;
+                }
+            }
             if (command.type != WebCommandType::None) {
                 webserver_get_command_queue().push(command);
             }

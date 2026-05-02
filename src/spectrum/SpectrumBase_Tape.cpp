@@ -19,25 +19,13 @@ void SpectrumBase::flushTape() {
     uint32_t tstates = (uint32_t)m_pendingTapeTstates;
     m_pendingTapeTstates = 0;
 
-    // Player mode: keep mixed speaker+tape behavior.
-    // Normal mode + monitor ON: make monitor exclusive (EAR-only) only while
-    // the ROM loader routine is active, not for the whole tape playback.
-    bool audible_tape_monitor = false;
+    const TapeModeProfile& mode = tapeModeProfile(m_tape.getMode());
+    bool audible_tape_monitor = mode.audibleTransport;
     bool speaker_path_enabled = true;
-    if (m_tape.getMode() == TapeMode::PLAYER) {
-        audible_tape_monitor = true;
-        speaker_path_enabled = true;
-    } else if (m_tape.getMode() == TapeMode::NORMAL) {
-        // Always let the EAR/tape audio be audible in NORMAL mode.
-        // The tape monitor toggle only controls whether ROM loader activity
-        // is heard exclusively or mixed with speaker output.
-        audible_tape_monitor = true;
-        if (m_tapeMonitorEnabled) {
-            bool in_rom_loader = isTapeRomActive() && (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
-            speaker_path_enabled = !in_rom_loader;
-        } else {
-            speaker_path_enabled = true;
-        }
+
+    if (mode.exclusiveMonitorDuringRomLoad && m_tapeMonitorEnabled) {
+        bool in_rom_loader = isTapeRomActive() && (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
+        speaker_path_enabled = !in_rom_loader;
     }
 
     m_beeper.setTapeMonitorEnabled(audible_tape_monitor);
