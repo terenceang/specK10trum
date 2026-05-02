@@ -5,6 +5,7 @@
   let retryCount = 0;
   let reconnectTimer = 0;
   let heartbeatTimer = 0;
+  let manualClose = false;
   const listeners = [];
 
   const host = (function() {
@@ -28,6 +29,12 @@
   }
 
   function scheduleReconnect() {
+    if (manualClose) {
+      manualClose = false;
+      notify('disconnected');
+      clearTimeout(heartbeatTimer);
+      return;
+    }
     notify('disconnected');
     clearTimeout(heartbeatTimer);
     if (reconnectTimer) return;
@@ -39,8 +46,14 @@
   }
 
   function connect() {
+    manualClose = false;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = 0;
     if (ws) {
+      ws.onclose = null;
+      ws.onerror = null;
       try { ws.close(); } catch (_) {}
+      ws = null;
     }
     try {
       ws = new WebSocket(host);
@@ -76,6 +89,10 @@
       return false;
     },
     close: () => {
+      manualClose = true;
+      clearTimeout(reconnectTimer);
+      reconnectTimer = 0;
+      clearTimeout(heartbeatTimer);
       if (ws) ws.close();
     },
     onStatus: (cb) => {

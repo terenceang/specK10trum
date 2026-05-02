@@ -281,7 +281,13 @@ static void emulator_task(void* pvParameters) {
         audio_play_frame(spectrum);
 
         // Keep frame cadence near 50Hz and reduce scheduler-induced audio jitter.
-        vTaskDelayUntil(&lastWake, frameTicks);
+        TickType_t now = xTaskGetTickCount();
+        if ((TickType_t)(now - lastWake) >= frameTicks) {
+            vTaskDelay(1);
+            lastWake = xTaskGetTickCount();
+        } else {
+            vTaskDelayUntil(&lastWake, frameTicks);
+        }
     }
 }
 

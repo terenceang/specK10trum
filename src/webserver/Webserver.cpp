@@ -379,9 +379,11 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.lru_purge_enable = false;  // Disable LRU purge to prevent unexpected disconnects
+    config.max_open_sockets = 12;
+    config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.max_uri_handlers = 20;
+    config.backlog_conn = 8;
     config.stack_size = 8192;
     config.keep_alive_enable = true;
     config.keep_alive_idle = 5;

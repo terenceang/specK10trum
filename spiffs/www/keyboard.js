@@ -85,7 +85,11 @@
           ['Q','W','E','R','T','Y','U','I','O','P'],
           ['A','S','D','F','G','H','J','K','L','ENTER'],
           ['CAPS','Z','X','C','V','B','N','M','SYM','SPACE']
-        ].map(r => r.map(m => ({ main: m })));
+        ].map((r, i) => r.map(m => {
+          if (m === 'CAPS') return { main: m, special: 'caps' };
+          if (m === 'SYM') return { main: m, special: 'symbol' };
+          return { main: m };
+        }));
 
     const ROW_OFFSET_EM = (LAYOUT && LAYOUT.OFFSETS) || [0, 0.26, 0.52, 0];
 
@@ -125,16 +129,29 @@
     sendBuf[0] = r; sendBuf[1] = b; sendBuf[2] = pressed ? 1 : 0;
     const ok = window.ZX_WS ? window.ZX_WS.send(sendBuf) : false;
     if (ok) txCount++;
+    const stateStr = `[caps=${toggles.caps ? '✓' : '·'} sym=${toggles.symbol ? '✓' : '·'}]`;
+    console.log(`      TX [${r},${b},${pressed ? 1 : 0}] ${stateStr} - ${ok ? 'sent' : 'offline'}`);
     if (onKeyCallback) onKeyCallback(label || `${r},${b}`, pressed, txCount);
   }
 
   function setToggle(el, special, on) {
+    const prevState = toggles[special];
     toggles[special] = on;
+    console.log(`%c[TOGGLE-${special.toUpperCase()}]%c ${prevState} → ${on}`, 'background:#f0f;color:#fff;font-weight:bold', 'color:#f0f;font-weight:bold');
     el.classList.toggle('toggled', on);
     const led = document.getElementById('zx-led-' + special);
-    if (led) led.classList.toggle('on', on);
+    if (led) {
+      const ledBefore = led.classList.contains('on');
+      led.classList.toggle('on', on);
+      const ledAfter = led.classList.contains('on');
+      console.log(`  LED ${special}: ${ledBefore} → ${ledAfter}`);
+    }
     const keys = getKeysFromEl(el);
-    keys.forEach(k => sendKey(k.r, k.b, on, el.dataset.lbl));
+    console.log(`  Sending ${keys.length} key(s):`, keys.map(k => `[${k.r},${k.b}]`).join(' '));
+    keys.forEach(k => {
+      console.log(`    → sendKey([${k.r},${k.b}], pressed=${on})`);
+      sendKey(k.r, k.b, on, el.dataset.lbl);
+    });
   }
 
   function getKeysFromEl(el) {
@@ -159,8 +176,13 @@
     if (el.classList.contains('pressed')) return;
     el.classList.add('pressed');
     const held = [];
-    for (const k of getKeysFromEl(el)) {
-      if (isLatchedToggle(k.r, k.b)) continue;
+    const keys = getKeysFromEl(el);
+    for (const k of keys) {
+      if (isLatchedToggle(k.r, k.b)) {
+        console.log(`  ⚠️  Skipping latch [${k.r},${k.b}] (caps=${toggles.caps}, symbol=${toggles.symbol})`);
+        continue;
+      }
+      console.log(`  ✓ Press [${k.r},${k.b}]`);
       sendKey(k.r, k.b, true, el.dataset.lbl);
       held.push(k);
     }
@@ -171,6 +193,9 @@
     el.classList.remove('pressed');
     const held = pressState.get(el) || [];
     pressState.delete(el);
+    if (held.length > 0) {
+      console.log(`  Release ${held.length} key(s): ${held.map(k => `[${k.r},${k.b}]`).join(' ')}`);
+    }
     for (let i = held.length - 1; i >= 0; i--) {
       sendKey(held[i].r, held[i].b, false, el.dataset.lbl);
     }
@@ -184,7 +209,9 @@
   function onDown(el, pointerId, kb) {
     if (isToggle(el)) {
       const s = el.dataset.special;
-      setToggle(el, s, !toggles[s]);
+      const newState = !toggles[s];
+      console.log(`%c[TOGGLE-PRESS]%c ${s} at pointerId=${pointerId}, will toggle to ${newState}`, 'background:#0af;color:#000;font-weight:bold', 'color:#0af');
+      setToggle(el, s, newState);
       return;
     }
     active.set(pointerId, { el, rect: el.getBoundingClientRect() });
@@ -199,6 +226,9 @@
   }
 
   function initEvents(kb) {
+    if (kb.__zxKeyboardEventsBound) return;
+    kb.__zxKeyboardEventsBound = true;
+
     if (window.PointerEvent) {
       kb.addEventListener('pointerdown', (e) => {
         const el = e.target.closest('.zx-key');
@@ -256,12 +286,14 @@
   }
 
   function releaseAll() {
+    console.log(`%c[RELEASE-ALL]%c Releasing all active keys and toggles`, 'background:#f80;color:#fff;font-weight:bold', 'color:#f80');
     active.forEach((entry) => releaseMomentary(entry.el));
     active.clear();
     const kb = document.getElementById('zx-kb');
     if (!kb) return;
     ['caps', 'symbol'].forEach((s) => {
       if (!toggles[s]) return;
+      console.log(`  Force-reset toggle: ${s}`);
       const el = kb.querySelector(`.zx-key[data-special="${s}"]`);
       if (el) setToggle(el, s, false);
     });
