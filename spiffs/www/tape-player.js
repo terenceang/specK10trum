@@ -37,7 +37,6 @@
   let btnPlay = null;
   let tapeCounter = null;
   let statusInterval = null;
-  let awaitingInstaloadDiag = false;
 
   function setPreferredTapeMode(mode) {
     preferredTapeMode = normalizeTapeMode(mode);
@@ -68,7 +67,6 @@
   function init() {
     const tapeMonitorToggle = document.getElementById('zx-tape-monitor-toggle');
     const btnLoadTape = document.getElementById('zx-btn-load-tape');
-    const btnInstaload = document.getElementById('zx-btn-instaload');
     const playerRefresh = document.getElementById('zx-player-refresh');
     const btnPlayerClose = document.getElementById('zx-player-close');
     const tapePlayer = document.getElementById('zx-player');
@@ -107,19 +105,6 @@
       });
     }
 
-    if (btnInstaload) {
-      btnInstaload.addEventListener('click', () => {
-        const label = document.getElementById('zx-player-label');
-        if (!window.ZX_WS) {
-          if (label) label.textContent = 'WS DISCONNECTED';
-          return;
-        }
-        awaitingInstaloadDiag = true;
-        window.ZX_WS.send(JSON.stringify({ cmd: 'tape_instaload' }));
-        if (label) label.textContent = 'INSTALOAD SENT';
-      });
-    }
-
     if (btnPlayerClose) {
       btnPlayerClose.addEventListener('click', () => {
         tapePlayer.classList.remove('open');
@@ -131,7 +116,7 @@
     if (tapePlayer) {
       tapePlayer.addEventListener('click', (e) => {
         const btn = e.target.closest('.zx-player-btn');
-        if (!btn || btn.id === 'zx-btn-load-tape' || btn.id === 'zx-btn-instaload') return;
+        if (!btn || btn.id === 'zx-btn-load-tape') return;
         const cmd = btn.dataset.tape;
         if (window.ZX_WS) window.ZX_WS.send(JSON.stringify({ cmd }));
         
@@ -223,10 +208,6 @@
       setPlayButtonActive(status.loaded && status.playing && !status.paused);
       updateTapeCounter(status.currentBlock, status.totalBlocks);
       const label = document.getElementById('zx-player-label');
-      if (awaitingInstaloadDiag && label && status.instaloadDiag) {
-        label.textContent = `INSTALOAD ${status.instaloadDiag}`;
-        awaitingInstaloadDiag = false;
-      }
       if (label) {
         if (status.loaded && status.totalBlocks > 0 && label.textContent === 'NO TAPE LOADED') {
           label.textContent = lastTape || 'Loaded tape';

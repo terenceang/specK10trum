@@ -147,8 +147,22 @@ static void updateTapeOverlay() {
 
 static void handleLoadedTape(SpectrumBase* spectrum) {
     auto& tape = spectrum->tape();
-    (void)spectrum;
+    const TapeModeProfile& mode = tapeModeProfile(tape.getMode());
+
     tape.stop();
+    if (mode.loadsInstantly) {
+        if (!tape.instaload(spectrum)) {
+            display_setOverlayText("INSTALOAD FAILED", 0xF800);
+        } else {
+            display_clearOverlay();
+        }
+        return;
+    }
+
+    if (mode.autoStartsPlayback) {
+        tape.play();
+    }
+
     display_clearOverlay();
 }
 

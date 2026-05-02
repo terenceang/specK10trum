@@ -824,11 +824,33 @@ bool Tape::instaload(SpectrumBase* spectrum) {
         spectrum->write(23653, worksp & 0xFF); spectrum->write(23654, worksp >> 8);
     }
     // Setup CPU state for loaded program.
-    // Prefer the BASIC autorun line when available because many loader programs
-    // perform setup work before reaching a USR call. Direct USR execution is a
-    // fallback for tapes without a valid autorun line.
-    if (hasBasic) {
-        setInstaloadDiag("ok basic auto=%u usr=%u code=%d skip=%d", basicAutoStart, hasBasicUsrEntry ? basicUsrEntry : 0, codeBlocks, skippedBlocks);
+    // When a CODE block is present, its header `start` field is the authoritative
+    // entry point - it is what the tape author explicitly set when saving the code.
+    // Parsing USR from BASIC is fragile (picks first occurrence, may find setup
+    // stubs before the real entry). For pure-BASIC tapes (no CODE), fall back to
+    // the BASIC autorun line or parsed USR as a last resort.
+    if (hasCode) {
+        if (hasBasic) {
+            setInstaloadDiag("ok cstart=%04X usr=%u code=%d basic=%d skip=%d",
+                             lastCodeStart, hasBasicUsrEntry ? basicUsrEntry : 0,
+                             codeBlocks, basicBlocks, skippedBlocks);
+        } else {
+            setInstaloadDiag("ok code start=%04X code=%d skip=%d bytes=%lu",
+                             lastCodeStart, codeBlocks, skippedBlocks, (unsigned long)bytesLoaded);
+        }
+        ESP_LOGI("Tape", "instaload summary: %s", m_lastInstaloadDiag);
+        ESP_LOGI("Tape", "instaload: executing CODE at 0x%04X", lastCodeStart);
+        cpu->sp = 0xFF40;           // typical 48K RAMTOP default
+        cpu->iff1 = cpu->iff2 = 1;
+        cpu->im = 1;
+        cpu->halted = 0;
+        cpu->iy = 0x5C3A;           // ZX Spectrum system-variable base for ROM ISR
+        cpu->pc = lastCodeStart;
+        return true;
+    } else if (hasBasic) {
+        // Pure BASIC tape (no CODE block) - run the BASIC autorun line or USR
+        setInstaloadDiag("ok basic auto=%u usr=%u skip=%d",
+                         basicAutoStart, hasBasicUsrEntry ? basicUsrEntry : 0, skippedBlocks);
         ESP_LOGI("Tape", "instaload summary: %s", m_lastInstaloadDiag);
         if (basicAutoStart < 32768) {
             uint8_t flags = spectrum->read(23611);
@@ -836,29 +858,25 @@ bool Tape::instaload(SpectrumBase* spectrum) {
             spectrum->write(23620, 0);
             spectrum->write(23611, (uint8_t)(flags | 0x80));
             ESP_LOGI("Tape", "instaload: starting BASIC line %u via ROM LINE-NEW", basicAutoStart);
-            cpu->sp = 0xFFFE;
+            cpu->sp = 0xFF40;
             cpu->iff1 = cpu->iff2 = 1;
             cpu->im = 1;
             cpu->halted = 0;
+            cpu->iy = 0x5C3A;
             cpu->h = (uint8_t)(basicAutoStart >> 8);
             cpu->l = (uint8_t)(basicAutoStart & 0xFF);
             cpu->pc = ROM_LINE_NEW;
         } else if (hasBasicUsrEntry) {
             ESP_LOGI("Tape", "instaload: executing BASIC loader USR %u directly", basicUsrEntry);
-            cpu->sp = 0xFFFE;
+            cpu->sp = 0xFF40;
             cpu->iff1 = cpu->iff2 = 1;
             cpu->im = 1;
             cpu->halted = 0;
+            cpu->iy = 0x5C3A;
             cpu->pc = basicUsrEntry;
         } else {
             ESP_LOGI("Tape", "instaload: BASIC loaded at 23755, no autostart line");
         }
-        return true;
-    } else if (hasCode) {
-        setInstaloadDiag("ok code start=%04X code=%d skip=%d bytes=%lu", lastCodeStart, codeBlocks, skippedBlocks, (unsigned long)bytesLoaded);
-        ESP_LOGI("Tape", "instaload summary: %s", m_lastInstaloadDiag);
-        ESP_LOGI("Tape", "instaload: executing CODE at 0x%04X", lastCodeStart);
-        cpu->sp = 0xFFFE; cpu->iff1 = cpu->iff2 = 1; cpu->im = 1; cpu->halted = 0; cpu->pc = lastCodeStart;
         return true;
     } else {
         setInstaloadDiag("failed basic=%d code=%d skip=%d bytes=%lu", basicBlocks, codeBlocks, skippedBlocks, (unsigned long)bytesLoaded);
