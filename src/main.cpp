@@ -117,6 +117,34 @@ static inline void log_ts(const char* tag, const char* msg) {
     ESP_LOGI(tag, "%6lld ms: %s", ms, msg);
 }
 
+static char s_lastTapeOverlayText[64] = "";
+static void updateTapeOverlay() {
+    if (!display_ready || !spectrum) {
+        return;
+    }
+
+    auto& tape = spectrum->tape();
+    if (!tape.isLoaded()) {
+        if (s_lastTapeOverlayText[0] != '\0') {
+            s_lastTapeOverlayText[0] = '\0';
+            display_clearOverlay();
+        }
+        return;
+    }
+
+    int currentBlock = tape.totalBlocks() > 0 ? tape.currentBlockIndex() + 1 : 0;
+    int totalBlocks = tape.totalBlocks();
+    const char* state = tape.isPlaying() ? "PLAY" : tape.isPaused() ? "PAUSED" : "STOP";
+
+    char overlayText[64];
+    snprintf(overlayText, sizeof(overlayText), "TAPE %d/%d %s", currentBlock, totalBlocks, state);
+    if (strcmp(overlayText, s_lastTapeOverlayText) != 0) {
+        display_setOverlayText(overlayText, 0xFFFF);
+        strncpy(s_lastTapeOverlayText, overlayText, sizeof(s_lastTapeOverlayText) - 1);
+        s_lastTapeOverlayText[sizeof(s_lastTapeOverlayText) - 1] = '\0';
+    }
+}
+
 // Test runner declaration
 #if RUN_ALL_TESTS
 extern "C" void run_all_tests(IMemoryBus* spectrum, const char* modelName);
@@ -275,6 +303,7 @@ static void emulator_task(void* pvParameters) {
         }
         instr_cpu_end();
 
+        updateTapeOverlay();
         display_trigger_frame(spectrum);
 
         // Render and play beeper audio for this frame.

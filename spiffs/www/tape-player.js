@@ -158,18 +158,21 @@
   }
 
   async function updateTapeStatus() {
-    if (!window.ZX_WS) return;
+    if (!window.ZX_UTILS || !window.ZX_UTILS.API || !window.ZX_UTILS.API.TAPE_CMD) return;
     try {
-      const res = await fetch('/api/tape?cmd=status');
+      const res = await fetch(`${window.ZX_UTILS.API.TAPE_CMD}?cmd=status`);
       if (!res.ok) return;
       const status = await res.json();
       setPlayButtonActive(status.loaded && status.playing && !status.paused);
       updateTapeCounter(status.currentBlock, status.totalBlocks);
-      if (status.loaded && status.totalBlocks > 0 && document.getElementById('zx-player-label').textContent === 'NO TAPE LOADED') {
-        document.getElementById('zx-player-label').textContent = lastTape || 'Loaded tape';
-      }
-      if (!status.loaded) {
-        document.getElementById('zx-player-label').textContent = 'NO TAPE LOADED';
+      const label = document.getElementById('zx-player-label');
+      if (label) {
+        if (status.loaded && status.totalBlocks > 0 && label.textContent === 'NO TAPE LOADED') {
+          label.textContent = lastTape || 'Loaded tape';
+        }
+        if (!status.loaded) {
+          label.textContent = 'NO TAPE LOADED';
+        }
       }
     } catch (e) {
       // ignore transient fetch failures
