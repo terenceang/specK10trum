@@ -481,12 +481,15 @@ extern "C" void app_main(void) {
     // 13. Keyboard Client
     log_ts(TAG, "=== STEP 13/16: Keyboard ===");
     if (wifi_connected && webserver_is_running()) {
-        // Get the device IP address
-        esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-        esp_netif_ip_info_t ip_info;
-        char ip_str[16] = "unknown";
-        if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-            snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+        char ip_str[16] = "0.0.0.0";
+        if (!wifi_prov_get_last_ip(ip_str, sizeof(ip_str))) {
+            esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+            esp_netif_ip_info_t ip_info = {0};
+            if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK && ip_info.ip.addr != 0) {
+                snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&ip_info.ip));
+            } else {
+                snprintf(ip_str, sizeof(ip_str), "unknown");
+            }
         }
 
         char kb_msg[64];

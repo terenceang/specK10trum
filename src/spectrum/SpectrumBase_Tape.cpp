@@ -27,10 +27,17 @@ void SpectrumBase::flushTape() {
     if (m_tape.getMode() == TapeMode::PLAYER) {
         audible_tape_monitor = true;
         speaker_path_enabled = true;
-    } else if (m_tape.getMode() == TapeMode::NORMAL && m_tapeMonitorEnabled) {
+    } else if (m_tape.getMode() == TapeMode::NORMAL) {
+        // Always let the EAR/tape audio be audible in NORMAL mode.
+        // The tape monitor toggle only controls whether ROM loader activity
+        // is heard exclusively or mixed with speaker output.
         audible_tape_monitor = true;
-        bool in_rom_loader = isTapeRomActive() && (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
-        speaker_path_enabled = !in_rom_loader;
+        if (m_tapeMonitorEnabled) {
+            bool in_rom_loader = isTapeRomActive() && (m_cpu.pc >= 0x0556 && m_cpu.pc < 0x0800);
+            speaker_path_enabled = !in_rom_loader;
+        } else {
+            speaker_path_enabled = true;
+        }
     }
 
     m_beeper.setTapeMonitorEnabled(audible_tape_monitor);

@@ -57,6 +57,7 @@ static esp_event_handler_instance_t s_wifi_handler = nullptr;
 static esp_event_handler_instance_t s_ip_handler = nullptr;
 static SemaphoreHandle_t s_wifi_connected_sem = NULL;
 static char s_last_ip_str[32] = {0};
+static char s_last_ip_addr[16] = {0};
 
 // Periodically checks for unapplied credentials and applies them.
 // Skips if provisioning is active to avoid race condition during BLE write.
@@ -223,13 +224,14 @@ static void wifi_event_cb(void* arg, esp_event_base_t base, int32_t id, void* da
             ip_event_got_ip_t* evt = (ip_event_got_ip_t*)data;
             ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&evt->ip_info.ip));
 
-        esp_wifi_set_ps(WIFI_PS_NONE);
+            esp_wifi_set_ps(WIFI_PS_NONE);
 
-        if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            snprintf(s_last_ip_str, sizeof(s_last_ip_str), "IP: " IPSTR, IP2STR(&evt->ip_info.ip));
-            xSemaphoreGive(s_state_mutex);
-        }
-        display_setOverlayText(s_last_ip_str, 0xFFFF);
+            if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                snprintf(s_last_ip_addr, sizeof(s_last_ip_addr), IPSTR, IP2STR(&evt->ip_info.ip));
+                snprintf(s_last_ip_str, sizeof(s_last_ip_str), "IP: " IPSTR, IP2STR(&evt->ip_info.ip));
+                xSemaphoreGive(s_state_mutex);
+            }
+            display_setOverlayText(s_last_ip_str, 0xFFFF);
 
             if (s_wifi_connected_sem) xSemaphoreGive(s_wifi_connected_sem);
         }
@@ -595,6 +597,28 @@ bool wifi_prov_wait_for_ip(uint32_t timeout_ms)
         return true;
     }
     return false;
+}
+
+bool wifi_prov_get_last_ip(char* ip_buf, size_t buf_len)
+{
+    if (!ip_buf || buf_len == 0) {
+        return false;
+    }
+    if (xSemaphoreTake(s_state_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+    bool result = false;
+    if (s_last_ip_addr[0] != '\0') {
+        strncpy(ip_buf, s_last_ip_addr, buf_len - 1);
+        ip_buf[buf_len - 1] = '\0';
+        result = true;
+    } else {
+        if (buf_len > 0) {
+            ip_buf[0] = '\0';
+        }
+    }
+    xSemaphoreGive(s_state_mutex);
+    return result;
 }
 
 // Apply credentials from NVS, provisioning, or CLI. Saves to NVS and connects.

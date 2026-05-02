@@ -1,5 +1,5 @@
 #include "Expander.h"
-#include <driver/i2c.h>
+#include <driver/i2c_master.h>
 #include <esp_log.h>
 #include <string.h>
 #include <freertos/FreeRTOS.h>
@@ -7,7 +7,6 @@
 
 static const char* TAG = "Expander";
 
-static const i2c_port_t I2C_PORT = I2C_NUM_0;
 static const gpio_num_t PIN_SDA = GPIO_NUM_47;
 static const gpio_num_t PIN_SCL = GPIO_NUM_48;
 
@@ -21,53 +20,50 @@ static const gpio_num_t PIN_SCL = GPIO_NUM_48;
 static uint8_t s_port0_output = 0;
 static uint8_t s_port1_output = 0;
 
+static i2c_master_bus_handle_t s_i2c_bus = NULL;
+static i2c_master_dev_handle_t s_i2c_device = NULL;
+
 static esp_err_t write_reg(uint8_t reg, uint8_t value) {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (XL9535_I2C_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg, true);
-    i2c_master_write_byte(cmd, value, true);
-    i2c_master_stop(cmd);
-    esp_err_t err = i2c_master_cmd_begin(I2C_PORT, cmd, pdMS_TO_TICKS(100));
-    i2c_cmd_link_delete(cmd);
-    return err;
+    uint8_t buf[2] = { reg, value };
+    return i2c_master_transmit(s_i2c_device, buf, sizeof(buf), 100);
 }
 
 static esp_err_t read_reg(uint8_t reg, uint8_t *value) {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (XL9535_I2C_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, reg, true);
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (XL9535_I2C_ADDR << 1) | I2C_MASTER_READ, true);
-    i2c_master_read_byte(cmd, value, I2C_MASTER_LAST_NACK);
-    i2c_master_stop(cmd);
-    esp_err_t err = i2c_master_cmd_begin(I2C_PORT, cmd, pdMS_TO_TICKS(100));
-    i2c_cmd_link_delete(cmd);
-    return err;
+    return i2c_master_transmit_receive(s_i2c_device, &reg, 1, value, 1, 100);
 }
 
 bool expander_init() {
     ESP_LOGI(TAG, "Initializing XL9535 Expanders...");
-    
-    i2c_config_t conf;
-    memset(&conf, 0, sizeof(conf));
-    conf.mode = I2C_MODE_MASTER;
-    conf.sda_io_num = PIN_SDA;
-    conf.scl_io_num = PIN_SCL;
-    conf.sda_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
-    conf.master.clk_speed = 400000;
-    
-    esp_err_t err = i2c_param_config(I2C_PORT, &conf);
+
+    i2c_master_bus_config_t bus_conf = {0};
+    bus_conf.i2c_port = I2C_NUM_0;
+    bus_conf.sda_io_num = PIN_SDA;
+    bus_conf.scl_io_num = PIN_SCL;
+    bus_conf.clk_source = I2C_CLK_SRC_DEFAULT;
+    bus_conf.glitch_ignore_cnt = 7;
+    bus_conf.intr_priority = 0;
+    bus_conf.trans_queue_depth = 4;
+    bus_conf.flags.enable_internal_pullup = 1;
+    bus_conf.flags.allow_pd = 0;
+
+    esp_err_t err = i2c_new_master_bus(&bus_conf, &s_i2c_bus);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "I2C param config failed");
+        ESP_LOGE(TAG, "I2C master bus init failed: %s", esp_err_to_name(err));
         return false;
     }
-    
-    err = i2c_driver_install(I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "I2C driver install failed");
+
+    i2c_device_config_t dev_conf;
+    memset(&dev_conf, 0, sizeof(dev_conf));
+    dev_conf.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_conf.device_address = XL9535_I2C_ADDR;
+    dev_conf.scl_speed_hz = 400000;
+    dev_conf.scl_wait_us = 0;
+
+    err = i2c_master_bus_add_device(s_i2c_bus, &dev_conf, &s_i2c_device);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "I2C master add device failed: %s", esp_err_to_name(err));
+        i2c_del_master_bus(s_i2c_bus);
+        s_i2c_bus = NULL;
         return false;
     }
 
@@ -85,14 +81,14 @@ bool expander_init() {
     // Initial states
     s_port0_output = 0; // Backlight OFF
     s_port1_output = 0; // LED OFF
-    
+
     write_reg(REG_OUTPUT_PORT0, s_port0_output);
     write_reg(REG_OUTPUT_PORT1, s_port1_output);
 
     ESP_LOGI(TAG, "XL9535 Expander initialized successfully");
-    
+
     expander_blink_led(2, 100);
-    
+
     return true;
 }
 
