@@ -22,6 +22,7 @@ static const char* TAG = "Webserver";
 static const char* WWW_ROOT = "/spiffs/www";
 static const char* SPIFFS_ROOT = "/spiffs";
 static httpd_handle_t s_server = NULL;
+static SpectrumBase* s_spectrum = NULL;
 
 static const char* mime_for(const char* path)
 {
@@ -245,10 +246,40 @@ static esp_err_t model_handler(httpd_req_t *req)
 static esp_err_t tape_handler(httpd_req_t *req)
 {
     char buf[1024];
-    if (httpd_req_get_url_query_str(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
     char cmd[32];
     WebCommand command;
-    if (httpd_query_key_value(buf, "cmd", cmd, sizeof(cmd)) != ESP_OK) return ESP_FAIL;
+    bool hasQuery = httpd_req_get_url_query_str(req, buf, sizeof(buf)) == ESP_OK;
+    bool hasCmd = hasQuery && httpd_query_key_value(buf, "cmd", cmd, sizeof(cmd)) == ESP_OK;
+
+    if (!hasCmd || strcmp(cmd, "status") == 0) {
+        int loaded = 0;
+        int playing = 0;
+        int paused = 0;
+        int currentBlock = 0;
+        int totalBlocks = 0;
+        const char* modeName = "unknown";
+        if (s_spectrum) {
+            auto& tape = s_spectrum->tape();
+            loaded = tape.isLoaded() ? 1 : 0;
+            playing = tape.isPlaying() ? 1 : 0;
+            paused = tape.isPaused() ? 1 : 0;
+            currentBlock = tape.totalBlocks() > 0 ? tape.currentBlockIndex() + 1 : 0;
+            totalBlocks = tape.totalBlocks();
+            switch (tape.getMode()) {
+                case TapeMode::INSTANT: modeName = "instant"; break;
+                case TapeMode::NORMAL: modeName = "normal"; break;
+                case TapeMode::PLAYER: modeName = "player"; break;
+            }
+        }
+        char response[256];
+        int len = snprintf(response, sizeof(response), "{\"loaded\":%d,\"playing\":%d,\"paused\":%d,\"mode\":\"%s\",\"currentBlock\":%d,\"totalBlocks\":%d}",
+            loaded, playing, paused, modeName, currentBlock, totalBlocks);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+        httpd_resp_sendstr(req, response);
+        return ESP_OK;
+    }
+
     if (strcmp(cmd, "load") == 0) {
         char filename[256];
         if (httpd_query_key_value(buf, "file", filename, sizeof(filename)) == ESP_OK) {
@@ -375,9 +406,11 @@ esp_err_t webserver_start(SpectrumBase* spectrum)
     // If server is already running, don't start again
     if (s_server) {
         ESP_LOGW(TAG, "Webserver already running, skipping restart");
+        s_spectrum = spectrum;
         return ESP_OK;
     }
 
+    s_spectrum = spectrum;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_open_sockets = 12;
     config.lru_purge_enable = true;

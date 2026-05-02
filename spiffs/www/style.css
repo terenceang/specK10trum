@@ -269,7 +269,9 @@ html, body {
 
 .zx-player-btn:hover { background: #444; color: #fff; }
 .zx-player-btn:active { background: #222; }
+.zx-player-btn.active { background: #2f8; color: #060; }
 .zx-player-label { font-size: 10px; color: var(--dim); text-align: center; word-break: break-all; }
+.zx-player-counter { font-size: 10px; color: var(--green); text-align: center; }
 .zx-player-refresh { background: transparent; border: 1px solid #333; color: var(--dim); padding: 4px 8px; border-radius: 4px; cursor: pointer; }
 .zx-player-refresh:hover { color: var(--ink); border-color: #555; }
 

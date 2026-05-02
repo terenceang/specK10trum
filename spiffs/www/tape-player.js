@@ -10,6 +10,10 @@
     catch (_) { return false; }
   })();
 
+  let btnPlay = null;
+  let tapeCounter = null;
+  let statusInterval = null;
+
   function sendTapeMonitorState() {
     if (!window.ZX_WS) return;
     window.ZX_WS.send(JSON.stringify({ cmd: tapeMonitorEnabled ? 'tape_monitor_on' : 'tape_monitor_off' }));
@@ -46,6 +50,9 @@
         sendTapeMonitorState();
       });
     }
+
+    btnPlay = document.querySelector('[data-tape="tape_play"]');
+    tapeCounter = document.getElementById('zx-player-counter');
 
     if (btnLoadTape) {
       btnLoadTape.addEventListener('click', () => {
@@ -90,17 +97,23 @@
         if (cmd === 'tape_play') {
           leftReel.classList.add('spin');
           rightReel.classList.add('spin');
-        } else if (cmd === 'tape_rewind') {
+          if (btnPlay) btnPlay.classList.add('active');
+        } else {
+          if (btnPlay) btnPlay.classList.remove('active');
+        }
+        if (cmd === 'tape_rewind') {
           leftReel.classList.add('spin-fast');
         } else if (cmd === 'tape_ffwd') {
           rightReel.classList.add('spin-fast');
         } else if (cmd === 'tape_eject') {
           document.getElementById('zx-player-label').textContent = 'NO TAPE LOADED';
+          updateTapeCounter(0, 0);
         }
       });
     }
 
     updateUI();
+    startStatusPolling();
     if (lastTape) {
       const lbl = document.getElementById('zx-player-label');
       if (lbl) lbl.textContent = lastTape;
@@ -132,6 +145,47 @@
     if (cassetteDeck) {
       cassetteDeck.style.display = (currentTapeMode === 'normal') ? 'none' : 'block';
     }
+  }
+
+  function setPlayButtonActive(active) {
+    if (!btnPlay) return;
+    btnPlay.classList.toggle('active', !!active);
+  }
+
+  function updateTapeCounter(current, total) {
+    if (!tapeCounter) return;
+    tapeCounter.textContent = total > 0 ? `Block ${current} / ${total}` : 'No tape blocks';
+  }
+
+  async function updateTapeStatus() {
+    if (!window.ZX_WS) return;
+    try {
+      const res = await fetch('/api/tape?cmd=status');
+      if (!res.ok) return;
+      const status = await res.json();
+      setPlayButtonActive(status.loaded && status.playing && !status.paused);
+      updateTapeCounter(status.currentBlock, status.totalBlocks);
+      if (status.loaded && status.totalBlocks > 0 && document.getElementById('zx-player-label').textContent === 'NO TAPE LOADED') {
+        document.getElementById('zx-player-label').textContent = lastTape || 'Loaded tape';
+      }
+      if (!status.loaded) {
+        document.getElementById('zx-player-label').textContent = 'NO TAPE LOADED';
+      }
+    } catch (e) {
+      // ignore transient fetch failures
+    }
+  }
+
+  function startStatusPolling() {
+    if (statusInterval) return;
+    updateTapeStatus();
+    statusInterval = window.setInterval(updateTapeStatus, 1000);
+  }
+
+  function stopStatusPolling() {
+    if (!statusInterval) return;
+    clearInterval(statusInterval);
+    statusInterval = null;
   }
 
   async function loadTapeList() {
